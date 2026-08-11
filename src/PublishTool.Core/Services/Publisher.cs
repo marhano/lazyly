@@ -9,6 +9,7 @@ public sealed class Publisher
     private readonly MsBuildRunner _msBuild;
     private readonly RobocopyMirror _mirror;
     private readonly BuildRepository _buildRepository;
+    private readonly IisSiteManager _iisSiteManager;
 
     public Publisher(ProjectRegistry registry, IOutputSink output)
     {
@@ -17,6 +18,7 @@ public sealed class Publisher
         _msBuild = new MsBuildRunner(output);
         _mirror = new RobocopyMirror(output);
         _buildRepository = new BuildRepository();
+        _iisSiteManager = new IisSiteManager(output);
     }
 
     public async Task<string> PublishAsync(PublishOptions options, CancellationToken ct = default)
@@ -62,6 +64,12 @@ public sealed class Publisher
             });
 
             _output.Info($"Archived to {archive.ZipPath}");
+
+            if (project.AutoCreateIisSite)
+            {
+                _output.Stage("Ensuring IIS site exists...");
+                await _iisSiteManager.EnsureSiteExistsAsync(project.Name, project.IisHostPath, project.IisBindings, ct);
+            }
 
             _output.Stage($"Deploying to IIS host path: {project.IisHostPath}");
             await _mirror.MirrorAsync(stagingDir, project.IisHostPath, ct);

@@ -1,149 +1,342 @@
-<Window x:Class="PublishTool.Gui.MainWindow"
+<ui:FluentWindow x:Class="PublishTool.Gui.MainWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         xmlns:local="clr-namespace:PublishTool.Gui"
+        xmlns:ui="http://schemas.lepo.co/wpfui/2022/xaml"
         mc:Ignorable="d"
-        Title="PublishTool" Height="600" Width="800">
-    <Grid Margin="10">
+        Title="PublishTool" Height="800" Width="1200" MinHeight="560" MinWidth="820"
+        Icon="pack://application:,,,/Assets/app.ico"
+        ExtendsContentIntoTitleBar="True"
+        WindowBackdropType="Mica"
+        WindowStartupLocation="CenterScreen">
+    <Grid>
         <Grid.RowDefinitions>
-            <RowDefinition Height="*"/>
             <RowDefinition Height="Auto"/>
-            <RowDefinition Height="200"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
         </Grid.RowDefinitions>
 
-        <TabControl Grid.Row="0" x:Name="MainTabControl">
-            <TabItem Header="Publish">
-                <Grid Margin="10">
+        <ui:TitleBar Grid.Row="0" Title="PublishTool" Icon="pack://application:,,,/Assets/app.ico"/>
+
+        <ui:InfoBar Grid.Row="1" x:Name="ElevationInfoBar" Margin="16,8,16,0"
+                    Severity="Informational" IsOpen="False"
+                    Title="Not running as Administrator"
+                    Message="Auto-creating IIS sites and starting/stopping sites or application pools require running PublishTool elevated. Right-click the app and choose &quot;Run as administrator&quot; to enable those features."/>
+
+        <Grid Grid.Row="2" Margin="16,4,16,16">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="Auto"/>
+            </Grid.ColumnDefinitions>
+
+            <Grid Grid.Column="0">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="*"/>
+                <RowDefinition Height="Auto"/>
+            </Grid.RowDefinitions>
+
+            <TabControl Grid.Row="0" x:Name="MainTabControl" SelectionChanged="MainTabControl_SelectionChanged">
+                <TabItem Header="Publish">
+                    <Grid Margin="12">
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/>
+                        </Grid.RowDefinitions>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="120"/>
+                            <ColumnDefinition Width="*"/>
+                        </Grid.ColumnDefinitions>
+
+                        <TextBlock Grid.Row="0" Grid.Column="0" Text="Project" VerticalAlignment="Center"/>
+                        <ComboBox Grid.Row="0" Grid.Column="1" x:Name="ProjectComboBox" Margin="0,6"/>
+
+                        <TextBlock Grid.Row="1" Grid.Column="0" Text="Version" VerticalAlignment="Center"/>
+                        <ui:TextBox Grid.Row="1" Grid.Column="1" x:Name="VersionTextBox" Margin="0,6"
+                                    PlaceholderText="e.g. 1.0.0.R0001B"/>
+
+                        <ui:Button Grid.Row="2" Grid.Column="1" x:Name="PublishButton" Content="Publish"
+                                   Appearance="Primary" Icon="{ui:SymbolIcon Rocket24}"
+                                   HorizontalAlignment="Left" Width="140" Margin="0,14,0,0" Click="PublishButton_Click"/>
+                        <ui:Button Grid.Row="3" Grid.Column="1" x:Name="RefreshProjectsButton" Content="Refresh projects"
+                                   Icon="{ui:SymbolIcon ArrowSync24}"
+                                   HorizontalAlignment="Left" Width="140" Margin="0,8,0,0" Click="RefreshProjectsButton_Click"/>
+                    </Grid>
+                </TabItem>
+
+                <TabItem Header="Add Project">
+                    <Grid Margin="12">
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="*"/>
+                        </Grid.RowDefinitions>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="140"/>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+
+                        <TextBlock Grid.Row="0" Grid.Column="0" Text="Name" VerticalAlignment="Center"/>
+                        <ui:TextBox Grid.Row="0" Grid.Column="1" Grid.ColumnSpan="2" x:Name="NewProjectNameTextBox"
+                                    Margin="0,6" PlaceholderText="MyProject"/>
+
+                        <TextBlock Grid.Row="1" Grid.Column="0" Text=".csproj path" VerticalAlignment="Center"/>
+                        <ui:TextBox Grid.Row="1" Grid.Column="1" x:Name="NewProjectCsprojTextBox" Margin="0,6,6,6"
+                                    PlaceholderText="C:\src\MyProject\MyProject.csproj"/>
+                        <ui:Button Grid.Row="1" Grid.Column="2" Content="Browse..." Icon="{ui:SymbolIcon FolderOpen24}"
+                                   Width="100" Click="BrowseCsproj_Click"/>
+
+                        <TextBlock Grid.Row="2" Grid.Column="0" Text="Publish profile" VerticalAlignment="Center"/>
+                        <ui:TextBox Grid.Row="2" Grid.Column="1" x:Name="NewProjectPubxmlTextBox" Margin="0,6,6,6"
+                                    PlaceholderText="FolderProfile"/>
+                        <ui:Button Grid.Row="2" Grid.Column="2" Content="Browse..." Icon="{ui:SymbolIcon FolderOpen24}"
+                                   Width="100" Click="BrowsePubxml_Click"/>
+
+                        <TextBlock Grid.Row="3" Grid.Column="0" Text="AssemblyInfo.cs&#10;(optional)" VerticalAlignment="Center"/>
+                        <ui:TextBox Grid.Row="3" Grid.Column="1" x:Name="NewProjectAssemblyInfoTextBox" Margin="0,6,6,6"
+                                    PlaceholderText="Properties\AssemblyInfo.cs"/>
+                        <ui:Button Grid.Row="3" Grid.Column="2" Content="Browse..." Icon="{ui:SymbolIcon FolderOpen24}"
+                                   Width="100" Click="BrowseAssemblyInfo_Click"/>
+
+                        <TextBlock Grid.Row="4" Grid.Column="0" Text="IIS host folder" VerticalAlignment="Center"/>
+                        <ui:TextBox Grid.Row="4" Grid.Column="1" x:Name="NewProjectIisHostTextBox" Margin="0,6,6,6"
+                                    PlaceholderText="C:\inetpub\wwwroot\MyProject"/>
+                        <ui:Button Grid.Row="4" Grid.Column="2" Content="Browse..." Icon="{ui:SymbolIcon FolderOpen24}"
+                                   Width="100" Click="BrowseIisHost_Click"/>
+
+                        <TextBlock Grid.Row="5" Grid.Column="0" Text="Extra publish&#10;targets (optional)" VerticalAlignment="Center"/>
+                        <ui:TextBox Grid.Row="5" Grid.Column="1" Grid.ColumnSpan="2" x:Name="NewProjectExtraTargetsTextBox" Margin="0,6"
+                                    PlaceholderText="e.g. CollectSQLiteInteropFiles"
+                                    ToolTip="Semicolon-separated MSBuild targets to force during publish, for packages whose own .targets don't hook into this toolset -- e.g. CollectSQLiteInteropFiles"/>
+
+                        <ui:ToggleSwitch Grid.Row="6" Grid.Column="1" Grid.ColumnSpan="2" x:Name="AutoCreateIisSiteToggle"
+                                         Content="Auto-create IIS site if missing" Margin="0,10,0,0"
+                                         Checked="AutoCreateIisSiteToggle_Toggled" Unchecked="AutoCreateIisSiteToggle_Toggled"/>
+
+                        <StackPanel Grid.Row="7" Grid.Column="0" Grid.ColumnSpan="3" x:Name="IisBindingsPanel"
+                                    Visibility="Collapsed" Margin="0,10,0,0">
+                            <TextBlock Text="Site bindings" Margin="0,0,0,6"
+                                       Foreground="{DynamicResource TextFillColorSecondaryBrush}"/>
+                            <DataGrid x:Name="IisBindingsDataGrid" Height="140" AutoGenerateColumns="False" CanUserAddRows="False">
+                                <DataGrid.Columns>
+                                    <DataGridTextColumn Header="Type" Binding="{Binding Protocol}" Width="80"/>
+                                    <DataGridTextColumn Header="IP Address" Binding="{Binding IpAddress}" Width="130"/>
+                                    <DataGridTextColumn Header="Port" Binding="{Binding Port}" Width="70"/>
+                                    <DataGridTextColumn Header="Host name" Binding="{Binding HostName}" Width="*"/>
+                                </DataGrid.Columns>
+                            </DataGrid>
+                            <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
+                                <ui:Button Content="Add binding" Icon="{ui:SymbolIcon Add24}" Width="130" Click="AddBindingButton_Click"/>
+                                <ui:Button Content="Remove binding" Icon="{ui:SymbolIcon Delete24}" Width="140" Margin="10,0,0,0" Click="RemoveBindingButton_Click"/>
+                            </StackPanel>
+                        </StackPanel>
+
+                        <StackPanel Grid.Row="8" Grid.Column="1" Orientation="Horizontal" Margin="0,14,0,0">
+                            <ui:Button x:Name="SaveProjectButton" Content="Save project" Appearance="Primary"
+                                       Icon="{ui:SymbolIcon Save24}" Width="140" Click="SaveProjectButton_Click"/>
+                            <ui:Button x:Name="NewProjectButton" Content="Clear form" Icon="{ui:SymbolIcon Eraser24}"
+                                       Width="110" Margin="10,0,0,0" Click="NewProjectButton_Click"/>
+                            <ui:Button x:Name="RemoveProjectButton" Content="Remove selected" Icon="{ui:SymbolIcon Delete24}"
+                                       Width="150" Margin="10,0,0,0" Click="RemoveProjectButton_Click"/>
+                        </StackPanel>
+
+                        <TextBlock Grid.Row="9" Grid.Column="0" Grid.ColumnSpan="3" Text="Registered projects (click to edit)"
+                                   Margin="0,16,0,6" Foreground="{DynamicResource TextFillColorSecondaryBrush}"/>
+                        <ListBox Grid.Row="10" Grid.Column="0" Grid.ColumnSpan="3" x:Name="RegisteredProjectsListBox"
+                                 DisplayMemberPath="Name" SelectionChanged="RegisteredProjectsListBox_SelectionChanged"/>
+                    </Grid>
+                </TabItem>
+
+                <TabItem Header="IIS">
+                    <Grid Margin="12">
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="*"/>
+                        </Grid.RowDefinitions>
+
+                        <DockPanel Grid.Row="0" Margin="0,0,0,10">
+                            <ui:Button DockPanel.Dock="Right" x:Name="RefreshIisButton" Content="Refresh"
+                                       Icon="{ui:SymbolIcon ArrowSync24}" Width="110" Click="RefreshIisButton_Click"/>
+                        </DockPanel>
+
+                        <TabControl Grid.Row="1">
+                            <TabItem Header="Sites">
+                                <Grid Margin="12">
+                                    <Grid.RowDefinitions>
+                                        <RowDefinition Height="*"/>
+                                        <RowDefinition Height="Auto"/>
+                                    </Grid.RowDefinitions>
+
+                                    <DataGrid Grid.Row="0" x:Name="IisSitesDataGrid" AutoGenerateColumns="False" IsReadOnly="True" MinHeight="120">
+                                        <DataGrid.Columns>
+                                            <DataGridTextColumn Header="Name" Binding="{Binding Name}" Width="*"/>
+                                            <DataGridTextColumn Header="State" Binding="{Binding State}" Width="100"/>
+                                            <DataGridTextColumn Header="Bindings" Binding="{Binding Bindings}" Width="2*"/>
+                                        </DataGrid.Columns>
+                                    </DataGrid>
+
+                                    <StackPanel Grid.Row="1" Orientation="Horizontal" Margin="0,10,0,0">
+                                        <ui:Button Content="Start site" Icon="{ui:SymbolIcon Play24}" Width="120" Click="StartSiteButton_Click"/>
+                                        <ui:Button Content="Stop site" Icon="{ui:SymbolIcon Stop24}" Width="120" Margin="10,0,0,0" Click="StopSiteButton_Click"/>
+                                    </StackPanel>
+                                </Grid>
+                            </TabItem>
+
+                            <TabItem Header="Application Pools">
+                                <Grid Margin="12">
+                                    <Grid.RowDefinitions>
+                                        <RowDefinition Height="*"/>
+                                        <RowDefinition Height="Auto"/>
+                                    </Grid.RowDefinitions>
+
+                                    <DataGrid Grid.Row="0" x:Name="IisAppPoolsDataGrid" AutoGenerateColumns="False" IsReadOnly="True" MinHeight="120">
+                                        <DataGrid.Columns>
+                                            <DataGridTextColumn Header="Name" Binding="{Binding Name}" Width="*"/>
+                                            <DataGridTextColumn Header="State" Binding="{Binding State}" Width="100"/>
+                                            <DataGridTextColumn Header=".NET Version" Binding="{Binding ManagedRuntimeVersion}" Width="120"/>
+                                            <DataGridTextColumn Header="Pipeline" Binding="{Binding PipelineMode}" Width="100"/>
+                                        </DataGrid.Columns>
+                                    </DataGrid>
+
+                                    <StackPanel Grid.Row="1" Orientation="Horizontal" Margin="0,10,0,0">
+                                        <ui:Button Content="Start pool" Icon="{ui:SymbolIcon Play24}" Width="120" Click="StartAppPoolButton_Click"/>
+                                        <ui:Button Content="Stop pool" Icon="{ui:SymbolIcon Stop24}" Width="120" Margin="10,0,0,0" Click="StopAppPoolButton_Click"/>
+                                        <ui:Button Content="Recycle pool" Icon="{ui:SymbolIcon ArrowClockwise24}" Width="130" Margin="10,0,0,0" Click="RecycleAppPoolButton_Click"/>
+                                    </StackPanel>
+                                </Grid>
+                            </TabItem>
+                        </TabControl>
+                    </Grid>
+                </TabItem>
+
+                <TabItem Header="Command">
+                    <Grid Margin="12">
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="*"/>
+                        </Grid.RowDefinitions>
+
+                        <DockPanel Grid.Row="0">
+                            <ui:Button DockPanel.Dock="Right" x:Name="RunCommandButton" Content="Run" Appearance="Primary"
+                                       Icon="{ui:SymbolIcon Play24}" Width="100" Click="RunCommandButton_Click"/>
+                            <ui:TextBox x:Name="CommandInputBox" Margin="0,0,10,0" VerticalContentAlignment="Center"
+                                        PlaceholderText="publish --project MyApp --version 1.0.0.R0001B"
+                                        KeyDown="CommandInputBox_KeyDown"/>
+                        </DockPanel>
+                        <TextBlock Grid.Row="1" Foreground="{DynamicResource TextFillColorSecondaryBrush}"
+                                   Margin="0,10,0,0" TextWrapping="Wrap"
+                                   Text="Type any PublishTool command, e.g. publish --project MyApp --version 1.0.0.R0001B, or add-project --name MyApp --csproj C:\src\MyApp\MyApp.csproj --pubxml FolderProfile --iis-host C:\inetpub\wwwroot\MyApp"/>
+                    </Grid>
+                </TabItem>
+
+                <TabItem Header="Settings">
+                    <Grid Margin="12">
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="*"/>
+                        </Grid.RowDefinitions>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="120"/>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+
+                        <TextBlock Grid.Row="0" Grid.Column="0" Text="Builds root" VerticalAlignment="Center"/>
+                        <ui:TextBox Grid.Row="0" Grid.Column="1" x:Name="BuildsRootTextBox" Margin="0,6,6,6"/>
+                        <ui:Button Grid.Row="0" Grid.Column="2" Content="Browse..." Icon="{ui:SymbolIcon FolderOpen24}"
+                                   Width="100" Click="BrowseBuildsRootButton_Click"/>
+
+                        <StackPanel Grid.Row="1" Grid.Column="1" Orientation="Horizontal" Margin="0,14,0,0">
+                            <ui:Button x:Name="SaveSettingsButton" Content="Save" Appearance="Primary"
+                                       Icon="{ui:SymbolIcon Save24}" Width="110" Click="SaveSettingsButton_Click"/>
+                            <ui:Button x:Name="OpenBuildsRootButton" Content="Open in Explorer" Icon="{ui:SymbolIcon Open24}"
+                                       Width="150" Margin="10,0,0,0" Click="OpenBuildsRootButton_Click"/>
+                        </StackPanel>
+
+                        <ui:ToggleSwitch Grid.Row="2" Grid.Column="0" Grid.ColumnSpan="2" x:Name="DarkModeToggle"
+                                         Content="Dark mode" Margin="0,20,0,0" Checked="DarkModeToggle_Toggled" Unchecked="DarkModeToggle_Toggled"/>
+
+                        <StackPanel Grid.Row="3" Grid.Column="0" Grid.ColumnSpan="2" Orientation="Horizontal" Margin="0,20,0,0">
+                            <TextBlock Text="Accent color" VerticalAlignment="Center" Margin="0,0,14,0"/>
+                            <Border Width="32" Height="32" CornerRadius="16" Background="#0078D4" Cursor="Hand"
+                                    Tag="Blue" ToolTip="Blue" MouseLeftButtonUp="AccentSwatch_Click"/>
+                            <Border Width="32" Height="32" CornerRadius="16" Background="#8764B8" Cursor="Hand"
+                                    Tag="Purple" ToolTip="Purple" Margin="10,0,0,0" MouseLeftButtonUp="AccentSwatch_Click"/>
+                            <Border Width="32" Height="32" CornerRadius="16" Background="#107C10" Cursor="Hand"
+                                    Tag="Green" ToolTip="Green" Margin="10,0,0,0" MouseLeftButtonUp="AccentSwatch_Click"/>
+                        </StackPanel>
+                    </Grid>
+                </TabItem>
+
+                <TabItem Header="Help">
+                    <Grid Margin="12">
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="*"/>
+                        </Grid.RowDefinitions>
+
+                        <DockPanel Grid.Row="0" Margin="0,0,0,10">
+                            <ui:Button DockPanel.Dock="Right" x:Name="RecheckDependenciesButton" Content="Recheck"
+                                       Icon="{ui:SymbolIcon ArrowSync24}" Width="110" Click="RecheckDependenciesButton_Click"/>
+                            <TextBlock Text="Dependencies" FontWeight="SemiBold" VerticalAlignment="Center"/>
+                        </DockPanel>
+
+                        <TextBlock Grid.Row="1" Foreground="{DynamicResource TextFillColorSecondaryBrush}"
+                                   TextWrapping="Wrap" Margin="0,0,0,10"
+                                   Text="External tools PublishTool relies on. MSBuild is required for Publish; IIS (appcmd.exe) is required for auto-creating sites and the IIS tab."/>
+
+                        <DataGrid Grid.Row="2" x:Name="DependenciesDataGrid" AutoGenerateColumns="False" IsReadOnly="True">
+                            <DataGrid.Columns>
+                                <DataGridTextColumn Header="Dependency" Binding="{Binding Name}" Width="160"/>
+                                <DataGridTextColumn Header="Status" Binding="{Binding StatusText}" Width="100"/>
+                                <DataGridTextColumn Header="Details" Binding="{Binding Details}" Width="*"/>
+                            </DataGrid.Columns>
+                        </DataGrid>
+                    </Grid>
+                </TabItem>
+            </TabControl>
+
+            <DockPanel Grid.Row="1" Margin="0,12,0,0" LastChildFill="True">
+                <TextBlock DockPanel.Dock="Left" x:Name="StatusTextBlock" Text="Idle"
+                           Foreground="{DynamicResource TextFillColorSecondaryBrush}"
+                           VerticalAlignment="Center" Width="160" Margin="0,0,10,0"/>
+                <ui:Button DockPanel.Dock="Right" x:Name="ToggleOutputButton" Content="Hide output"
+                           Icon="{ui:SymbolIcon PanelRight24}" Width="130" Click="ToggleOutputButton_Click"/>
+                <ProgressBar x:Name="PublishProgressBar" Height="4" IsIndeterminate="True" Visibility="Collapsed" Margin="0,0,10,0"/>
+            </DockPanel>
+            </Grid>
+
+            <Border Grid.Column="1" x:Name="OutputPanel" Width="380" Margin="12,0,0,0" CornerRadius="8" Padding="14"
+                    Background="{DynamicResource CardBackgroundFillColorDefaultBrush}"
+                    BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}" BorderThickness="1">
+                <Grid>
                     <Grid.RowDefinitions>
-                        <RowDefinition Height="Auto"/>
-                        <RowDefinition Height="Auto"/>
-                        <RowDefinition Height="Auto"/>
-                        <RowDefinition Height="Auto"/>
-                    </Grid.RowDefinitions>
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="120"/>
-                        <ColumnDefinition Width="*"/>
-                    </Grid.ColumnDefinitions>
-
-                    <Label Grid.Row="0" Grid.Column="0" Content="Project"/>
-                    <ComboBox Grid.Row="0" Grid.Column="1" x:Name="ProjectComboBox" Margin="0,4"/>
-
-                    <Label Grid.Row="1" Grid.Column="0" Content="Version"/>
-                    <TextBox Grid.Row="1" Grid.Column="1" x:Name="VersionTextBox" Margin="0,4"/>
-
-                    <Button Grid.Row="2" Grid.Column="1" x:Name="PublishButton" Content="Publish"
-                            HorizontalAlignment="Left" Width="120" Margin="0,10" Click="PublishButton_Click"/>
-                    <Button Grid.Row="3" Grid.Column="1" x:Name="RefreshProjectsButton" Content="Refresh projects"
-                            HorizontalAlignment="Left" Width="120" Click="RefreshProjectsButton_Click"/>
-                </Grid>
-            </TabItem>
-
-            <TabItem Header="Add Project">
-                <Grid Margin="10">
-                    <Grid.RowDefinitions>
-                        <RowDefinition Height="Auto"/>
-                        <RowDefinition Height="Auto"/>
-                        <RowDefinition Height="Auto"/>
-                        <RowDefinition Height="Auto"/>
-                        <RowDefinition Height="Auto"/>
-                        <RowDefinition Height="Auto"/>
-                        <RowDefinition Height="Auto"/>
                         <RowDefinition Height="Auto"/>
                         <RowDefinition Height="*"/>
                     </Grid.RowDefinitions>
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="120"/>
-                        <ColumnDefinition Width="*"/>
-                        <ColumnDefinition Width="Auto"/>
-                    </Grid.ColumnDefinitions>
 
-                    <Label Grid.Row="0" Grid.Column="0" Content="Name"/>
-                    <TextBox Grid.Row="0" Grid.Column="1" Grid.ColumnSpan="2" x:Name="NewProjectNameTextBox" Margin="0,4"/>
-
-                    <Label Grid.Row="1" Grid.Column="0" Content=".csproj path"/>
-                    <TextBox Grid.Row="1" Grid.Column="1" x:Name="NewProjectCsprojTextBox" Margin="0,4,6,4"/>
-                    <Button Grid.Row="1" Grid.Column="2" Content="Browse..." Width="80" Click="BrowseCsproj_Click"/>
-
-                    <Label Grid.Row="2" Grid.Column="0" Content="Publish profile"/>
-                    <TextBox Grid.Row="2" Grid.Column="1" x:Name="NewProjectPubxmlTextBox" Margin="0,4,6,4"/>
-                    <Button Grid.Row="2" Grid.Column="2" Content="Browse..." Width="80" Click="BrowsePubxml_Click"/>
-
-                    <Label Grid.Row="3" Grid.Column="0" Content="AssemblyInfo.cs&#10;(optional)"/>
-                    <TextBox Grid.Row="3" Grid.Column="1" x:Name="NewProjectAssemblyInfoTextBox" Margin="0,4,6,4"/>
-                    <Button Grid.Row="3" Grid.Column="2" Content="Browse..." Width="80" Click="BrowseAssemblyInfo_Click"/>
-
-                    <Label Grid.Row="4" Grid.Column="0" Content="IIS host folder"/>
-                    <TextBox Grid.Row="4" Grid.Column="1" x:Name="NewProjectIisHostTextBox" Margin="0,4,6,4"/>
-                    <Button Grid.Row="4" Grid.Column="2" Content="Browse..." Width="80" Click="BrowseIisHost_Click"/>
-
-                    <Label Grid.Row="5" Grid.Column="0" Content="Extra publish&#10;targets (optional)"/>
-                    <TextBox Grid.Row="5" Grid.Column="1" Grid.ColumnSpan="2" x:Name="NewProjectExtraTargetsTextBox" Margin="0,4"
-                             ToolTip="Semicolon-separated MSBuild targets to force during publish, for packages whose own .targets don't hook into this toolset -- e.g. CollectSQLiteInteropFiles"/>
-
-                    <StackPanel Grid.Row="6" Grid.Column="1" Orientation="Horizontal" Margin="0,10">
-                        <Button x:Name="SaveProjectButton" Content="Save project" Width="120" Click="SaveProjectButton_Click"/>
-                        <Button x:Name="NewProjectButton" Content="Clear form" Width="100" Margin="10,0,0,0" Click="NewProjectButton_Click"/>
-                        <Button x:Name="RemoveProjectButton" Content="Remove selected" Width="120" Margin="10,0,0,0" Click="RemoveProjectButton_Click"/>
-                    </StackPanel>
-
-                    <Label Grid.Row="7" Grid.Column="0" Grid.ColumnSpan="3" Content="Registered projects (click to edit):"/>
-                    <ListBox Grid.Row="8" Grid.Column="0" Grid.ColumnSpan="3" x:Name="RegisteredProjectsListBox"
-                             DisplayMemberPath="Name" SelectionChanged="RegisteredProjectsListBox_SelectionChanged"/>
+                    <TextBlock Grid.Row="0" Text="Output" FontWeight="SemiBold" Margin="0,0,0,8"/>
+                    <TextBox Grid.Row="1" x:Name="OutputLogBox" IsReadOnly="True" BorderThickness="0" Background="Transparent"
+                             VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto"
+                             FontFamily="Cascadia Mono, Consolas" TextWrapping="NoWrap"/>
                 </Grid>
-            </TabItem>
-
-            <TabItem Header="Settings">
-                <Grid Margin="10">
-                    <Grid.RowDefinitions>
-                        <RowDefinition Height="Auto"/>
-                        <RowDefinition Height="Auto"/>
-                        <RowDefinition Height="*"/>
-                    </Grid.RowDefinitions>
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="120"/>
-                        <ColumnDefinition Width="*"/>
-                        <ColumnDefinition Width="Auto"/>
-                    </Grid.ColumnDefinitions>
-
-                    <Label Grid.Row="0" Grid.Column="0" Content="Builds root"/>
-                    <TextBox Grid.Row="0" Grid.Column="1" x:Name="BuildsRootTextBox" Margin="0,4,6,4"/>
-                    <Button Grid.Row="0" Grid.Column="2" Content="Browse..." Width="80" Click="BrowseBuildsRootButton_Click"/>
-
-                    <StackPanel Grid.Row="1" Grid.Column="1" Orientation="Horizontal" Margin="0,10">
-                        <Button x:Name="SaveSettingsButton" Content="Save" Width="100" Click="SaveSettingsButton_Click"/>
-                        <Button x:Name="OpenBuildsRootButton" Content="Open in Explorer" Width="130" Margin="10,0,0,0" Click="OpenBuildsRootButton_Click"/>
-                    </StackPanel>
-                </Grid>
-            </TabItem>
-
-            <TabItem Header="Command">
-                <Grid Margin="10">
-                    <Grid.RowDefinitions>
-                        <RowDefinition Height="Auto"/>
-                        <RowDefinition Height="*"/>
-                    </Grid.RowDefinitions>
-
-                    <DockPanel Grid.Row="0">
-                        <Button DockPanel.Dock="Right" x:Name="RunCommandButton" Content="Run" Width="80" Click="RunCommandButton_Click"/>
-                        <TextBox x:Name="CommandInputBox" Margin="0,0,10,0" VerticalContentAlignment="Center" KeyDown="CommandInputBox_KeyDown"/>
-                    </DockPanel>
-                    <TextBlock Grid.Row="1" Foreground="Gray" Margin="0,6,0,0" TextWrapping="Wrap"
-                               Text="Type any PublishTool command, e.g. publish --project MyApp --version 1.0.0.R0001B, or add-project --name MyApp --csproj C:\src\MyApp\MyApp.csproj --pubxml FolderProfile --iis-host C:\inetpub\wwwroot\MyApp"/>
-                </Grid>
-            </TabItem>
-        </TabControl>
-
-        <DockPanel Grid.Row="1" Margin="0,10,0,0" LastChildFill="True">
-            <TextBlock DockPanel.Dock="Left" x:Name="StatusTextBlock" Text="Idle"
-                       VerticalAlignment="Center" Width="160" Margin="0,0,10,0"/>
-            <ProgressBar x:Name="PublishProgressBar" Height="18" IsIndeterminate="True" Visibility="Collapsed"/>
-        </DockPanel>
-
-        <GroupBox Grid.Row="2" Header="Output" Margin="0,10,0,0">
-            <TextBox x:Name="OutputLogBox" IsReadOnly="True" VerticalScrollBarVisibility="Auto"
-                     HorizontalScrollBarVisibility="Auto" FontFamily="Consolas" TextWrapping="NoWrap"/>
-        </GroupBox>
+            </Border>
+        </Grid>
     </Grid>
-</Window>
+</ui:FluentWindow>

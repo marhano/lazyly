@@ -22,6 +22,14 @@ public static class CommandLineFactory
         root.Add(BuildListBuildsCommand(output));
         root.Add(BuildSetBuildsRootCommand(output));
         root.Add(BuildSetMsBuildPathCommand(output));
+        root.Add(BuildSetThemeCommand(output));
+        root.Add(BuildSetAccentColorCommand(output));
+        root.Add(BuildIisListCommand(output));
+        root.Add(BuildIisSiteActionCommand(output, "iis-start-site", "Start an IIS site.", start: true));
+        root.Add(BuildIisSiteActionCommand(output, "iis-stop-site", "Stop an IIS site.", start: false));
+        root.Add(BuildIisAppPoolActionCommand(output, "iis-start-apppool", "Start an IIS application pool.", AppPoolAction.Start));
+        root.Add(BuildIisAppPoolActionCommand(output, "iis-stop-apppool", "Stop an IIS application pool.", AppPoolAction.Stop));
+        root.Add(BuildIisAppPoolActionCommand(output, "iis-recycle-apppool", "Recycle an IIS application pool.", AppPoolAction.Recycle));
 
         return root;
     }
@@ -76,6 +84,16 @@ public static class CommandLineFactory
             Description = "Semicolon-separated MSBuild targets to force during publish, for packages whose " +
                            "own .targets don't hook into this toolset (e.g. CollectSQLiteInteropFiles). Optional.",
         };
+        var autoCreateIisSiteOption = new Option<bool>("--auto-create-iis-site")
+        {
+            Description = "Create an IIS site named after this project on publish, if one doesn't already exist " +
+                           "(requires at least one --iis-binding). Never modifies an existing site.",
+        };
+        var iisBindingOption = new Option<string[]>("--iis-binding")
+        {
+            Description = "A site binding as protocol:ip:port:hostname, e.g. http:*:80: or https:*:443:example.com " +
+                           "(hostname may be empty). Repeatable.",
+        };
 
         var command = new Command("add-project", "Register a project (or update an existing registration).");
         command.Add(nameOption);
@@ -84,25 +102,60 @@ public static class CommandLineFactory
         command.Add(assemblyInfoOption);
         command.Add(iisHostOption);
         command.Add(extraTargetsOption);
+        command.Add(autoCreateIisSiteOption);
+        command.Add(iisBindingOption);
 
         command.SetAction(parseResult =>
         {
-            var registry = new ProjectRegistry(ProjectRegistry.DefaultPath);
-            registry.AddOrUpdate(new ProjectConfig
+            try
             {
-                Name = parseResult.GetValue(nameOption)!,
-                CsprojPath = parseResult.GetValue(csprojOption)!,
-                PubxmlName = parseResult.GetValue(pubxmlOption)!,
-                AssemblyInfoPath = parseResult.GetValue(assemblyInfoOption),
-                IisHostPath = parseResult.GetValue(iisHostOption)!,
-                ExtraPublishTargets = parseResult.GetValue(extraTargetsOption),
-            });
+                var bindings = (parseResult.GetValue(iisBindingOption) ?? Array.Empty<string>())
+                    .Select(ParseIisBinding)
+                    .ToList();
 
-            output.Info($"Registered project '{parseResult.GetValue(nameOption)}'.");
-            return 0;
+                var registry = new ProjectRegistry(ProjectRegistry.DefaultPath);
+                registry.AddOrUpdate(new ProjectConfig
+                {
+                    Name = parseResult.GetValue(nameOption)!,
+                    CsprojPath = parseResult.GetValue(csprojOption)!,
+                    PubxmlName = parseResult.GetValue(pubxmlOption)!,
+                    AssemblyInfoPath = parseResult.GetValue(assemblyInfoOption),
+                    IisHostPath = parseResult.GetValue(iisHostOption)!,
+                    ExtraPublishTargets = parseResult.GetValue(extraTargetsOption),
+                    AutoCreateIisSite = parseResult.GetValue(autoCreateIisSiteOption),
+                    IisBindings = bindings,
+                });
+
+                output.Info($"Registered project '{parseResult.GetValue(nameOption)}'.");
+                return 0;
+            }
+            catch (Exception ex)
+            {
+                output.Error(ex.Message);
+                return 1;
+            }
         });
 
         return command;
+    }
+
+    private static IisBinding ParseIisBinding(string raw)
+    {
+        var parts = raw.Split(':', 4);
+        if (parts.Length < 3 || string.IsNullOrWhiteSpace(parts[0]) || !int.TryParse(parts[2], out var port))
+        {
+            throw new ArgumentException(
+                $"Invalid --iis-binding value '{raw}'. Expected protocol:ip:port:hostname, " +
+                "e.g. http:*:80: or https:*:443:example.com.");
+        }
+
+        return new IisBinding
+        {
+            Protocol = parts[0],
+            IpAddress = string.IsNullOrWhiteSpace(parts[1]) ? "*" : parts[1],
+            Port = port,
+            HostName = parts.Length > 3 && !string.IsNullOrWhiteSpace(parts[3]) ? parts[3] : null,
+        };
     }
 
     private static Command BuildRemoveProjectCommand(IOutputSink output)
@@ -223,4 +276,172 @@ public static class CommandLineFactory
 
         return command;
     }
+
+    private static Command BuildSetThemeCommand(IOutputSink output)
+    {
+        var valueOption = new Option<string>("--value") { Description = "Light, Dark, or System.", Required = true };
+
+        var command = new Command("set-theme", "Set the app's color theme (persisted; GUI applies it live).");
+        command.Add(valueOption);
+
+        command.SetAction(parseResult =>
+        {
+            var value = parseResult.GetValue(valueOption)!;
+            if (!string.Equals(value, "Light", StringComparison.OrdinalIgnoreCase) &&
+                !string.Equals(value, "Dark", StringComparison.OrdinalIgnoreCase) &&
+                !string.Equals(value, "System", StringComparison.OrdinalIgnoreCase))
+            {
+                output.Error("Theme must be Light, Dark, or System.");
+                return 1;
+            }
+
+            var settings = AppSettings.Load(AppSettings.DefaultPath);
+            settings.Theme = string.Equals(value, "System", StringComparison.OrdinalIgnoreCase) ? null : value;
+            settings.Save(AppSettings.DefaultPath);
+
+            output.Info($"Theme set to '{value}'.");
+            return 0;
+        });
+
+        return command;
+    }
+
+    private static Command BuildSetAccentColorCommand(IOutputSink output)
+    {
+        var presetNames = string.Join(", ", AccentPresets.All.Select(p => p.Name));
+        var valueOption = new Option<string>("--value") { Description = $"One of: {presetNames}.", Required = true };
+
+        var command = new Command("set-accent-color", "Set the app's accent color (persisted; GUI applies it live).");
+        command.Add(valueOption);
+
+        command.SetAction(parseResult =>
+        {
+            var value = parseResult.GetValue(valueOption)!;
+            var preset = AccentPresets.All.FirstOrDefault(p => string.Equals(p.Name, value, StringComparison.OrdinalIgnoreCase));
+            if (preset.Hex is null)
+            {
+                output.Error($"Accent color must be one of: {presetNames}.");
+                return 1;
+            }
+
+            var settings = AppSettings.Load(AppSettings.DefaultPath);
+            settings.AccentColor = preset.Hex;
+            settings.Save(AppSettings.DefaultPath);
+
+            output.Info($"Accent color set to '{preset.Name}'.");
+            return 0;
+        });
+
+        return command;
+    }
+
+    private static Command BuildIisListCommand(IOutputSink output)
+    {
+        var command = new Command("iis-list", "List IIS sites and application pools with their current state.");
+
+        command.SetAction(async (_, ct) =>
+        {
+            try
+            {
+                var manager = new IisSiteManager(output);
+
+                var sites = await manager.ListSitesAsync(ct);
+                output.Info(sites.Count == 0 ? "No sites." : "Sites:");
+                foreach (var site in sites)
+                {
+                    output.Info($"  {site.Name}  [{site.State}]  bindings: {site.Bindings}");
+                }
+
+                var pools = await manager.ListAppPoolsAsync(ct);
+                output.Info(pools.Count == 0 ? "No application pools." : "Application pools:");
+                foreach (var pool in pools)
+                {
+                    output.Info($"  {pool.Name}  [{pool.State}]  {pool.ManagedRuntimeVersion} / {pool.PipelineMode}");
+                }
+
+                return 0;
+            }
+            catch (Exception ex)
+            {
+                output.Error(ex.Message);
+                return 1;
+            }
+        });
+
+        return command;
+    }
+
+    private static Command BuildIisSiteActionCommand(IOutputSink output, string commandName, string description, bool start)
+    {
+        var nameOption = new Option<string>("--name", "-n") { Description = "Site name.", Required = true };
+        var command = new Command(commandName, description);
+        command.Add(nameOption);
+
+        command.SetAction(async (parseResult, ct) =>
+        {
+            try
+            {
+                var manager = new IisSiteManager(output);
+                var name = parseResult.GetValue(nameOption)!;
+
+                if (start)
+                {
+                    await manager.StartSiteAsync(name, ct);
+                }
+                else
+                {
+                    await manager.StopSiteAsync(name, ct);
+                }
+
+                return 0;
+            }
+            catch (Exception ex)
+            {
+                output.Error(ex.Message);
+                return 1;
+            }
+        });
+
+        return command;
+    }
+
+    private static Command BuildIisAppPoolActionCommand(IOutputSink output, string commandName, string description, AppPoolAction action)
+    {
+        var nameOption = new Option<string>("--name", "-n") { Description = "Application pool name.", Required = true };
+        var command = new Command(commandName, description);
+        command.Add(nameOption);
+
+        command.SetAction(async (parseResult, ct) =>
+        {
+            try
+            {
+                var manager = new IisSiteManager(output);
+                var name = parseResult.GetValue(nameOption)!;
+
+                switch (action)
+                {
+                    case AppPoolAction.Start:
+                        await manager.StartAppPoolAsync(name, ct);
+                        break;
+                    case AppPoolAction.Stop:
+                        await manager.StopAppPoolAsync(name, ct);
+                        break;
+                    case AppPoolAction.Recycle:
+                        await manager.RecycleAppPoolAsync(name, ct);
+                        break;
+                }
+
+                return 0;
+            }
+            catch (Exception ex)
+            {
+                output.Error(ex.Message);
+                return 1;
+            }
+        });
+
+        return command;
+    }
+
+    private enum AppPoolAction { Start, Stop, Recycle }
 }

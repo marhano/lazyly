@@ -18,4 +18,13 @@ public sealed class ProjectConfig
     /// publish pipeline on their own (e.g. "CollectSQLiteInteropFiles" for older SQLite packages).
     /// </summary>
     public string? ExtraPublishTargets { get; set; }
+
+    /// <summary>
+    /// When true, publish ensures an IIS site named after this project exists before mirroring
+    /// files into <see cref="IisHostPath"/> -- creating one with <see cref="IisBindings"/> if
+    /// it's not already there. Never modifies an existing site.
+    /// </summary>
+    public bool AutoCreateIisSite { get; set; }
+
+    public List<IisBinding> IisBindings { get; set; } = new();
 }
