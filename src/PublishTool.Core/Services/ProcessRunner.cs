@@ -8,6 +8,21 @@ internal static class ProcessRunner
         string fileName,
         string arguments,
         IOutputSink output,
+        CancellationToken ct = default) =>
+        await RunAsync(fileName, arguments, output, treatStderrAsError: true, ct);
+
+    /// <summary>
+    /// Same as the other overload, but with control over whether stderr lines are logged as
+    /// errors. Most tools here (MSBuild, appcmd) use stderr to mean "something's wrong", but git
+    /// routinely writes ordinary status messages there too (e.g. "Switched to branch 'x'" on a
+    /// perfectly successful checkout) -- callers driving git should pass false so a successful
+    /// command doesn't show up looking like a failure in the output log.
+    /// </summary>
+    public static async Task<int> RunAsync(
+        string fileName,
+        string arguments,
+        IOutputSink output,
+        bool treatStderrAsError,
         CancellationToken ct = default)
     {
         var psi = new ProcessStartInfo(fileName, arguments)
@@ -20,7 +35,22 @@ internal static class ProcessRunner
 
         using var process = new Process { StartInfo = psi, EnableRaisingEvents = true };
         process.OutputDataReceived += (_, e) => { if (e.Data is not null) output.Info(e.Data); };
-        process.ErrorDataReceived += (_, e) => { if (e.Data is not null) output.Error(e.Data); };
+        process.ErrorDataReceived += (_, e) =>
+        {
+            if (e.Data is null)
+            {
+                return;
+            }
+
+            if (treatStderrAsError)
+            {
+                output.Error(e.Data);
+            }
+            else
+            {
+                output.Info(e.Data);
+            }
+        };
 
         process.Start();
         process.BeginOutputReadLine();

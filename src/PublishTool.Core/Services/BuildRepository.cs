@@ -6,6 +6,8 @@ namespace PublishTool.Core.Services;
 
 public sealed record BuildArchiveResult(string ZipPath, string ManifestPath, string ReleaseNotesPath);
 
+public sealed record ExistingBuild(BuildManifest Manifest, string ManifestPath);
+
 public sealed class BuildRepository
 {
     private static readonly JsonSerializerOptions JsonOptions = new() { WriteIndented = true };
@@ -17,12 +19,58 @@ public sealed class BuildRepository
     public BuildArchiveResult Archive(string buildsRoot, string projectName, string version, string sourceDir)
     {
         var paths = ReservePaths(buildsRoot, projectName, version);
+        WriteZip(paths.ZipPath, sourceDir);
+        return paths;
+    }
+
+    /// <summary>
+    /// Zips <paramref name="sourceDir"/> to an exact, already-known path -- used both by
+    /// <see cref="Archive"/> and when overwriting an existing build in place (see
+    /// <see cref="FindBuild"/>), where the destination must be the existing build's own zip path
+    /// rather than a freshly reserved one. Overwrites if a file is already there.
+    /// </summary>
+    public void WriteZip(string zipPath, string sourceDir)
+    {
+        if (File.Exists(zipPath))
+        {
+            File.Delete(zipPath);
+        }
 
         // sourceDir is zipped as-is -- release notes are written separately (see WriteReleaseNotes),
         // never into sourceDir, so they never end up inside the deployed/zipped package.
-        ZipFile.CreateFromDirectory(sourceDir, paths.ZipPath, CompressionLevel.Optimal, includeBaseDirectory: false);
+        ZipFile.CreateFromDirectory(sourceDir, zipPath, CompressionLevel.Optimal, includeBaseDirectory: false);
+    }
 
-        return paths;
+    /// <summary>
+    /// Finds the existing build (if any) for this exact project+version, so republishing the same
+    /// version overwrites it in place instead of creating a duplicate. If more than one already
+    /// exists (e.g. from before this behavior existed), the most recently published one wins --
+    /// older duplicates are left on disk untouched rather than guessed at or deleted.
+    /// </summary>
+    public ExistingBuild? FindBuild(string buildsRoot, string projectName, string version)
+    {
+        var projectDir = Path.Combine(buildsRoot, projectName);
+        if (!Directory.Exists(projectDir))
+        {
+            return null;
+        }
+
+        ExistingBuild? best = null;
+        foreach (var file in Directory.EnumerateFiles(projectDir, "*.manifest.json"))
+        {
+            var manifest = JsonSerializer.Deserialize<BuildManifest>(File.ReadAllText(file));
+            if (manifest is null || !string.Equals(manifest.Version, version, StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            if (best is null || manifest.PublishedAtUtc > best.Manifest.PublishedAtUtc)
+            {
+                best = new ExistingBuild(manifest, file);
+            }
+        }
+
+        return best;
     }
 
     /// <summary>

@@ -11,10 +11,12 @@
             <StackPanel Orientation="Horizontal">
                 <ui:TextBox x:Name="InputTextBox" Width="200" PlaceholderText="Add an item..."
                             KeyDown="InputTextBox_KeyDown"/>
-                <ui:Button Content="Add" Icon="{ui:SymbolIcon Add24}" Width="80" Margin="8,0,0,0"
+                <ui:Button x:Name="AddButton" Content="Add" Icon="{ui:SymbolIcon Add24}" Width="80" Margin="8,0,0,0"
                            Click="AddButton_Click"/>
             </StackPanel>
-            <ListBox x:Name="ItemsListBox" Height="80" Margin="0,8,0,0"/>
+            <ListBox x:Name="ItemsListBox" Height="80" Margin="0,8,0,0"
+                     ToolTip="Click an item to edit it"
+                     SelectionChanged="ItemsListBox_SelectionChanged"/>
             <ui:Button Content="Remove selected" Icon="{ui:SymbolIcon Delete24}" HorizontalAlignment="Left"
                        Margin="0,8,0,0" Click="RemoveButton_Click"/>
         </StackPanel>

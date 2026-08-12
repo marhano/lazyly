@@ -11,6 +11,7 @@ using PublishTool.Commands;
 using PublishTool.Core;
 using PublishTool.Core.Models;
 using PublishTool.Core.Services;
+using PublishTool.Core.Services.AppConfig;
 using Wpf.Ui.Appearance;
 
 namespace PublishTool.Gui;
@@ -26,8 +27,13 @@ public partial class MainWindow : Wpf.Ui.Controls.FluentWindow
     private readonly GuiOutputSink _output;
     private readonly System.Windows.Forms.NotifyIcon _notifyIcon;
     private readonly ObservableCollection<IisBinding> _iisBindings = new();
+    private readonly ObservableCollection<AppConfigSettingRow> _appConfigSettings = new();
+    private readonly HashSet<string> _currentProjectVersions = new(StringComparer.OrdinalIgnoreCase);
+    private readonly HashSet<string> _currentProjectBranches = new(StringComparer.OrdinalIgnoreCase);
     private bool _isBusy;
     private bool _isExiting;
+    private string? _lastSelectedProjectForForm;
+    private GridLength _savedOutputColumnWidth = new(380);
 
     public MainWindow()
     {
@@ -62,7 +68,10 @@ public partial class MainWindow : Wpf.Ui.Controls.FluentWindow
         Closing += MainWindow_Closing;
 
         IisBindingsDataGrid.ItemsSource = _iisBindings;
+        AppConfigDataGrid.ItemsSource = _appConfigSettings;
+        AppConfigTypeComboBox.ItemsSource = AppConfigProviderRegistry.All;
         ElevationInfoBar.IsOpen = !IsRunningAsAdministrator();
+        AppVersionTextBlock.Text = $"PublishTool v{GetAppVersion()}";
 
         _output = new GuiOutputSink(OutputLogBox, StatusTextBlock, _notifyIcon);
         RefreshProjects();
@@ -76,6 +85,14 @@ public partial class MainWindow : Wpf.Ui.Controls.FluentWindow
         using var identity = WindowsIdentity.GetCurrent();
         var principal = new WindowsPrincipal(identity);
         return principal.IsInRole(WindowsBuiltInRole.Administrator);
+    }
+
+    private static string GetAppVersion()
+    {
+        var version = System.Reflection.Assembly.GetExecutingAssembly().GetName().Version;
+        // Trim to Major.Minor.Build -- the SDK always fills in a Revision (usually 0), which
+        // isn't meaningful here and would just make "1.0.0" read as "1.0.0.0".
+        return version is null ? "unknown" : $"{version.Major}.{version.Minor}.{version.Build}";
     }
 
     private static System.Drawing.Icon LoadAppIcon()
@@ -247,7 +264,20 @@ public partial class MainWindow : Wpf.Ui.Controls.FluentWindow
     private void ToggleOutputButton_Click(object sender, RoutedEventArgs e)
     {
         var isCurrentlyVisible = OutputPanel.Visibility == Visibility.Visible;
+        if (isCurrentlyVisible)
+        {
+            // Remember whatever width the user last dragged the splitter to, so re-showing the
+            // panel restores it instead of snapping back to the default.
+            _savedOutputColumnWidth = OutputColumnDefinition.Width;
+            OutputColumnDefinition.Width = new GridLength(0);
+        }
+        else
+        {
+            OutputColumnDefinition.Width = _savedOutputColumnWidth;
+        }
+
         OutputPanel.Visibility = isCurrentlyVisible ? Visibility.Collapsed : Visibility.Visible;
+        OutputSplitter.Visibility = isCurrentlyVisible ? Visibility.Collapsed : Visibility.Visible;
         ToggleOutputButton.Content = isCurrentlyVisible ? "Show output" : "Hide output";
     }
 
@@ -444,13 +474,431 @@ public partial class MainWindow : Wpf.Ui.Controls.FluentWindow
         RegisteredProjectsListBox.ItemsSource = registry.Projects;
     }
 
+    private async void ProjectComboBox_SelectionChanged(object sender, System.Windows.Controls.SelectionChangedEventArgs e)
+    {
+        var project = ProjectComboBox.SelectedItem as string;
+        var changed = !string.Equals(project, _lastSelectedProjectForForm, StringComparison.Ordinal);
+        _lastSelectedProjectForForm = project;
+
+        LoadVersionsForSelectedProject();
+
+        // Only reset the form when the project actually changed -- ProjectComboBox gets
+        // reselected (to the same value) after every command via RefreshProjects(), and that
+        // shouldn't wipe out release notes the user is still editing.
+        if (changed)
+        {
+            VersionComboBox.Text = string.Empty;
+            VersionOverwriteHintTextBlock.Visibility = Visibility.Collapsed;
+            FeaturesEditor.Clear();
+            FixesEditor.Clear();
+            OtherUpdatesEditor.Clear();
+            BacklogItemsEditor.Clear();
+            LoadAppConfigForSelectedProject();
+        }
+
+        await LoadGitBranchesForSelectedProjectAsync();
+    }
+
+    /// <summary>Shows/hides the App Config accordion for the selected project and, if it uses
+    /// app config, seeds the grid from the live config file on disk (the starting point before
+    /// the user picks a specific already-published version, which would show that version's
+    /// saved settings instead -- see VersionComboBox_SelectionChanged).</summary>
+    private void LoadAppConfigForSelectedProject()
+    {
+        _appConfigSettings.Clear();
+
+        var projectName = ProjectComboBox.SelectedItem as string;
+        var project = string.IsNullOrWhiteSpace(projectName) ? null : new ProjectRegistry(ProjectRegistry.DefaultPath).Get(projectName);
+
+        if (project is not { UseAppConfig: true } || AppConfigProviderRegistry.Get(project.AppConfigType) is not { } provider)
+        {
+            AppConfigExpander.Visibility = Visibility.Collapsed;
+            return;
+        }
+
+        AppConfigExpander.Visibility = Visibility.Visible;
+        AppConfigDescriptionTextBlock.Text = $"Editing {provider.DisplayName} at {project.AppConfigPath}";
+
+        if (string.IsNullOrWhiteSpace(project.AppConfigPath) || !File.Exists(project.AppConfigPath))
+        {
+            return;
+        }
+
+        try
+        {
+            foreach (var (key, value) in provider.ReadSettings(project.AppConfigPath))
+            {
+                _appConfigSettings.Add(new AppConfigSettingRow { Key = key, Value = value });
+            }
+        }
+        catch (Exception ex)
+        {
+            _output.Warn($"Couldn't read app config: {ex.Message}");
+        }
+    }
+
+    private void AddAppConfigSettingButton_Click(object sender, RoutedEventArgs e) =>
+        _appConfigSettings.Add(new AppConfigSettingRow());
+
+    private void RemoveAppConfigSettingButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (AppConfigDataGrid.SelectedItem is AppConfigSettingRow row)
+        {
+            _appConfigSettings.Remove(row);
+        }
+    }
+
+    private void LoadVersionsForSelectedProject()
+    {
+        _currentProjectVersions.Clear();
+
+        var project = ProjectComboBox.SelectedItem as string;
+        if (string.IsNullOrWhiteSpace(project))
+        {
+            VersionComboBox.ItemsSource = null;
+            return;
+        }
+
+        var settings = AppSettings.Load(AppSettings.DefaultPath);
+        var buildRepository = new BuildRepository();
+        var versions = buildRepository.ListBuilds(settings.BuildsRoot, project)
+            .Select(b => b.Version)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        foreach (var version in versions)
+        {
+            _currentProjectVersions.Add(version);
+        }
+
+        VersionComboBox.ItemsSource = versions;
+    }
+
+    private async Task LoadGitBranchesForSelectedProjectAsync()
+    {
+        _currentProjectBranches.Clear();
+        GitBranchAutoSuggestBox.OriginalItemsSource = Array.Empty<string>();
+        GitBranchAutoSuggestBox.Text = string.Empty;
+        GitBranchAutoSuggestBox.IsEnabled = false;
+
+        var projectName = ProjectComboBox.SelectedItem as string;
+        if (string.IsNullOrWhiteSpace(projectName))
+        {
+            return;
+        }
+
+        var registry = new ProjectRegistry(ProjectRegistry.DefaultPath);
+        var project = registry.Get(projectName);
+        if (project is null)
+        {
+            return;
+        }
+
+        GitBranchInfo? info;
+        try
+        {
+            info = await new GitService(_output).ListBranchesAsync(project.CsprojPath);
+        }
+        catch
+        {
+            // git isn't installed, or something else went wrong probing the repo -- leave the
+            // branch picker empty/disabled rather than surfacing this as a hard error.
+            info = null;
+        }
+
+        if (info is null)
+        {
+            return;
+        }
+
+        foreach (var branch in info.Branches)
+        {
+            _currentProjectBranches.Add(branch);
+        }
+
+        GitBranchAutoSuggestBox.OriginalItemsSource = info.Branches.ToList();
+        GitBranchAutoSuggestBox.Text = info.CurrentBranch;
+        GitBranchAutoSuggestBox.IsEnabled = true;
+    }
+
+    /// <summary>
+    /// Switching the branch picker doesn't touch the working tree by itself -- publish checks
+    /// out whatever's selected right before building, but until then the App Config panel would
+    /// otherwise keep showing the previously-checked-out branch's file. This checks out the
+    /// selected branch immediately, so App Config (and anything else read from disk) reflects it.
+    /// </summary>
+    private async void CheckoutBranchButton_Click(object sender, RoutedEventArgs e)
+    {
+        var project = ProjectComboBox.SelectedItem as string;
+        if (string.IsNullOrWhiteSpace(project))
+        {
+            MessageBox.Show("Select a project first.", "PublishTool", MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
+        }
+
+        var branch = GitBranchAutoSuggestBox.Text?.Trim() ?? string.Empty;
+        if (string.IsNullOrWhiteSpace(branch) || !_currentProjectBranches.Contains(branch))
+        {
+            MessageBox.Show(
+                "Pick a branch from the search list first.",
+                "PublishTool",
+                MessageBoxButton.OK,
+                MessageBoxImage.Warning);
+            return;
+        }
+
+        var projectConfig = new ProjectRegistry(ProjectRegistry.DefaultPath).Get(project);
+        if (projectConfig is null)
+        {
+            return;
+        }
+
+        // Called directly (not through RunAsync/CommandLineFactory) because handling a checkout
+        // conflict needs the structured GitCheckoutConflictException -- the CLI command only ever
+        // surfaces a logged error string, which isn't enough to drive the resolution dialog below.
+        if (_isBusy)
+        {
+            return;
+        }
+
+        _isBusy = true;
+        SetBusy(true);
+        try
+        {
+            await CheckoutBranchAsync(projectConfig, branch);
+        }
+        finally
+        {
+            _isBusy = false;
+            SetBusy(false);
+        }
+
+        // The working tree may have just changed on disk -- reload whatever reads from it.
+        LoadAppConfigForSelectedProject();
+        await LoadGitBranchesForSelectedProjectAsync();
+    }
+
+    private async Task CheckoutBranchAsync(ProjectConfig project, string branch)
+    {
+        var git = new GitService(_output);
+
+        // No-op if we're already there -- CheckoutAsync would also catch this, but checking here
+        // first avoids bothering the user with the uncommitted-changes prompt below for a checkout
+        // that isn't actually going to change anything.
+        var currentBranch = await git.GetCurrentBranchAsync(project.CsprojPath);
+        if (string.Equals(currentBranch, branch, StringComparison.OrdinalIgnoreCase))
+        {
+            _output.Info($"Already on branch '{branch}'.");
+            return;
+        }
+
+        // Proactive check: git doesn't always BLOCK a checkout just because there are uncommitted
+        // changes -- if the target branch doesn't touch the same files, they silently carry over
+        // onto the new branch instead. Ask first rather than letting that happen invisibly.
+        IReadOnlyList<string> uncommittedFiles;
+        try
+        {
+            uncommittedFiles = await git.GetUncommittedChangesAsync(project.CsprojPath);
+        }
+        catch (Exception ex)
+        {
+            _output.Warn($"Couldn't check for uncommitted changes: {ex.Message}");
+            uncommittedFiles = Array.Empty<string>();
+        }
+
+        if (uncommittedFiles.Count > 0)
+        {
+            var dialog = new GitConflictDialog(branch, uncommittedFiles, isBlocking: false) { Owner = this };
+            if (dialog.ShowDialog() != true)
+            {
+                _output.Info("Checkout cancelled.");
+                return;
+            }
+
+            if (dialog.Resolution != GitConflictResolution.CheckoutAnyway &&
+                !await ApplyGitResolutionAsync(git, project, branch, dialog.Resolution, uncommittedFiles, dialog.CommitMessage))
+            {
+                return;
+            }
+
+            // else CheckoutAnyway: fall through and let the changes carry over, same as if the
+            // user had run "git checkout" themselves with nothing staged.
+        }
+
+        try
+        {
+            await git.CheckoutAsync(project.CsprojPath, branch);
+            _output.Stage("Checkout complete.");
+            return;
+        }
+        catch (GitCheckoutConflictException conflict)
+        {
+            // Even after the prompt above (or if they chose "Checkout anyway"), git can still
+            // refuse for files that actually conflict with the target branch -- handle that the
+            // same way, just with the "blocked" framing instead of the proactive one.
+            var dialog = new GitConflictDialog(branch, conflict.ConflictingFiles, isBlocking: true) { Owner = this };
+            if (dialog.ShowDialog() != true)
+            {
+                _output.Info("Checkout cancelled -- resolve the conflicting files yourself (e.g. in your IDE), then try again.");
+                return;
+            }
+
+            if (!await ApplyGitResolutionAsync(git, project, branch, dialog.Resolution, conflict.ConflictingFiles, dialog.CommitMessage))
+            {
+                return;
+            }
+
+            try
+            {
+                await git.CheckoutAsync(project.CsprojPath, branch);
+                _output.Stage("Checkout complete.");
+            }
+            catch (Exception ex)
+            {
+                _output.Error(ex.Message);
+            }
+        }
+        catch (Exception ex)
+        {
+            _output.Error(ex.Message);
+        }
+    }
+
+    /// <summary>Applies a Discard/Stash/Commit resolution chosen in <see cref="GitConflictDialog"/>
+    /// to exactly the given files. Returns false (having already logged the error) on failure, so
+    /// callers can bail out of whatever checkout attempt was waiting on it.</summary>
+    private async Task<bool> ApplyGitResolutionAsync(
+        GitService git, ProjectConfig project, string branch, GitConflictResolution resolution, IReadOnlyList<string> files, string commitMessage)
+    {
+        try
+        {
+            switch (resolution)
+            {
+                case GitConflictResolution.Discard:
+                    await git.DiscardChangesAsync(project.CsprojPath, files);
+                    break;
+                case GitConflictResolution.Stash:
+                    await git.StashChangesAsync(project.CsprojPath, files, $"PublishTool: before checkout to {branch}");
+                    break;
+                case GitConflictResolution.Commit:
+                    await git.CommitChangesAsync(project.CsprojPath, files, commitMessage);
+                    break;
+            }
+
+            return true;
+        }
+        catch (Exception ex)
+        {
+            _output.Error(ex.Message);
+            return false;
+        }
+    }
+
+    private void VersionComboBox_SelectionChanged(object sender, System.Windows.Controls.SelectionChangedEventArgs e)
+    {
+        UpdateVersionOverwriteHint();
+
+        if (VersionComboBox.SelectedItem is not string version)
+        {
+            return;
+        }
+
+        var project = ProjectComboBox.SelectedItem as string;
+        if (string.IsNullOrWhiteSpace(project))
+        {
+            return;
+        }
+
+        FeaturesEditor.Clear();
+        FixesEditor.Clear();
+        OtherUpdatesEditor.Clear();
+        BacklogItemsEditor.Clear();
+        LoadAppConfigForSelectedProject();
+
+        var settings = AppSettings.Load(AppSettings.DefaultPath);
+        var buildRepository = new BuildRepository();
+        var existing = buildRepository.FindBuild(settings.BuildsRoot, project, version);
+
+        ApplySavedAppConfigForSelectedVersion(existing);
+
+        if (existing?.Manifest.ReleaseNotesPath is not { } notesPath || !File.Exists(notesPath))
+        {
+            return;
+        }
+
+        var entry = ReleaseNotesFormatter.Parse(File.ReadAllText(notesPath));
+        if (entry is not null)
+        {
+            foreach (var item in entry.Features) { FeaturesEditor.Items.Add(item); }
+            foreach (var item in entry.Fixes) { FixesEditor.Items.Add(item); }
+            foreach (var item in entry.OtherUpdates) { OtherUpdatesEditor.Items.Add(item); }
+            foreach (var item in entry.BacklogItems) { BacklogItemsEditor.Items.Add(item); }
+        }
+    }
+
+    /// <summary>Restores the app config settings this specific build was published with, if any
+    /// -- overriding whatever LoadAppConfigForSelectedProject seeded from the live config file,
+    /// so re-selecting a published version shows exactly what was published for it.</summary>
+    private void ApplySavedAppConfigForSelectedVersion(ExistingBuild? existing)
+    {
+        if (existing?.Manifest.AppConfigSettings is not { Count: > 0 } saved)
+        {
+            return;
+        }
+
+        _appConfigSettings.Clear();
+        foreach (var (key, value) in saved)
+        {
+            _appConfigSettings.Add(new AppConfigSettingRow { Key = key, Value = value });
+        }
+    }
+
+    private void VersionComboBox_TextChanged(object sender, System.Windows.Controls.TextChangedEventArgs e) =>
+        UpdateVersionOverwriteHint();
+
+    private void UpdateVersionOverwriteHint()
+    {
+        var text = VersionComboBox.Text;
+        VersionOverwriteHintTextBlock.Visibility =
+            !string.IsNullOrWhiteSpace(text) && _currentProjectVersions.Contains(text)
+                ? Visibility.Visible
+                : Visibility.Collapsed;
+    }
+
     private async void PublishButton_Click(object sender, RoutedEventArgs e)
     {
         var project = ProjectComboBox.SelectedItem as string;
-        if (string.IsNullOrWhiteSpace(project) || string.IsNullOrWhiteSpace(VersionTextBox.Text))
+        var version = VersionComboBox.Text?.Trim() ?? string.Empty;
+
+        if (string.IsNullOrWhiteSpace(project) || string.IsNullOrWhiteSpace(version))
         {
             MessageBox.Show(
                 "Select a project and fill in a version.",
+                "PublishTool",
+                MessageBoxButton.OK,
+                MessageBoxImage.Warning);
+            return;
+        }
+
+        if (_currentProjectVersions.Contains(version))
+        {
+            var confirm = MessageBox.Show(
+                $"Version '{version}' already exists for '{project}'. Publishing will overwrite its build and release notes. Continue?",
+                "PublishTool",
+                MessageBoxButton.YesNo,
+                MessageBoxImage.Warning);
+
+            if (confirm != MessageBoxResult.Yes)
+            {
+                return;
+            }
+        }
+
+        var branch = GitBranchAutoSuggestBox.Text?.Trim() ?? string.Empty;
+        if (!string.IsNullOrWhiteSpace(branch) && !_currentProjectBranches.Contains(branch))
+        {
+            MessageBox.Show(
+                $"'{branch}' isn't a branch on this project's repo. Pick one from the search list, or clear the field to build the current branch as-is.",
                 "PublishTool",
                 MessageBoxButton.OK,
                 MessageBoxImage.Warning);
@@ -461,15 +909,36 @@ public partial class MainWindow : Wpf.Ui.Controls.FluentWindow
         {
             "publish",
             "--project", project,
-            "--version", VersionTextBox.Text,
+            "--version", version,
         };
+
+        if (!string.IsNullOrWhiteSpace(branch))
+        {
+            args.Add("--git-branch");
+            args.Add(branch);
+        }
 
         foreach (var item in FeaturesEditor.Items) { args.Add("--feature"); args.Add(item); }
         foreach (var item in FixesEditor.Items) { args.Add("--fix"); args.Add(item); }
         foreach (var item in OtherUpdatesEditor.Items) { args.Add("--other-update"); args.Add(item); }
         foreach (var item in BacklogItemsEditor.Items) { args.Add("--backlog-item"); args.Add(item); }
 
+        if (AppConfigExpander.Visibility == Visibility.Visible)
+        {
+            foreach (var row in _appConfigSettings)
+            {
+                if (string.IsNullOrWhiteSpace(row.Key))
+                {
+                    continue;
+                }
+
+                args.Add("--app-config-setting");
+                args.Add($"{row.Key}={row.Value}");
+            }
+        }
+
         await RunAsync(args.ToArray());
+        LoadVersionsForSelectedProject();
     }
 
     private void BrowseCsproj_Click(object sender, RoutedEventArgs e)
@@ -514,6 +983,25 @@ public partial class MainWindow : Wpf.Ui.Controls.FluentWindow
         IisBindingsPanel.Visibility = AutoCreateIisSiteToggle.IsChecked == true ? Visibility.Visible : Visibility.Collapsed;
     }
 
+    private void UseAppConfigToggle_Toggled(object sender, RoutedEventArgs e)
+    {
+        var isOn = UseAppConfigToggle.IsChecked == true;
+        AppConfigPanel.Visibility = isOn ? Visibility.Visible : Visibility.Collapsed;
+        if (isOn && AppConfigTypeComboBox.SelectedItem is null && AppConfigTypeComboBox.Items.Count > 0)
+        {
+            AppConfigTypeComboBox.SelectedIndex = 0;
+        }
+    }
+
+    private void BrowseAppConfigPath_Click(object sender, RoutedEventArgs e)
+    {
+        var dialog = new OpenFileDialog { Filter = "Config files (*.config)|*.config|All files (*.*)|*.*" };
+        if (dialog.ShowDialog() == true)
+        {
+            AppConfigPathTextBox.Text = dialog.FileName;
+        }
+    }
+
     private void AddBindingButton_Click(object sender, RoutedEventArgs e)
     {
         _iisBindings.Add(new IisBinding { Protocol = "http", IpAddress = "*", Port = 80, HostName = null });
@@ -547,6 +1035,17 @@ public partial class MainWindow : Wpf.Ui.Controls.FluentWindow
         {
             MessageBox.Show(
                 "Auto-create IIS site is on but no bindings were added. Add at least one binding, or turn the toggle off.",
+                "PublishTool",
+                MessageBoxButton.OK,
+                MessageBoxImage.Warning);
+            return;
+        }
+
+        var useAppConfig = UseAppConfigToggle.IsChecked == true;
+        if (useAppConfig && (AppConfigTypeComboBox.SelectedItem is not IAppConfigProvider || string.IsNullOrWhiteSpace(AppConfigPathTextBox.Text)))
+        {
+            MessageBox.Show(
+                "App config editing is on but the config type or file path is missing. Fill both in, or turn the toggle off.",
                 "PublishTool",
                 MessageBoxButton.OK,
                 MessageBoxImage.Warning);
@@ -598,6 +1097,14 @@ public partial class MainWindow : Wpf.Ui.Controls.FluentWindow
         args.Add("--list-in-hosting");
         args.Add(ListInHostingToggle.IsChecked == true ? "true" : "false");
 
+        if (useAppConfig && AppConfigTypeComboBox.SelectedItem is IAppConfigProvider provider)
+        {
+            args.Add("--app-config-type");
+            args.Add(provider.TypeName);
+            args.Add("--app-config-path");
+            args.Add(AppConfigPathTextBox.Text);
+        }
+
         await RunAsync(args.ToArray());
     }
 
@@ -642,6 +1149,10 @@ public partial class MainWindow : Wpf.Ui.Controls.FluentWindow
         _iisBindings.Clear();
         SdkStyleProjectToggle.IsChecked = false;
         ListInHostingToggle.IsChecked = true;
+        UseAppConfigToggle.IsChecked = false;
+        AppConfigPanel.Visibility = Visibility.Collapsed;
+        AppConfigTypeComboBox.SelectedItem = null;
+        AppConfigPathTextBox.Clear();
         RegisteredProjectsListBox.SelectedItem = null;
     }
 
@@ -675,6 +1186,11 @@ public partial class MainWindow : Wpf.Ui.Controls.FluentWindow
                 HostName = binding.HostName,
             });
         }
+
+        UseAppConfigToggle.IsChecked = project.UseAppConfig;
+        AppConfigPanel.Visibility = project.UseAppConfig ? Visibility.Visible : Visibility.Collapsed;
+        AppConfigTypeComboBox.SelectedItem = AppConfigProviderRegistry.Get(project.AppConfigType);
+        AppConfigPathTextBox.Text = project.AppConfigPath ?? string.Empty;
     }
 
     private async void RunCommandButton_Click(object sender, RoutedEventArgs e) => await RunCommandBoxAsync();
@@ -733,5 +1249,6 @@ public partial class MainWindow : Wpf.Ui.Controls.FluentWindow
         RemoveProjectButton.IsEnabled = !busy;
         RunCommandButton.IsEnabled = !busy;
         RefreshIisButton.IsEnabled = !busy;
+        CheckoutBranchButton.IsEnabled = !busy;
     }
 }

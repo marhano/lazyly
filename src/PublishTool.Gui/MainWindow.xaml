@@ -27,8 +27,9 @@
 
         <Grid Grid.Row="2" Margin="16,4,16,16">
             <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="*" MinWidth="400"/>
                 <ColumnDefinition Width="Auto"/>
+                <ColumnDefinition x:Name="OutputColumnDefinition" Width="380" MinWidth="260" MaxWidth="900"/>
             </Grid.ColumnDefinitions>
 
             <Grid Grid.Column="0">
@@ -53,13 +54,34 @@
                         </Grid.ColumnDefinitions>
 
                         <TextBlock Grid.Row="0" Grid.Column="0" Text="Project" VerticalAlignment="Center"/>
-                        <ComboBox Grid.Row="0" Grid.Column="1" x:Name="ProjectComboBox" Margin="0,6"/>
+                        <ComboBox Grid.Row="0" Grid.Column="1" x:Name="ProjectComboBox" Margin="0,6"
+                                  SelectionChanged="ProjectComboBox_SelectionChanged"/>
 
-                        <TextBlock Grid.Row="1" Grid.Column="0" Text="Version" VerticalAlignment="Center"/>
-                        <ui:TextBox Grid.Row="1" Grid.Column="1" x:Name="VersionTextBox" Margin="0,6"
-                                    PlaceholderText="e.g. 1.0.0.R0001B"/>
+                        <TextBlock Grid.Row="1" Grid.Column="0" Text="Git branch" VerticalAlignment="Center"/>
+                        <Grid Grid.Row="1" Grid.Column="1" Margin="0,6">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <ui:AutoSuggestBox Grid.Column="0" x:Name="GitBranchAutoSuggestBox" Margin="0,0,6,0"
+                                               PlaceholderText="Search branches..."
+                                               ToolTip="Checked out automatically before building. Use Checkout to switch the working tree now, e.g. to preview that branch's App Config."/>
+                            <ui:Button Grid.Column="1" x:Name="CheckoutBranchButton" Content="Checkout"
+                                       Icon="{ui:SymbolIcon ArrowSync24}" Width="110" Click="CheckoutBranchButton_Click"/>
+                        </Grid>
 
-                        <StackPanel Grid.Row="2" Grid.Column="1" Orientation="Horizontal" Margin="0,14,0,0">
+                        <TextBlock Grid.Row="2" Grid.Column="0" Text="Version" VerticalAlignment="Center"/>
+                        <StackPanel Grid.Row="2" Grid.Column="1" Margin="0,6">
+                            <ComboBox x:Name="VersionComboBox" IsEditable="True" Text=""
+                                      SelectionChanged="VersionComboBox_SelectionChanged"
+                                      TextBoxBase.TextChanged="VersionComboBox_TextChanged"/>
+                            <TextBlock x:Name="VersionOverwriteHintTextBlock" Margin="0,4,0,0" FontSize="12"
+                                       Foreground="{DynamicResource TextFillColorSecondaryBrush}"
+                                       Text="This version already exists -- publishing will overwrite its build and release notes."
+                                       Visibility="Collapsed" TextWrapping="Wrap"/>
+                        </StackPanel>
+
+                        <StackPanel Grid.Row="3" Grid.Column="1" Orientation="Horizontal" Margin="0,14,0,0">
                             <ui:Button x:Name="PublishButton" Content="Publish"
                                        Appearance="Primary" Icon="{ui:SymbolIcon Rocket24}"
                                        Width="140" Click="PublishButton_Click"/>
@@ -68,16 +90,37 @@
                                        Width="140" Margin="10,0,0,0" Click="RefreshProjectsButton_Click"/>
                         </StackPanel>
 
-                        <TextBlock Grid.Row="3" Grid.Column="0" Grid.ColumnSpan="2" Text="Release notes for this build"
-                                   FontSize="15" FontWeight="SemiBold" Margin="0,22,0,8"/>
+                        <ScrollViewer Grid.Row="4" Grid.Column="0" Grid.ColumnSpan="2" VerticalScrollBarVisibility="Auto" Margin="0,20,0,0">
+                            <StackPanel>
+                                <ui:CardExpander x:Name="AppConfigExpander" Header="App Config" IsExpanded="False"
+                                                  Margin="0,0,0,12" Visibility="Collapsed">
+                                    <StackPanel Margin="2">
+                                        <TextBlock x:Name="AppConfigDescriptionTextBlock" TextWrapping="Wrap" Margin="0,0,0,10"
+                                                   Foreground="{DynamicResource TextFillColorSecondaryBrush}"/>
+                                        <DataGrid x:Name="AppConfigDataGrid" MinHeight="280" AutoGenerateColumns="False" CanUserAddRows="False">
+                                            <DataGrid.Columns>
+                                                <DataGridTextColumn Header="Key" Binding="{Binding Key}" Width="*"/>
+                                                <DataGridTextColumn Header="Value" Binding="{Binding Value}" Width="2*"/>
+                                            </DataGrid.Columns>
+                                        </DataGrid>
+                                        <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
+                                            <ui:Button Content="Add setting" Icon="{ui:SymbolIcon Add24}" Width="130"
+                                                       Click="AddAppConfigSettingButton_Click"/>
+                                            <ui:Button Content="Remove setting" Icon="{ui:SymbolIcon Delete24}" Width="150"
+                                                       Margin="10,0,0,0" Click="RemoveAppConfigSettingButton_Click"/>
+                                        </StackPanel>
+                                    </StackPanel>
+                                </ui:CardExpander>
 
-                        <ScrollViewer Grid.Row="4" Grid.Column="0" Grid.ColumnSpan="2" VerticalScrollBarVisibility="Auto">
-                            <UniformGrid Columns="2">
-                                <local:ReleaseNoteItemsControl x:Name="FeaturesEditor" Header="Features and Enhancements" Margin="0,0,10,10"/>
-                                <local:ReleaseNoteItemsControl x:Name="FixesEditor" Header="Fixes" Margin="0,0,0,10"/>
-                                <local:ReleaseNoteItemsControl x:Name="OtherUpdatesEditor" Header="Other Updates" Margin="0,0,10,10"/>
-                                <local:ReleaseNoteItemsControl x:Name="BacklogItemsEditor" Header="Backlog Items" Margin="0,0,0,10"/>
-                            </UniformGrid>
+                                <ui:CardExpander Header="Release notes for this build" IsExpanded="False">
+                                    <UniformGrid Columns="2" Margin="2">
+                                        <local:ReleaseNoteItemsControl x:Name="FeaturesEditor" Header="Features and Enhancements" Margin="0,0,10,10"/>
+                                        <local:ReleaseNoteItemsControl x:Name="FixesEditor" Header="Fixes" Margin="0,0,0,10"/>
+                                        <local:ReleaseNoteItemsControl x:Name="OtherUpdatesEditor" Header="Other Updates" Margin="0,0,10,10"/>
+                                        <local:ReleaseNoteItemsControl x:Name="BacklogItemsEditor" Header="Backlog Items" Margin="0,0,0,10"/>
+                                    </UniformGrid>
+                                </ui:CardExpander>
+                            </StackPanel>
                         </ScrollViewer>
                     </Grid>
                 </TabItem>
@@ -92,6 +135,8 @@
                         <ScrollViewer Grid.Row="0" VerticalScrollBarVisibility="Auto">
                         <Grid>
                         <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/>
                             <RowDefinition Height="Auto"/>
                             <RowDefinition Height="Auto"/>
                             <RowDefinition Height="Auto"/>
@@ -161,7 +206,33 @@
                                          Content="Auto-create IIS site if missing" Margin="0,10,0,0"
                                          Checked="AutoCreateIisSiteToggle_Toggled" Unchecked="AutoCreateIisSiteToggle_Toggled"/>
 
-                        <StackPanel Grid.Row="10" Grid.Column="0" Grid.ColumnSpan="3" x:Name="IisBindingsPanel"
+                        <ui:ToggleSwitch Grid.Row="10" Grid.Column="0" Grid.ColumnSpan="3" x:Name="UseAppConfigToggle"
+                                         Content="Edit user-visible app config from the Publish tab" Margin="0,10,0,0"
+                                         ToolTip="For a version number or other appSettings shown to end users -- separate from AssemblyInfo.cs, which only affects the .NET assembly's own version."
+                                         Checked="UseAppConfigToggle_Toggled" Unchecked="UseAppConfigToggle_Toggled"/>
+
+                        <StackPanel Grid.Row="11" Grid.Column="0" Grid.ColumnSpan="3" x:Name="AppConfigPanel"
+                                    Visibility="Collapsed" Margin="0,10,0,0">
+                            <TextBlock Text="Config type" Margin="0,0,0,6"
+                                       Foreground="{DynamicResource TextFillColorSecondaryBrush}"/>
+                            <ComboBox x:Name="AppConfigTypeComboBox" HorizontalAlignment="Left" Width="240"
+                                      DisplayMemberPath="DisplayName"/>
+
+                            <TextBlock Text="Config file path" Margin="0,10,0,6"
+                                       Foreground="{DynamicResource TextFillColorSecondaryBrush}"/>
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+                                <ui:TextBox Grid.Column="0" x:Name="AppConfigPathTextBox" Margin="0,0,6,0"
+                                            PlaceholderText="C:\src\MyProject\Web.config"/>
+                                <ui:Button Grid.Column="1" Content="Browse..." Icon="{ui:SymbolIcon FolderOpen24}"
+                                           Width="100" Click="BrowseAppConfigPath_Click"/>
+                            </Grid>
+                        </StackPanel>
+
+                        <StackPanel Grid.Row="12" Grid.Column="0" Grid.ColumnSpan="3" x:Name="IisBindingsPanel"
                                     Visibility="Collapsed" Margin="0,10,0,0">
                             <TextBlock Text="Site bindings" Margin="0,0,0,6"
                                        Foreground="{DynamicResource TextFillColorSecondaryBrush}"/>
@@ -179,7 +250,7 @@
                             </StackPanel>
                         </StackPanel>
 
-                        <StackPanel Grid.Row="11" Grid.Column="1" Orientation="Horizontal" Margin="0,14,0,0">
+                        <StackPanel Grid.Row="13" Grid.Column="1" Orientation="Horizontal" Margin="0,14,0,0">
                             <ui:Button x:Name="SaveProjectButton" Content="Save project" Appearance="Primary"
                                        Icon="{ui:SymbolIcon Save24}" Width="140" Click="SaveProjectButton_Click"/>
                             <ui:Button x:Name="NewProjectButton" Content="Clear form" Icon="{ui:SymbolIcon Eraser24}"
@@ -340,20 +411,23 @@
                         <Grid.RowDefinitions>
                             <RowDefinition Height="Auto"/>
                             <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/>
                             <RowDefinition Height="*"/>
                         </Grid.RowDefinitions>
 
-                        <DockPanel Grid.Row="0" Margin="0,0,0,10">
+                        <TextBlock Grid.Row="0" x:Name="AppVersionTextBlock" FontWeight="SemiBold" Margin="0,0,0,16"/>
+
+                        <DockPanel Grid.Row="1" Margin="0,0,0,10">
                             <ui:Button DockPanel.Dock="Right" x:Name="RecheckDependenciesButton" Content="Recheck"
                                        Icon="{ui:SymbolIcon ArrowSync24}" Width="110" Click="RecheckDependenciesButton_Click"/>
                             <TextBlock Text="Dependencies" FontWeight="SemiBold" VerticalAlignment="Center"/>
                         </DockPanel>
 
-                        <TextBlock Grid.Row="1" Foreground="{DynamicResource TextFillColorSecondaryBrush}"
+                        <TextBlock Grid.Row="2" Foreground="{DynamicResource TextFillColorSecondaryBrush}"
                                    TextWrapping="Wrap" Margin="0,0,0,10"
                                    Text="External tools PublishTool relies on. MSBuild is required for Publish; IIS (appcmd.exe) is required for auto-creating sites and the IIS tab."/>
 
-                        <DataGrid Grid.Row="2" x:Name="DependenciesDataGrid" AutoGenerateColumns="False" IsReadOnly="True">
+                        <DataGrid Grid.Row="3" x:Name="DependenciesDataGrid" AutoGenerateColumns="False" IsReadOnly="True">
                             <DataGrid.Columns>
                                 <DataGridTextColumn Header="Dependency" Binding="{Binding Name}" Width="160"/>
                                 <DataGridTextColumn Header="Status" Binding="{Binding StatusText}" Width="100"/>
@@ -374,7 +448,11 @@
             </DockPanel>
             </Grid>
 
-            <Border Grid.Column="1" x:Name="OutputPanel" Width="380" Margin="12,0,0,0" CornerRadius="8" Padding="14"
+            <GridSplitter Grid.Column="1" x:Name="OutputSplitter" Width="6" HorizontalAlignment="Stretch"
+                          VerticalAlignment="Stretch" Background="Transparent" ResizeBehavior="PreviousAndNext"
+                          ShowsPreview="False" Cursor="SizeWE"/>
+
+            <Border Grid.Column="2" x:Name="OutputPanel" Margin="6,0,0,0" CornerRadius="8" Padding="14"
                     Background="{DynamicResource CardBackgroundFillColorDefaultBrush}"
                     BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}" BorderThickness="1">
                 <Grid>

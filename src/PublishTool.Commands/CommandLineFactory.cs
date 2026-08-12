@@ -2,6 +2,7 @@ using System.CommandLine;
 using PublishTool.Core;
 using PublishTool.Core.Models;
 using PublishTool.Core.Services;
+using PublishTool.Core.Services.AppConfig;
 
 namespace PublishTool.Commands;
 
@@ -16,6 +17,7 @@ public static class CommandLineFactory
         var root = new RootCommand("PublishTool - build, archive, and deploy publishes for .NET projects.");
 
         root.Add(BuildPublishCommand(output));
+        root.Add(BuildGitCheckoutCommand(output));
         root.Add(BuildAddProjectCommand(output));
         root.Add(BuildRemoveProjectCommand(output));
         root.Add(BuildListProjectsCommand(output));
@@ -38,6 +40,11 @@ public static class CommandLineFactory
     {
         var projectOption = new Option<string>("--project", "-p") { Description = "Registered project name.", Required = true };
         var versionOption = new Option<string>("--version", "-v") { Description = "Build version, e.g. 1.0.0.R0001B.", Required = true };
+        var gitBranchOption = new Option<string?>("--git-branch")
+        {
+            Description = "Git branch to check out before building (creates a local tracking branch " +
+                           "from origin/<branch> if it's not local yet). Optional -- omit to build whatever's currently checked out.",
+        };
         var featureOption = new Option<string[]>("--feature")
         {
             Description = "A \"Features and Enhancements\" release notes entry. Repeatable.",
@@ -54,14 +61,21 @@ public static class CommandLineFactory
         {
             Description = "A \"Backlog Items\" release notes entry. Repeatable.",
         };
+        var appConfigSettingOption = new Option<string[]>("--app-config-setting")
+        {
+            Description = "An app config key=value pair to write before building, for projects with " +
+                           "app config enabled (see add-project --app-config-type). Repeatable.",
+        };
 
         var command = new Command("publish", "Publish a registered project: build, archive, and deploy to IIS.");
         command.Add(projectOption);
         command.Add(versionOption);
+        command.Add(gitBranchOption);
         command.Add(featureOption);
         command.Add(fixOption);
         command.Add(otherUpdateOption);
         command.Add(backlogItemOption);
+        command.Add(appConfigSettingOption);
 
         command.SetAction(async (parseResult, ct) =>
         {
@@ -75,11 +89,22 @@ public static class CommandLineFactory
                 Version = parseResult.GetValue(versionOption)!,
                 BuildsRoot = settings.BuildsRoot,
                 MsBuildPath = settings.MsBuildPath,
+                GitBranch = parseResult.GetValue(gitBranchOption),
                 ReleaseNotesFeatures = (parseResult.GetValue(featureOption) ?? Array.Empty<string>()).ToList(),
                 ReleaseNotesFixes = (parseResult.GetValue(fixOption) ?? Array.Empty<string>()).ToList(),
                 ReleaseNotesOtherUpdates = (parseResult.GetValue(otherUpdateOption) ?? Array.Empty<string>()).ToList(),
                 ReleaseNotesBacklogItems = (parseResult.GetValue(backlogItemOption) ?? Array.Empty<string>()).ToList(),
             };
+
+            try
+            {
+                options.AppConfigSettings = ParseKeyValuePairs(parseResult.GetValue(appConfigSettingOption) ?? Array.Empty<string>());
+            }
+            catch (ArgumentException ex)
+            {
+                output.Error(ex.Message);
+                return 1;
+            }
 
             try
             {
@@ -94,6 +119,59 @@ public static class CommandLineFactory
         });
 
         return command;
+    }
+
+    private static Command BuildGitCheckoutCommand(IOutputSink output)
+    {
+        var projectOption = new Option<string>("--project", "-p") { Description = "Registered project name.", Required = true };
+        var branchOption = new Option<string>("--branch", "-b") { Description = "Branch to check out.", Required = true };
+
+        var command = new Command("git-checkout", "Check out a git branch in a registered project's repo, " +
+                                                    "without building or publishing anything.");
+        command.Add(projectOption);
+        command.Add(branchOption);
+
+        command.SetAction(async (parseResult, ct) =>
+        {
+            var registry = new ProjectRegistry(ProjectRegistry.DefaultPath);
+            var projectName = parseResult.GetValue(projectOption)!;
+            var project = registry.Get(projectName);
+            if (project is null)
+            {
+                output.Error($"Project '{projectName}' is not registered.");
+                return 1;
+            }
+
+            try
+            {
+                await new GitService(output).CheckoutAsync(project.CsprojPath, parseResult.GetValue(branchOption)!, ct);
+                return 0;
+            }
+            catch (Exception ex)
+            {
+                output.Error(ex.Message);
+                return 1;
+            }
+        });
+
+        return command;
+    }
+
+    private static Dictionary<string, string> ParseKeyValuePairs(IEnumerable<string> raw)
+    {
+        var result = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var entry in raw)
+        {
+            var separatorIndex = entry.IndexOf('=');
+            if (separatorIndex <= 0)
+            {
+                throw new ArgumentException($"Invalid --app-config-setting value '{entry}'. Expected key=value.");
+            }
+
+            result[entry[..separatorIndex]] = entry[(separatorIndex + 1)..];
+        }
+
+        return result;
     }
 
     private static Command BuildAddProjectCommand(IOutputSink output)
@@ -135,6 +213,16 @@ public static class CommandLineFactory
                            "Builds are always archived either way; this only controls visibility there.",
             DefaultValueFactory = _ => true,
         };
+        var appConfigTypeNames = string.Join(", ", AppConfigProviderRegistry.All.Select(p => p.TypeName));
+        var appConfigTypeOption = new Option<string?>("--app-config-type")
+        {
+            Description = $"Enables editing this project's user-visible config (e.g. a version shown in its UI) " +
+                           $"from the Publish tab. One of: {appConfigTypeNames}. Requires --app-config-path.",
+        };
+        var appConfigPathOption = new Option<string?>("--app-config-path")
+        {
+            Description = "Path to the config file (e.g. Web.config) for --app-config-type. Required if that's set.",
+        };
 
         var command = new Command("add-project", "Register a project (or update an existing registration).");
         command.Add(nameOption);
@@ -148,6 +236,8 @@ public static class CommandLineFactory
         command.Add(iisBindingOption);
         command.Add(sdkStyleOption);
         command.Add(listInHostingOption);
+        command.Add(appConfigTypeOption);
+        command.Add(appConfigPathOption);
 
         command.SetAction(parseResult =>
         {
@@ -156,6 +246,23 @@ public static class CommandLineFactory
                 var bindings = (parseResult.GetValue(iisBindingOption) ?? Array.Empty<string>())
                     .Select(ParseIisBinding)
                     .ToList();
+
+                var appConfigType = parseResult.GetValue(appConfigTypeOption);
+                var appConfigPath = parseResult.GetValue(appConfigPathOption);
+                if (appConfigType is not null)
+                {
+                    if (AppConfigProviderRegistry.Get(appConfigType) is null)
+                    {
+                        output.Error($"Unknown --app-config-type '{appConfigType}'. Valid values: {appConfigTypeNames}.");
+                        return 1;
+                    }
+
+                    if (string.IsNullOrWhiteSpace(appConfigPath))
+                    {
+                        output.Error("--app-config-path is required when --app-config-type is set.");
+                        return 1;
+                    }
+                }
 
                 var registry = new ProjectRegistry(ProjectRegistry.DefaultPath);
                 var name = parseResult.GetValue(nameOption)!;
@@ -177,6 +284,9 @@ public static class CommandLineFactory
                     IisBindings = bindings,
                     SdkStyleProject = parseResult.GetValue(sdkStyleOption),
                     ListInHosting = parseResult.GetValue(listInHostingOption),
+                    UseAppConfig = appConfigType is not null,
+                    AppConfigType = appConfigType,
+                    AppConfigPath = appConfigPath,
                 });
 
                 output.Info($"Registered project '{parseResult.GetValue(nameOption)}'.");

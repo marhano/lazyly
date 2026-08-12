@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text;
 using PublishTool.Core.Models;
 
@@ -68,5 +69,111 @@ public static class ReleaseNotesFormatter
         }
 
         return sb.ToString();
+    }
+
+    /// <summary>
+    /// Reverse of <see cref="Format"/> -- reconstructs a <see cref="ReleaseNotesEntry"/> from
+    /// previously-formatted text, so an existing build's release notes can be reloaded into the
+    /// editors when the user picks that version again (to review/edit before overwriting) instead
+    /// of starting from a blank form. Returns null if the text doesn't look like our template
+    /// (e.g. no "Reference:" line) rather than throwing -- callers treat that as "no notes to load".
+    /// </summary>
+    public static ReleaseNotesEntry? Parse(string content)
+    {
+        var lines = content.Replace("\r\n", "\n").Split('\n');
+
+        string? reference = null;
+        string? version = null;
+        DateOnly? date = null;
+
+        foreach (var line in lines)
+        {
+            if (line.StartsWith("Reference: ", StringComparison.Ordinal))
+            {
+                reference = line["Reference: ".Length..].Trim();
+            }
+            else if (line.StartsWith("Version: ", StringComparison.Ordinal))
+            {
+                version = line["Version: ".Length..].Trim();
+            }
+            else if (line.StartsWith("Date: ", StringComparison.Ordinal) &&
+                     DateOnly.TryParseExact(line["Date: ".Length..].Trim(), "dd MMMM yyyy", CultureInfo.InvariantCulture, DateTimeStyles.None, out var parsedDate))
+            {
+                date = parsedDate;
+            }
+        }
+
+        if (reference is null)
+        {
+            return null;
+        }
+
+        return new ReleaseNotesEntry
+        {
+            Reference = reference,
+            Version = version ?? string.Empty,
+            Date = date ?? DateOnly.FromDateTime(DateTime.Now),
+            Features = ExtractSection(lines, "2. Features and Enhancements "),
+            Fixes = ExtractSection(lines, "3. Fixes "),
+            OtherUpdates = ExtractSection(lines, "4. Other Updates "),
+            BacklogItems = ExtractBacklogItems(lines),
+        };
+    }
+
+    private static List<string> ExtractSection(string[] lines, string header)
+    {
+        var items = new List<string>();
+        var headerIndex = Array.IndexOf(lines, header);
+        if (headerIndex < 0)
+        {
+            return items;
+        }
+
+        for (var i = headerIndex + 1; i < lines.Length; i++)
+        {
+            if (lines[i] == DashLine)
+            {
+                break;
+            }
+
+            if (lines[i].Length > 0)
+            {
+                items.Add(StripItemPrefix(lines[i]));
+            }
+        }
+
+        return items;
+    }
+
+    private static List<string> ExtractBacklogItems(string[] lines)
+    {
+        var items = new List<string>();
+        var headerIndex = Array.IndexOf(lines, "5. Backlog Items");
+        if (headerIndex < 0)
+        {
+            return items;
+        }
+
+        for (var i = headerIndex + 1; i < lines.Length; i++)
+        {
+            if (lines[i].Length == 0)
+            {
+                continue;
+            }
+
+            var item = StripItemPrefix(lines[i]);
+            if (!string.Equals(item, "None", StringComparison.OrdinalIgnoreCase))
+            {
+                items.Add(item);
+            }
+        }
+
+        return items;
+    }
+
+    private static string StripItemPrefix(string line)
+    {
+        var trimmed = line.TrimStart('\t');
+        return trimmed.StartsWith("- ", StringComparison.Ordinal) ? trimmed[2..] : trimmed;
     }
 }

@@ -57,4 +57,19 @@ public sealed class ProjectConfig
     /// run on a different machine) only needs to read manifests, not this registry.
     /// </summary>
     public bool ListInHosting { get; set; } = true;
+
+    /// <summary>
+    /// Whether this project has a config file holding user-visible settings (e.g. a version
+    /// number shown in the app's UI) that PublishTool can edit directly at publish time --
+    /// distinct from <see cref="AssemblyInfoPath"/>, which stamps the .NET assembly version, not
+    /// anything end users see.
+    /// </summary>
+    public bool UseAppConfig { get; set; }
+
+    /// <summary>Identifies which <see cref="Services.AppConfig.IAppConfigProvider"/> to use, e.g.
+    /// "WebConfigAppSettings". Only meaningful when <see cref="UseAppConfig"/> is true.</summary>
+    public string? AppConfigType { get; set; }
+
+    /// <summary>Path to the config file itself, e.g. the project's Web.config.</summary>
+    public string? AppConfigPath { get; set; }
 }

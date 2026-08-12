@@ -26,4 +26,12 @@ public sealed class BuildManifest
     /// from the build-hosting site, not bundled inside the deployed package.
     /// </summary>
     public string? ReleaseNotesPath { get; set; }
+
+    /// <summary>
+    /// The app-config key/value settings (e.g. Web.config appSettings) this build was published
+    /// with, if the project uses app config -- so re-selecting this version in the Publish tab
+    /// shows exactly what was published, instead of whatever the config file currently has on
+    /// disk (which may have since moved on to a newer version).
+    /// </summary>
+    public Dictionary<string, string>? AppConfigSettings { get; set; }
 }
