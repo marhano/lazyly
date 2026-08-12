@@ -5,13 +5,21 @@
 }
 
 <div class="pt-header">
-    <div class="container">
-        <h1>Build Archive</h1>
-        <p>Browse and download builds published by the team.</p>
+    <div class="container pt-header-row">
+        <div>
+            <h1>Build Archive</h1>
+            <p>Browse and download builds published by the team.</p>
+        </div>
+        <a href="/Upload" class="pt-btn pt-btn-primary">Upload a build</a>
     </div>
 </div>
 
 <div class="pt-page">
+    @if (TempData["UploadSuccessMessage"] is string uploadSuccessMessage)
+    {
+        <div class="pt-alert pt-alert-success">@uploadSuccessMessage</div>
+    }
+
     @if (Model.BuildsRootNotConfigured)
     {
         <div class="pt-alert">
@@ -68,10 +76,19 @@
                                     <td class="pt-muted">@build.PublishedBy</td>
                                     <td class="pt-num" data-sort="@IndexModel.GetFileSizeBytes(build.ZipPath)">@IndexModel.FormatFileSize(build.ZipPath)</td>
                                     <td>
-                                        <a class="pt-btn pt-btn-primary pt-btn-sm"
-                                           href="/download?path=@Uri.EscapeDataString(Model.RelativeZipPath(build))">
-                                            Download
-                                        </a>
+                                        <div class="pt-actions">
+                                            @if (Model.HasReleaseNotes(build))
+                                            {
+                                                <button type="button" class="pt-btn pt-btn-ghost pt-btn-sm pt-view-notes"
+                                                        data-notes-key="@Model.RelativeReleaseNotesPath(build)">
+                                                    Release Notes
+                                                </button>
+                                            }
+                                            <a class="pt-btn pt-btn-primary pt-btn-sm"
+                                               href="/download?path=@Uri.EscapeDataString(Model.RelativeZipPath(build))">
+                                                Download
+                                            </a>
+                                        </div>
                                     </td>
                                 </tr>
                             }
@@ -85,8 +102,25 @@
     <div class="pt-footer">Build Archive</div>
 </div>
 
+<div id="releaseNotesModal" class="pt-modal-overlay" hidden>
+    <div class="pt-modal">
+        <div class="pt-modal-header">
+            <h2 id="releaseNotesModalTitle">Release Notes</h2>
+            <button type="button" class="pt-modal-close" id="releaseNotesModalClose" aria-label="Close">&times;</button>
+        </div>
+        <div class="pt-modal-body">
+            <pre id="releaseNotesModalContent"></pre>
+        </div>
+        <div class="pt-modal-footer">
+            <a id="releaseNotesModalDownload" class="pt-btn pt-btn-primary pt-btn-sm" href="#">Download .txt</a>
+        </div>
+    </div>
+</div>
+
 @section Scripts {
     <script>
+        var releaseNotesData = @Html.Raw(System.Text.Json.JsonSerializer.Serialize(Model.ReleaseNotesByPath));
+
         $(function () {
             $('#buildsTable').DataTable({
                 order: [[2, 'desc']],
@@ -101,6 +135,45 @@
                     emptyTable: 'No builds match your search.',
                     lengthMenu: 'Show _MENU_ per page',
                 },
+            });
+
+            var $overlay = $('#releaseNotesModal');
+            var $title = $('#releaseNotesModalTitle');
+            var $content = $('#releaseNotesModalContent');
+            var $download = $('#releaseNotesModalDownload');
+
+            function openModal(key) {
+                var entry = releaseNotesData[key];
+                if (!entry) {
+                    return;
+                }
+
+                $title.text(entry.Title);
+                $content.text(entry.Text);
+                $download.attr('href', '/download?path=' + encodeURIComponent(key));
+                $overlay.removeAttr('hidden');
+            }
+
+            function closeModal() {
+                $overlay.attr('hidden', true);
+            }
+
+            // Delegated on the table itself (not the buttons) so this keeps working across
+            // DataTables' pagination, which swaps tbody rows in and out of the DOM.
+            $('#buildsTable').on('click', '.pt-view-notes', function () {
+                openModal($(this).data('notes-key'));
+            });
+
+            $('#releaseNotesModalClose').on('click', closeModal);
+            $overlay.on('click', function (e) {
+                if (e.target === this) {
+                    closeModal();
+                }
+            });
+            $(document).on('keydown', function (e) {
+                if (e.key === 'Escape') {
+                    closeModal();
+                }
             });
         });
     </script>

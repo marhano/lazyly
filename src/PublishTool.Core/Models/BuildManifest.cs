@@ -18,4 +18,12 @@ public sealed class BuildManifest
     /// still deserialize fine and default to listed.
     /// </summary>
     public bool ListInHosting { get; set; } = true;
+
+    /// <summary>
+    /// Absolute path to this build's release notes .txt, or null if none was generated (the
+    /// project had no Project ID set at publish time, or this build predates the feature).
+    /// Deliberately kept out of the zip -- it's meant to be browsable/downloadable on its own
+    /// from the build-hosting site, not bundled inside the deployed package.
+    /// </summary>
+    public string? ReleaseNotesPath { get; set; }
 }

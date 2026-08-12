@@ -38,10 +38,30 @@ public static class CommandLineFactory
     {
         var projectOption = new Option<string>("--project", "-p") { Description = "Registered project name.", Required = true };
         var versionOption = new Option<string>("--version", "-v") { Description = "Build version, e.g. 1.0.0.R0001B.", Required = true };
+        var featureOption = new Option<string[]>("--feature")
+        {
+            Description = "A \"Features and Enhancements\" release notes entry. Repeatable.",
+        };
+        var fixOption = new Option<string[]>("--fix")
+        {
+            Description = "A \"Fixes\" release notes entry. Repeatable.",
+        };
+        var otherUpdateOption = new Option<string[]>("--other-update")
+        {
+            Description = "An \"Other Updates\" release notes entry. Repeatable.",
+        };
+        var backlogItemOption = new Option<string[]>("--backlog-item")
+        {
+            Description = "A \"Backlog Items\" release notes entry. Repeatable.",
+        };
 
         var command = new Command("publish", "Publish a registered project: build, archive, and deploy to IIS.");
         command.Add(projectOption);
         command.Add(versionOption);
+        command.Add(featureOption);
+        command.Add(fixOption);
+        command.Add(otherUpdateOption);
+        command.Add(backlogItemOption);
 
         command.SetAction(async (parseResult, ct) =>
         {
@@ -55,6 +75,10 @@ public static class CommandLineFactory
                 Version = parseResult.GetValue(versionOption)!,
                 BuildsRoot = settings.BuildsRoot,
                 MsBuildPath = settings.MsBuildPath,
+                ReleaseNotesFeatures = (parseResult.GetValue(featureOption) ?? Array.Empty<string>()).ToList(),
+                ReleaseNotesFixes = (parseResult.GetValue(fixOption) ?? Array.Empty<string>()).ToList(),
+                ReleaseNotesOtherUpdates = (parseResult.GetValue(otherUpdateOption) ?? Array.Empty<string>()).ToList(),
+                ReleaseNotesBacklogItems = (parseResult.GetValue(backlogItemOption) ?? Array.Empty<string>()).ToList(),
             };
 
             try
@@ -75,6 +99,12 @@ public static class CommandLineFactory
     private static Command BuildAddProjectCommand(IOutputSink output)
     {
         var nameOption = new Option<string>("--name", "-n") { Description = "Project name.", Required = true };
+        var projectIdOption = new Option<string?>("--project-id")
+        {
+            Description = "Short project code used as the release notes reference prefix, e.g. \"BPS\" " +
+                           "produces references like BPS-2026-0007. Optional -- release notes are only " +
+                           "generated at publish time when this is set.",
+        };
         var csprojOption = new Option<string>("--csproj") { Description = "Path to the .csproj file.", Required = true };
         var pubxmlOption = new Option<string>("--pubxml") { Description = "Publish profile name (e.g. FolderProfile).", Required = true };
         var assemblyInfoOption = new Option<string?>("--assembly-info") { Description = "Path to AssemblyInfo.cs, for version stamping (optional)." };
@@ -108,6 +138,7 @@ public static class CommandLineFactory
 
         var command = new Command("add-project", "Register a project (or update an existing registration).");
         command.Add(nameOption);
+        command.Add(projectIdOption);
         command.Add(csprojOption);
         command.Add(pubxmlOption);
         command.Add(assemblyInfoOption);
@@ -127,9 +158,16 @@ public static class CommandLineFactory
                     .ToList();
 
                 var registry = new ProjectRegistry(ProjectRegistry.DefaultPath);
+                var name = parseResult.GetValue(nameOption)!;
+                // add-project doubles as "update" -- preserve the release notes sequence counter
+                // across edits instead of resetting it, since there's no CLI option for it.
+                var existing = registry.Get(name);
+
                 registry.AddOrUpdate(new ProjectConfig
                 {
-                    Name = parseResult.GetValue(nameOption)!,
+                    Name = name,
+                    ProjectId = parseResult.GetValue(projectIdOption),
+                    LastReleaseNotesSequence = existing?.LastReleaseNotesSequence ?? 0,
                     CsprojPath = parseResult.GetValue(csprojOption)!,
                     PubxmlName = parseResult.GetValue(pubxmlOption)!,
                     AssemblyInfoPath = parseResult.GetValue(assemblyInfoOption),

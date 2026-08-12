@@ -55,6 +55,36 @@ public sealed class Publisher
             var archive = await Task.Run(
                 () => _buildRepository.Archive(options.BuildsRoot, project.Name, options.Version, stagingDir), ct);
 
+            string? releaseNotesPath = null;
+            if (!string.IsNullOrWhiteSpace(project.ProjectId))
+            {
+                _output.Stage("Generating release notes...");
+                var sequence = project.LastReleaseNotesSequence + 1;
+                var reference = $"{project.ProjectId}-{DateTime.Now.Year}-{sequence:D4}";
+                var content = ReleaseNotesFormatter.Format(new ReleaseNotesEntry
+                {
+                    Reference = reference,
+                    Version = options.Version,
+                    Date = DateOnly.FromDateTime(DateTime.Now),
+                    Features = options.ReleaseNotesFeatures,
+                    Fixes = options.ReleaseNotesFixes,
+                    OtherUpdates = options.ReleaseNotesOtherUpdates,
+                    BacklogItems = options.ReleaseNotesBacklogItems,
+                });
+
+                await Task.Run(() => _buildRepository.WriteReleaseNotes(archive.ReleaseNotesPath, content), ct);
+                releaseNotesPath = archive.ReleaseNotesPath;
+
+                project.LastReleaseNotesSequence = sequence;
+                _registry.AddOrUpdate(project);
+
+                _output.Info($"Release notes reference: {reference}");
+            }
+            else
+            {
+                _output.Warn($"'{project.Name}' has no Project ID set -- skipping release notes generation.");
+            }
+
             _buildRepository.WriteManifest(archive.ManifestPath, new BuildManifest
             {
                 ProjectName = project.Name,
@@ -63,6 +93,7 @@ public sealed class Publisher
                 PublishedBy = Environment.UserName,
                 ZipPath = archive.ZipPath,
                 ListInHosting = project.ListInHosting,
+                ReleaseNotesPath = releaseNotesPath,
             });
 
             _output.Info($"Archived to {archive.ZipPath}");

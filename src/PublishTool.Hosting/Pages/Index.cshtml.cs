@@ -27,6 +27,14 @@ public class IndexModel : PageModel
 
     public IReadOnlyList<BuildManifest> Builds { get; private set; } = Array.Empty<BuildManifest>();
 
+    /// <summary>
+    /// Release notes text keyed by each build's relative release-notes path (the same key used
+    /// in the "View" button's data attribute and the /download?path= query string), serialized
+    /// into the page for the modal to read client-side -- avoids a round trip per click.
+    /// </summary>
+    public IReadOnlyDictionary<string, ReleaseNotesModalEntry> ReleaseNotesByPath { get; private set; } =
+        new Dictionary<string, ReleaseNotesModalEntry>();
+
     public void OnGet()
     {
         BuildsRootPath = _configuration["BuildsRoot"] ?? string.Empty;
@@ -47,9 +55,31 @@ public class IndexModel : PageModel
             .Where(b => b.ListInHosting)
             .OrderByDescending(b => b.PublishedAtUtc)
             .ToList();
+
+        var releaseNotes = new Dictionary<string, ReleaseNotesModalEntry>();
+        foreach (var build in Builds)
+        {
+            if (build.ReleaseNotesPath is null || !System.IO.File.Exists(build.ReleaseNotesPath))
+            {
+                continue;
+            }
+
+            var key = RelativeReleaseNotesPath(build);
+            releaseNotes[key] = new ReleaseNotesModalEntry(
+                $"{build.ProjectName} v{build.Version}",
+                System.IO.File.ReadAllText(build.ReleaseNotesPath));
+        }
+
+        ReleaseNotesByPath = releaseNotes;
     }
 
     public string RelativeZipPath(BuildManifest build) => Path.GetRelativePath(BuildsRootPath, build.ZipPath);
+
+    public bool HasReleaseNotes(BuildManifest build) =>
+        build.ReleaseNotesPath is not null && System.IO.File.Exists(build.ReleaseNotesPath);
+
+    public string RelativeReleaseNotesPath(BuildManifest build) =>
+        Path.GetRelativePath(BuildsRootPath, build.ReleaseNotesPath!);
 
     public static long GetFileSizeBytes(string zipPath)
     {
@@ -78,3 +108,5 @@ public class IndexModel : PageModel
         return $"{size:0.#} {units[unitIndex]}";
     }
 }
+
+public sealed record ReleaseNotesModalEntry(string Title, string Text);

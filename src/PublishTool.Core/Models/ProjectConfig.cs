@@ -4,6 +4,20 @@ public sealed class ProjectConfig
 {
     public required string Name { get; set; }
 
+    /// <summary>
+    /// Short project code used as the prefix of the release notes reference number, e.g. "BPS"
+    /// produces references like "BPS-2026-0007". Release notes are only generated at publish
+    /// time when this is set.
+    /// </summary>
+    public string? ProjectId { get; set; }
+
+    /// <summary>
+    /// The most recently issued release notes sequence number for this project, tracked so each
+    /// publish gets the next number in order (e.g. ...-0007, then ...-0008). Managed by the
+    /// publisher -- never set this directly when registering or editing a project.
+    /// </summary>
+    public int LastReleaseNotesSequence { get; set; }
+
     public required string CsprojPath { get; set; }
 
     public required string PubxmlName { get; set; }

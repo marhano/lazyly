@@ -45,6 +45,7 @@
                             <RowDefinition Height="Auto"/>
                             <RowDefinition Height="Auto"/>
                             <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="*"/>
                         </Grid.RowDefinitions>
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="120"/>
@@ -58,12 +59,26 @@
                         <ui:TextBox Grid.Row="1" Grid.Column="1" x:Name="VersionTextBox" Margin="0,6"
                                     PlaceholderText="e.g. 1.0.0.R0001B"/>
 
-                        <ui:Button Grid.Row="2" Grid.Column="1" x:Name="PublishButton" Content="Publish"
-                                   Appearance="Primary" Icon="{ui:SymbolIcon Rocket24}"
-                                   HorizontalAlignment="Left" Width="140" Margin="0,14,0,0" Click="PublishButton_Click"/>
-                        <ui:Button Grid.Row="3" Grid.Column="1" x:Name="RefreshProjectsButton" Content="Refresh projects"
-                                   Icon="{ui:SymbolIcon ArrowSync24}"
-                                   HorizontalAlignment="Left" Width="140" Margin="0,8,0,0" Click="RefreshProjectsButton_Click"/>
+                        <StackPanel Grid.Row="2" Grid.Column="1" Orientation="Horizontal" Margin="0,14,0,0">
+                            <ui:Button x:Name="PublishButton" Content="Publish"
+                                       Appearance="Primary" Icon="{ui:SymbolIcon Rocket24}"
+                                       Width="140" Click="PublishButton_Click"/>
+                            <ui:Button x:Name="RefreshProjectsButton" Content="Refresh projects"
+                                       Icon="{ui:SymbolIcon ArrowSync24}"
+                                       Width="140" Margin="10,0,0,0" Click="RefreshProjectsButton_Click"/>
+                        </StackPanel>
+
+                        <TextBlock Grid.Row="3" Grid.Column="0" Grid.ColumnSpan="2" Text="Release notes for this build"
+                                   FontSize="15" FontWeight="SemiBold" Margin="0,22,0,8"/>
+
+                        <ScrollViewer Grid.Row="4" Grid.Column="0" Grid.ColumnSpan="2" VerticalScrollBarVisibility="Auto">
+                            <UniformGrid Columns="2">
+                                <local:ReleaseNoteItemsControl x:Name="FeaturesEditor" Header="Features and Enhancements" Margin="0,0,10,10"/>
+                                <local:ReleaseNoteItemsControl x:Name="FixesEditor" Header="Fixes" Margin="0,0,0,10"/>
+                                <local:ReleaseNoteItemsControl x:Name="OtherUpdatesEditor" Header="Other Updates" Margin="0,0,10,10"/>
+                                <local:ReleaseNoteItemsControl x:Name="BacklogItemsEditor" Header="Backlog Items" Margin="0,0,0,10"/>
+                            </UniformGrid>
+                        </ScrollViewer>
                     </Grid>
                 </TabItem>
 
@@ -88,6 +103,7 @@
                             <RowDefinition Height="Auto"/>
                             <RowDefinition Height="Auto"/>
                             <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/>
                         </Grid.RowDefinitions>
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="140"/>
@@ -99,48 +115,53 @@
                         <ui:TextBox Grid.Row="0" Grid.Column="1" Grid.ColumnSpan="2" x:Name="NewProjectNameTextBox"
                                     Margin="0,6" PlaceholderText="MyProject"/>
 
-                        <TextBlock Grid.Row="1" Grid.Column="0" Text=".csproj path" VerticalAlignment="Center"/>
-                        <ui:TextBox Grid.Row="1" Grid.Column="1" x:Name="NewProjectCsprojTextBox" Margin="0,6,6,6"
+                        <TextBlock Grid.Row="1" Grid.Column="0" Text="Project ID" VerticalAlignment="Center"/>
+                        <ui:TextBox Grid.Row="1" Grid.Column="1" Grid.ColumnSpan="2" x:Name="NewProjectIdTextBox"
+                                    Margin="0,6" PlaceholderText="e.g. BPS"
+                                    ToolTip="Short project code used as the release notes reference prefix, e.g. &quot;BPS&quot; produces references like BPS-2026-0007. Optional -- release notes are only generated at publish time when this is set."/>
+
+                        <TextBlock Grid.Row="2" Grid.Column="0" Text=".csproj path" VerticalAlignment="Center"/>
+                        <ui:TextBox Grid.Row="2" Grid.Column="1" x:Name="NewProjectCsprojTextBox" Margin="0,6,6,6"
                                     PlaceholderText="C:\src\MyProject\MyProject.csproj"/>
-                        <ui:Button Grid.Row="1" Grid.Column="2" Content="Browse..." Icon="{ui:SymbolIcon FolderOpen24}"
+                        <ui:Button Grid.Row="2" Grid.Column="2" Content="Browse..." Icon="{ui:SymbolIcon FolderOpen24}"
                                    Width="100" Click="BrowseCsproj_Click"/>
 
-                        <TextBlock Grid.Row="2" Grid.Column="0" Text="Publish profile" VerticalAlignment="Center"/>
-                        <ui:TextBox Grid.Row="2" Grid.Column="1" x:Name="NewProjectPubxmlTextBox" Margin="0,6,6,6"
+                        <TextBlock Grid.Row="3" Grid.Column="0" Text="Publish profile" VerticalAlignment="Center"/>
+                        <ui:TextBox Grid.Row="3" Grid.Column="1" x:Name="NewProjectPubxmlTextBox" Margin="0,6,6,6"
                                     PlaceholderText="FolderProfile"/>
-                        <ui:Button Grid.Row="2" Grid.Column="2" Content="Browse..." Icon="{ui:SymbolIcon FolderOpen24}"
+                        <ui:Button Grid.Row="3" Grid.Column="2" Content="Browse..." Icon="{ui:SymbolIcon FolderOpen24}"
                                    Width="100" Click="BrowsePubxml_Click"/>
 
-                        <TextBlock Grid.Row="3" Grid.Column="0" Text="AssemblyInfo.cs&#10;(optional)" VerticalAlignment="Center"/>
-                        <ui:TextBox Grid.Row="3" Grid.Column="1" x:Name="NewProjectAssemblyInfoTextBox" Margin="0,6,6,6"
+                        <TextBlock Grid.Row="4" Grid.Column="0" Text="AssemblyInfo.cs&#10;(optional)" VerticalAlignment="Center"/>
+                        <ui:TextBox Grid.Row="4" Grid.Column="1" x:Name="NewProjectAssemblyInfoTextBox" Margin="0,6,6,6"
                                     PlaceholderText="Properties\AssemblyInfo.cs"/>
-                        <ui:Button Grid.Row="3" Grid.Column="2" Content="Browse..." Icon="{ui:SymbolIcon FolderOpen24}"
+                        <ui:Button Grid.Row="4" Grid.Column="2" Content="Browse..." Icon="{ui:SymbolIcon FolderOpen24}"
                                    Width="100" Click="BrowseAssemblyInfo_Click"/>
 
-                        <TextBlock Grid.Row="4" Grid.Column="0" Text="IIS host folder" VerticalAlignment="Center"/>
-                        <ui:TextBox Grid.Row="4" Grid.Column="1" x:Name="NewProjectIisHostTextBox" Margin="0,6,6,6"
+                        <TextBlock Grid.Row="5" Grid.Column="0" Text="IIS host folder" VerticalAlignment="Center"/>
+                        <ui:TextBox Grid.Row="5" Grid.Column="1" x:Name="NewProjectIisHostTextBox" Margin="0,6,6,6"
                                     PlaceholderText="C:\inetpub\wwwroot\MyProject"/>
-                        <ui:Button Grid.Row="4" Grid.Column="2" Content="Browse..." Icon="{ui:SymbolIcon FolderOpen24}"
+                        <ui:Button Grid.Row="5" Grid.Column="2" Content="Browse..." Icon="{ui:SymbolIcon FolderOpen24}"
                                    Width="100" Click="BrowseIisHost_Click"/>
 
-                        <TextBlock Grid.Row="5" Grid.Column="0" Text="Extra publish&#10;targets (optional)" VerticalAlignment="Center"/>
-                        <ui:TextBox Grid.Row="5" Grid.Column="1" Grid.ColumnSpan="2" x:Name="NewProjectExtraTargetsTextBox" Margin="0,6"
+                        <TextBlock Grid.Row="6" Grid.Column="0" Text="Extra publish&#10;targets (optional)" VerticalAlignment="Center"/>
+                        <ui:TextBox Grid.Row="6" Grid.Column="1" Grid.ColumnSpan="2" x:Name="NewProjectExtraTargetsTextBox" Margin="0,6"
                                     PlaceholderText="e.g. CollectSQLiteInteropFiles"
                                     ToolTip="Semicolon-separated MSBuild targets to force during publish, for packages whose own .targets don't hook into this toolset -- e.g. CollectSQLiteInteropFiles"/>
 
-                        <ui:ToggleSwitch Grid.Row="6" Grid.Column="0" Grid.ColumnSpan="3" x:Name="SdkStyleProjectToggle"
+                        <ui:ToggleSwitch Grid.Row="7" Grid.Column="0" Grid.ColumnSpan="3" x:Name="SdkStyleProjectToggle"
                                          Content="Modern SDK-style project (e.g. ASP.NET Core)" Margin="0,10,0,0"
                                          ToolTip="Leave off for classic .NET Framework Web Deploy projects -- the two publish very differently."/>
 
-                        <ui:ToggleSwitch Grid.Row="7" Grid.Column="0" Grid.ColumnSpan="3" x:Name="ListInHostingToggle"
+                        <ui:ToggleSwitch Grid.Row="8" Grid.Column="0" Grid.ColumnSpan="3" x:Name="ListInHostingToggle"
                                          Content="List builds in hosting site" IsChecked="True" Margin="0,10,0,0"
                                          ToolTip="Builds are always archived to the build repository either way; this only controls whether they show up in the build-hosting site's listing."/>
 
-                        <ui:ToggleSwitch Grid.Row="8" Grid.Column="1" Grid.ColumnSpan="2" x:Name="AutoCreateIisSiteToggle"
+                        <ui:ToggleSwitch Grid.Row="9" Grid.Column="1" Grid.ColumnSpan="2" x:Name="AutoCreateIisSiteToggle"
                                          Content="Auto-create IIS site if missing" Margin="0,10,0,0"
                                          Checked="AutoCreateIisSiteToggle_Toggled" Unchecked="AutoCreateIisSiteToggle_Toggled"/>
 
-                        <StackPanel Grid.Row="9" Grid.Column="0" Grid.ColumnSpan="3" x:Name="IisBindingsPanel"
+                        <StackPanel Grid.Row="10" Grid.Column="0" Grid.ColumnSpan="3" x:Name="IisBindingsPanel"
                                     Visibility="Collapsed" Margin="0,10,0,0">
                             <TextBlock Text="Site bindings" Margin="0,0,0,6"
                                        Foreground="{DynamicResource TextFillColorSecondaryBrush}"/>
@@ -158,7 +179,7 @@
                             </StackPanel>
                         </StackPanel>
 
-                        <StackPanel Grid.Row="10" Grid.Column="1" Orientation="Horizontal" Margin="0,14,0,0">
+                        <StackPanel Grid.Row="11" Grid.Column="1" Orientation="Horizontal" Margin="0,14,0,0">
                             <ui:Button x:Name="SaveProjectButton" Content="Save project" Appearance="Primary"
                                        Icon="{ui:SymbolIcon Save24}" Width="140" Click="SaveProjectButton_Click"/>
                             <ui:Button x:Name="NewProjectButton" Content="Clear form" Icon="{ui:SymbolIcon Eraser24}"

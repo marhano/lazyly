@@ -457,14 +457,19 @@ public partial class MainWindow : Wpf.Ui.Controls.FluentWindow
             return;
         }
 
-        var args = new[]
+        var args = new List<string>
         {
             "publish",
             "--project", project,
             "--version", VersionTextBox.Text,
         };
 
-        await RunAsync(args);
+        foreach (var item in FeaturesEditor.Items) { args.Add("--feature"); args.Add(item); }
+        foreach (var item in FixesEditor.Items) { args.Add("--fix"); args.Add(item); }
+        foreach (var item in OtherUpdatesEditor.Items) { args.Add("--other-update"); args.Add(item); }
+        foreach (var item in BacklogItemsEditor.Items) { args.Add("--backlog-item"); args.Add(item); }
+
+        await RunAsync(args.ToArray());
     }
 
     private void BrowseCsproj_Click(object sender, RoutedEventArgs e)
@@ -557,6 +562,12 @@ public partial class MainWindow : Wpf.Ui.Controls.FluentWindow
             "--iis-host", NewProjectIisHostTextBox.Text,
         };
 
+        if (!string.IsNullOrWhiteSpace(NewProjectIdTextBox.Text))
+        {
+            args.Add("--project-id");
+            args.Add(NewProjectIdTextBox.Text);
+        }
+
         if (!string.IsNullOrWhiteSpace(NewProjectAssemblyInfoTextBox.Text))
         {
             args.Add("--assembly-info");
@@ -620,6 +631,7 @@ public partial class MainWindow : Wpf.Ui.Controls.FluentWindow
     private void NewProjectButton_Click(object sender, RoutedEventArgs e)
     {
         NewProjectNameTextBox.Clear();
+        NewProjectIdTextBox.Clear();
         NewProjectCsprojTextBox.Clear();
         NewProjectPubxmlTextBox.Clear();
         NewProjectAssemblyInfoTextBox.Clear();
@@ -641,6 +653,7 @@ public partial class MainWindow : Wpf.Ui.Controls.FluentWindow
         }
 
         NewProjectNameTextBox.Text = project.Name;
+        NewProjectIdTextBox.Text = project.ProjectId ?? string.Empty;
         NewProjectCsprojTextBox.Text = project.CsprojPath;
         NewProjectPubxmlTextBox.Text = project.PubxmlName;
         NewProjectAssemblyInfoTextBox.Text = project.AssemblyInfoPath ?? string.Empty;

@@ -1,0 +1,139 @@
+@page
+@model UploadModel
+@{
+    ViewData["Title"] = "Upload";
+}
+
+<div class="pt-header">
+    <div class="container">
+        <h1>Upload a Build</h1>
+        <p>Publish a build to the archive without needing write access to the shared build storage.</p>
+    </div>
+</div>
+
+<div class="pt-page">
+    @if (Model.BuildsRootNotConfigured)
+    {
+        <div class="pt-alert">
+            <strong>Builds root is not configured.</strong>
+            Set <code>BuildsRoot</code> in appsettings.json before uploads can be accepted.
+        </div>
+    }
+    else if (Model.BuildsRootNotAccessible)
+    {
+        <div class="pt-alert">
+            <strong>Builds root doesn't exist, or this process can't see it.</strong>
+            Uploads can't be saved until that's fixed -- see the same note on the main page.
+        </div>
+    }
+    else
+    {
+        if (Model.ErrorMessage is not null)
+        {
+            <div class="pt-alert">@Model.ErrorMessage</div>
+        }
+
+        <form method="post" enctype="multipart/form-data" class="pt-card">
+            @Html.AntiForgeryToken()
+
+            <div class="pt-form-grid">
+                <label for="ProjectName">Project name</label>
+                <div>
+                    <input class="pt-input" type="text" id="ProjectName" name="ProjectName" value="@Model.ProjectName"
+                           list="projectNames" placeholder="e.g. OmniPay Business" required />
+                    <datalist id="projectNames">
+                        @foreach (var name in Model.ExistingProjectNames)
+                        {
+                            <option value="@name"></option>
+                        }
+                    </datalist>
+                </div>
+
+                <label for="Version">Version</label>
+                <input class="pt-input" type="text" id="Version" name="Version" value="@Model.Version"
+                       placeholder="e.g. 1.0.0.R0001B" required />
+
+                <label for="UploadedBy">Your name</label>
+                <input class="pt-input" type="text" id="UploadedBy" name="UploadedBy" value="@Model.UploadedBy" required />
+
+                <label for="UploadedZip">Build .zip</label>
+                <div>
+                    <input class="pt-input" type="file" id="UploadedZip" name="UploadedZip" accept=".zip" required />
+                    <p class="pt-muted" style="margin: 0.4rem 0 0;">Max upload size: @Model.MaxUploadSizeDisplay</p>
+                </div>
+
+                <span></span>
+                <label class="pt-checkbox">
+                    <input type="checkbox" name="ListInHosting" value="true" @(Model.ListInHosting ? "checked" : "") />
+                    List in the build archive
+                </label>
+            </div>
+
+            <hr class="pt-divider" />
+
+            <label class="pt-checkbox">
+                <input type="checkbox" id="includeReleaseNotesToggle" name="IncludeReleaseNotes" value="true"
+                       @(Model.IncludeReleaseNotes ? "checked" : "") />
+                Add release notes for this build
+            </label>
+
+            <div id="releaseNotesFields" class="pt-release-notes-fields" hidden>
+                <div class="pt-form-grid" style="margin-top: 1rem;">
+                    <label for="Reference">Reference</label>
+                    <input class="pt-input" type="text" id="Reference" name="Reference" value="@Model.Reference"
+                           placeholder="e.g. BPS-2026-0007" />
+
+                    <label for="ReleaseDate">Date</label>
+                    <input class="pt-input" type="date" id="ReleaseDate" name="ReleaseDate"
+                           value="@Model.ReleaseDate.ToString("yyyy-MM-dd")" />
+                </div>
+
+                <div class="pt-release-notes-grid">
+                    <div>
+                        <label for="Features">Features and Enhancements</label>
+                        <textarea class="pt-input" id="Features" name="Features" rows="4"
+                                  placeholder="One item per line">@Model.Features</textarea>
+                    </div>
+                    <div>
+                        <label for="Fixes">Fixes</label>
+                        <textarea class="pt-input" id="Fixes" name="Fixes" rows="4"
+                                  placeholder="One item per line">@Model.Fixes</textarea>
+                    </div>
+                    <div>
+                        <label for="OtherUpdates">Other Updates</label>
+                        <textarea class="pt-input" id="OtherUpdates" name="OtherUpdates" rows="4"
+                                  placeholder="One item per line">@Model.OtherUpdates</textarea>
+                    </div>
+                    <div>
+                        <label for="BacklogItems">Backlog Items</label>
+                        <textarea class="pt-input" id="BacklogItems" name="BacklogItems" rows="4"
+                                  placeholder="One item per line">@Model.BacklogItems</textarea>
+                    </div>
+                </div>
+            </div>
+
+            <div class="pt-upload-actions">
+                <button type="submit" class="pt-btn pt-btn-primary">Upload</button>
+                <a href="/" class="pt-btn pt-btn-ghost">Cancel</a>
+            </div>
+        </form>
+    }
+
+    <div class="pt-footer">Build Archive</div>
+</div>
+
+@section Scripts {
+    <script>
+        $(function () {
+            var $toggle = $('#includeReleaseNotesToggle');
+            var $fields = $('#releaseNotesFields');
+
+            function sync() {
+                $fields.prop('hidden', !$toggle.is(':checked'));
+            }
+
+            $toggle.on('change', sync);
+            sync();
+        });
+    </script>
+}

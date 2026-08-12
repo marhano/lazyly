@@ -79,6 +79,14 @@ a:hover {
   font-size: 0.9rem;
 }
 
+.pt-header-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+
 /* ---------- Layout / page shell ---------- */
 
 .pt-page {
@@ -138,6 +146,17 @@ a:hover {
   font-size: 0.82rem;
 }
 
+button.pt-btn {
+  font-family: inherit;
+  appearance: none;
+}
+
+.pt-actions {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
 /* ---------- Table ---------- */
 
 .pt-table-wrap {
@@ -190,6 +209,91 @@ table.pt-table {
   background: rgba(127, 127, 127, 0.18);
   padding: 0.1rem 0.35rem;
   border-radius: 4px;
+}
+
+.pt-alert-success {
+  border-left: 3px solid var(--pt-accent);
+}
+
+.pt-alert + .pt-card {
+  margin-top: 1.25rem;
+}
+
+/* ---------- Forms (Upload page) ---------- */
+
+.pt-input {
+  width: 100%;
+  padding: 0.55rem 0.8rem;
+  border: 1px solid var(--pt-border);
+  border-radius: 8px;
+  background: var(--pt-bg);
+  color: var(--pt-text);
+  font-family: inherit;
+  font-size: 0.92rem;
+}
+
+.pt-input:focus {
+  outline: none;
+  border-color: var(--pt-text-muted);
+}
+
+textarea.pt-input {
+  resize: vertical;
+  font-family: "Cascadia Mono", Consolas, "SFMono-Regular", monospace;
+  font-size: 0.85rem;
+}
+
+.pt-form-grid {
+  display: grid;
+  grid-template-columns: 160px 1fr;
+  gap: 0.9rem 1rem;
+  align-items: center;
+}
+
+.pt-form-grid label {
+  font-weight: 600;
+  font-size: 0.88rem;
+  color: var(--pt-text-muted);
+}
+
+.pt-checkbox {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.9rem;
+  color: var(--pt-text);
+  cursor: pointer;
+}
+
+.pt-divider {
+  border: none;
+  border-top: 1px solid var(--pt-border);
+  margin: 1.5rem 0;
+}
+
+.pt-release-notes-fields {
+  margin-top: 1rem;
+}
+
+.pt-release-notes-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1rem;
+  margin-top: 1.25rem;
+}
+
+.pt-release-notes-grid label {
+  display: block;
+  font-weight: 600;
+  font-size: 0.85rem;
+  color: var(--pt-text-muted);
+  margin-bottom: 0.4rem;
+}
+
+.pt-upload-actions {
+  display: flex;
+  gap: 0.6rem;
+  margin-top: 1.5rem;
 }
 
 /* ---------- Footer ---------- */
@@ -298,8 +402,94 @@ table.dataTable tbody tr:hover > * {
   font-size: 0.85rem;
 }
 
+/* ---------- Release notes modal ---------- */
+
+.pt-modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1.5rem;
+  z-index: 1000;
+}
+
+.pt-modal-overlay[hidden] {
+  display: none;
+}
+
+.pt-modal {
+  background: var(--pt-surface);
+  border: 1px solid var(--pt-border);
+  border-radius: var(--pt-radius);
+  box-shadow: var(--pt-shadow);
+  width: 100%;
+  max-width: 720px;
+  max-height: 80vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.pt-modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 1rem 1.25rem;
+  border-bottom: 1px solid var(--pt-border);
+}
+
+.pt-modal-header h2 {
+  margin: 0;
+  font-size: 1.05rem;
+  color: var(--pt-text);
+}
+
+.pt-modal-close {
+  background: none;
+  border: none;
+  font-size: 1.4rem;
+  line-height: 1;
+  color: var(--pt-text-muted);
+  cursor: pointer;
+  padding: 0 0.25rem;
+}
+
+.pt-modal-close:hover {
+  color: var(--pt-text);
+}
+
+.pt-modal-body {
+  padding: 1.25rem;
+  overflow: auto;
+}
+
+.pt-modal-body pre {
+  margin: 0;
+  font-family: "Cascadia Mono", Consolas, "SFMono-Regular", monospace;
+  font-size: 0.82rem;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--pt-text);
+}
+
+.pt-modal-footer {
+  padding: 0.9rem 1.25rem;
+  border-top: 1px solid var(--pt-border);
+  display: flex;
+  justify-content: flex-end;
+}
+
 @media (max-width: 640px) {
   .pt-header {
     padding: 1.5rem 0;
+  }
+
+  .pt-form-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .pt-release-notes-grid {
+    grid-template-columns: 1fr;
   }
 }
