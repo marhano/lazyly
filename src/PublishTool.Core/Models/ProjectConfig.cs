@@ -72,4 +72,34 @@ public sealed class ProjectConfig
 
     /// <summary>Path to the config file itself, e.g. the project's Web.config.</summary>
     public string? AppConfigPath { get; set; }
+
+    /// <summary>Whether the Event Logs tab is enabled for this project.</summary>
+    public bool UseEventLog { get; set; }
+
+    /// <summary>Windows Event Log name to read, e.g. "Application". Only meaningful when
+    /// <see cref="UseEventLog"/> is true.</summary>
+    public string? EventLogName { get; set; } = "Application";
+
+    /// <summary>How to pick this project's entries out of the log -- "Source" filters natively by
+    /// the log entry's Source/Provider name (clean, requires the app to log under its own distinct
+    /// source); "MessageContains" matches a substring against the entry's message body instead
+    /// (for apps that share a generic log, e.g. via NLog writing to "Application").</summary>
+    public string? EventLogFilterType { get; set; } = "Source";
+
+    /// <summary>The Source name or message substring to filter by, depending on
+    /// <see cref="EventLogFilterType"/>.</summary>
+    public string? EventLogFilterValue { get; set; }
+
+    /// <summary>Machine to read the event log from. Null/empty means the local machine.</summary>
+    public string? EventLogMachineName { get; set; }
+
+    /// <summary>Username for connecting to <see cref="EventLogMachineName"/>, if it requires
+    /// different credentials than the current Windows identity. Null uses the current identity
+    /// (the only option that works for a local read).</summary>
+    public string? EventLogUsername { get; set; }
+
+    /// <summary>DPAPI-protected (current-user-scoped) password for <see cref="EventLogUsername"/>,
+    /// only present if the user opted to save it. Never stored in plain text. If this is null but
+    /// a username is set, the GUI prompts for the password each time instead.</summary>
+    public string? EventLogProtectedPassword { get; set; }
 }

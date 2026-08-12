@@ -223,6 +223,33 @@ public static class CommandLineFactory
         {
             Description = "Path to the config file (e.g. Web.config) for --app-config-type. Required if that's set.",
         };
+        var enableEventLogOption = new Option<bool>("--enable-event-log")
+        {
+            Description = "Enables the Event Logs tab for this project.",
+        };
+        var eventLogNameOption = new Option<string?>("--event-log-name")
+        {
+            Description = "Windows Event Log name to read, e.g. \"Application\" (the default).",
+        };
+        var eventLogFilterTypeOption = new Option<string?>("--event-log-filter-type")
+        {
+            Description = $"How to pick this project's entries out of the log: \"{EventLogFilterTypes.Source}\" " +
+                           $"(native filter by Source/Provider name) or \"{EventLogFilterTypes.MessageContains}\" " +
+                           "(substring match against the message body, for apps sharing a generic log via e.g. NLog).",
+        };
+        var eventLogFilterValueOption = new Option<string?>("--event-log-filter-value")
+        {
+            Description = "The Source name or message substring to filter by, per --event-log-filter-type.",
+        };
+        var eventLogMachineOption = new Option<string?>("--event-log-machine")
+        {
+            Description = "Machine to read the event log from. Omit for the local machine.",
+        };
+        var eventLogUsernameOption = new Option<string?>("--event-log-username")
+        {
+            Description = "Username for --event-log-machine, if it needs different credentials than the current " +
+                           "Windows identity. The password itself is set (and optionally saved) from the GUI, not the CLI.",
+        };
 
         var command = new Command("add-project", "Register a project (or update an existing registration).");
         command.Add(nameOption);
@@ -238,6 +265,12 @@ public static class CommandLineFactory
         command.Add(listInHostingOption);
         command.Add(appConfigTypeOption);
         command.Add(appConfigPathOption);
+        command.Add(enableEventLogOption);
+        command.Add(eventLogNameOption);
+        command.Add(eventLogFilterTypeOption);
+        command.Add(eventLogFilterValueOption);
+        command.Add(eventLogMachineOption);
+        command.Add(eventLogUsernameOption);
 
         command.SetAction(parseResult =>
         {
@@ -264,10 +297,22 @@ public static class CommandLineFactory
                     }
                 }
 
+                var enableEventLog = parseResult.GetValue(enableEventLogOption);
+                var eventLogFilterType = parseResult.GetValue(eventLogFilterTypeOption);
+                if (enableEventLog && eventLogFilterType is not null &&
+                    !string.Equals(eventLogFilterType, EventLogFilterTypes.Source, StringComparison.OrdinalIgnoreCase) &&
+                    !string.Equals(eventLogFilterType, EventLogFilterTypes.MessageContains, StringComparison.OrdinalIgnoreCase))
+                {
+                    output.Error($"Unknown --event-log-filter-type '{eventLogFilterType}'. " +
+                                 $"Valid values: {EventLogFilterTypes.Source}, {EventLogFilterTypes.MessageContains}.");
+                    return 1;
+                }
+
                 var registry = new ProjectRegistry(ProjectRegistry.DefaultPath);
                 var name = parseResult.GetValue(nameOption)!;
                 // add-project doubles as "update" -- preserve the release notes sequence counter
-                // across edits instead of resetting it, since there's no CLI option for it.
+                // and any saved event log password across edits instead of resetting them, since
+                // there's no CLI option for either.
                 var existing = registry.Get(name);
 
                 registry.AddOrUpdate(new ProjectConfig
@@ -287,6 +332,13 @@ public static class CommandLineFactory
                     UseAppConfig = appConfigType is not null,
                     AppConfigType = appConfigType,
                     AppConfigPath = appConfigPath,
+                    UseEventLog = enableEventLog,
+                    EventLogName = parseResult.GetValue(eventLogNameOption) ?? "Application",
+                    EventLogFilterType = eventLogFilterType ?? EventLogFilterTypes.Source,
+                    EventLogFilterValue = parseResult.GetValue(eventLogFilterValueOption),
+                    EventLogMachineName = parseResult.GetValue(eventLogMachineOption),
+                    EventLogUsername = parseResult.GetValue(eventLogUsernameOption),
+                    EventLogProtectedPassword = existing?.EventLogProtectedPassword,
                 });
 
                 output.Info($"Registered project '{parseResult.GetValue(nameOption)}'.");

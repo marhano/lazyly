@@ -1,0 +1,63 @@
+<ui:FluentWindow x:Class="PublishTool.Gui.EventLogDetailDialog"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:ui="http://schemas.lepo.co/wpfui/2022/xaml"
+        mc:Ignorable="d"
+        Title="Event Log Entry" Height="540" Width="640"
+        WindowStartupLocation="CenterOwner">
+    <Grid Margin="20">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <Grid Grid.Row="0" Margin="0,0,0,14">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto"/>
+                <ColumnDefinition Width="*"/>
+            </Grid.ColumnDefinitions>
+            <Grid.RowDefinitions>
+                <RowDefinition/>
+                <RowDefinition/>
+                <RowDefinition/>
+                <RowDefinition/>
+                <RowDefinition/>
+                <RowDefinition x:Name="MethodRow"/>
+            </Grid.RowDefinitions>
+
+            <TextBlock Grid.Row="0" Grid.Column="0" Text="Time" FontWeight="SemiBold" Margin="0,0,14,4"/>
+            <TextBlock Grid.Row="0" Grid.Column="1" x:Name="TimeTextBlock" Margin="0,0,0,4"/>
+
+            <TextBlock Grid.Row="1" Grid.Column="0" Text="Level" FontWeight="SemiBold" Margin="0,0,14,4"/>
+            <TextBlock Grid.Row="1" Grid.Column="1" x:Name="LevelTextBlock" Margin="0,0,0,4"/>
+
+            <TextBlock Grid.Row="2" Grid.Column="0" Text="Source" FontWeight="SemiBold" Margin="0,0,14,4"/>
+            <TextBlock Grid.Row="2" Grid.Column="1" x:Name="SourceTextBlock" Margin="0,0,0,4"/>
+
+            <TextBlock Grid.Row="3" Grid.Column="0" Text="Event ID" FontWeight="SemiBold" Margin="0,0,14,4"/>
+            <TextBlock Grid.Row="3" Grid.Column="1" x:Name="EventIdTextBlock" Margin="0,0,0,4"/>
+
+            <TextBlock Grid.Row="4" Grid.Column="0" Text="Machine" FontWeight="SemiBold" Margin="0,0,14,4"/>
+            <TextBlock Grid.Row="4" Grid.Column="1" x:Name="MachineTextBlock" Margin="0,0,0,4"/>
+
+            <TextBlock Grid.Row="5" Grid.Column="0" x:Name="MethodLabelTextBlock" Text="Method" FontWeight="SemiBold" Margin="0,0,14,0"/>
+            <TextBlock Grid.Row="5" Grid.Column="1" x:Name="MethodTextBlock"/>
+        </Grid>
+
+        <Border Grid.Row="1" BorderThickness="1" CornerRadius="6" Padding="10"
+                BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}">
+            <ScrollViewer VerticalScrollBarVisibility="Auto">
+                <TextBox x:Name="MessageTextBox" IsReadOnly="True" BorderThickness="0" Background="Transparent"
+                         TextWrapping="Wrap" FontFamily="Cascadia Mono, Consolas"/>
+            </ScrollViewer>
+        </Border>
+
+        <StackPanel Grid.Row="2" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,14,0,0">
+            <ui:Button Content="Copy message" Click="CopyButton_Click" Margin="0,0,8,0"/>
+            <ui:Button Content="Close" Appearance="Primary" Click="CloseButton_Click"/>
+        </StackPanel>
+    </Grid>
+</ui:FluentWindow>

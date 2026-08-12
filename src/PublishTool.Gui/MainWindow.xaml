@@ -149,6 +149,8 @@
                             <RowDefinition Height="Auto"/>
                             <RowDefinition Height="Auto"/>
                             <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/>
                         </Grid.RowDefinitions>
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="140"/>
@@ -232,7 +234,55 @@
                             </Grid>
                         </StackPanel>
 
-                        <StackPanel Grid.Row="12" Grid.Column="0" Grid.ColumnSpan="3" x:Name="IisBindingsPanel"
+                        <ui:ToggleSwitch Grid.Row="12" Grid.Column="0" Grid.ColumnSpan="3" x:Name="UseEventLogToggle"
+                                         Content="Enable Event Logs tab for this project" Margin="0,10,0,0"
+                                         ToolTip="Reads Windows Event Log entries for this project into the Event Logs tab."
+                                         Checked="UseEventLogToggle_Toggled" Unchecked="UseEventLogToggle_Toggled"/>
+
+                        <StackPanel Grid.Row="13" Grid.Column="0" Grid.ColumnSpan="3" x:Name="EventLogPanel"
+                                    Visibility="Collapsed" Margin="0,10,0,0">
+                            <Grid>
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto"/>
+                                    <RowDefinition Height="Auto"/>
+                                    <RowDefinition Height="Auto"/>
+                                    <RowDefinition Height="Auto"/>
+                                    <RowDefinition Height="Auto"/>
+                                </Grid.RowDefinitions>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="140"/>
+                                    <ColumnDefinition Width="*"/>
+                                </Grid.ColumnDefinitions>
+
+                                <TextBlock Grid.Row="0" Grid.Column="0" Text="Log name" VerticalAlignment="Center"/>
+                                <ui:TextBox Grid.Row="0" Grid.Column="1" x:Name="EventLogNameTextBox" Margin="0,6"
+                                            PlaceholderText="Application"/>
+
+                                <TextBlock Grid.Row="1" Grid.Column="0" Text="Identify entries by" VerticalAlignment="Center"/>
+                                <ComboBox Grid.Row="1" Grid.Column="1" x:Name="EventLogFilterTypeComboBox" Margin="0,6"
+                                          HorizontalAlignment="Left" Width="240" SelectedIndex="0">
+                                    <ComboBoxItem Content="Event Source name" Tag="Source"/>
+                                    <ComboBoxItem Content="Message contains" Tag="MessageContains"/>
+                                </ComboBox>
+
+                                <TextBlock Grid.Row="2" Grid.Column="0" Text="Source name or&#10;message text" VerticalAlignment="Center"/>
+                                <ui:TextBox Grid.Row="2" Grid.Column="1" x:Name="EventLogFilterValueTextBox" Margin="0,6"
+                                            PlaceholderText="e.g. MyApp, or a distinctive substring"
+                                            ToolTip="An Event Log Source name if 'Identify entries by' is Source, or a substring to match against each entry's message if it's Message Contains."/>
+
+                                <TextBlock Grid.Row="3" Grid.Column="0" Text="Machine&#10;(optional)" VerticalAlignment="Center"/>
+                                <ui:TextBox Grid.Row="3" Grid.Column="1" x:Name="EventLogMachineTextBox" Margin="0,6"
+                                            PlaceholderText="(local machine)"
+                                            ToolTip="Read the event log from a different computer instead of this one. Requires Remote Event Log Management to be allowed through that machine's firewall."/>
+
+                                <TextBlock Grid.Row="4" Grid.Column="0" Text="Username&#10;(optional)" VerticalAlignment="Center"/>
+                                <ui:TextBox Grid.Row="4" Grid.Column="1" x:Name="EventLogUsernameTextBox" Margin="0,6"
+                                            PlaceholderText="(use current Windows identity)"
+                                            ToolTip="Only needed for a remote machine that doesn't trust your current Windows identity. You'll be prompted for the password (with an option to save it) from the Event Logs tab."/>
+                            </Grid>
+                        </StackPanel>
+
+                        <StackPanel Grid.Row="14" Grid.Column="0" Grid.ColumnSpan="3" x:Name="IisBindingsPanel"
                                     Visibility="Collapsed" Margin="0,10,0,0">
                             <TextBlock Text="Site bindings" Margin="0,0,0,6"
                                        Foreground="{DynamicResource TextFillColorSecondaryBrush}"/>
@@ -250,7 +300,7 @@
                             </StackPanel>
                         </StackPanel>
 
-                        <StackPanel Grid.Row="13" Grid.Column="1" Orientation="Horizontal" Margin="0,14,0,0">
+                        <StackPanel Grid.Row="15" Grid.Column="1" Orientation="Horizontal" Margin="0,14,0,0">
                             <ui:Button x:Name="SaveProjectButton" Content="Save project" Appearance="Primary"
                                        Icon="{ui:SymbolIcon Save24}" Width="140" Click="SaveProjectButton_Click"/>
                             <ui:Button x:Name="NewProjectButton" Content="Clear form" Icon="{ui:SymbolIcon Eraser24}"
@@ -335,6 +385,91 @@
                                 </Grid>
                             </TabItem>
                         </TabControl>
+                    </Grid>
+                </TabItem>
+
+                <TabItem Header="Event Logs">
+                    <Grid Margin="12">
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="*"/>
+                        </Grid.RowDefinitions>
+
+                        <Grid Grid.Row="0">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto"/>
+                                <ColumnDefinition Width="220"/>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+
+                            <TextBlock Grid.Column="0" Text="Project" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                            <ComboBox Grid.Column="1" x:Name="EventLogProjectComboBox" Margin="0,0,10,0"
+                                      SelectionChanged="EventLogProjectComboBox_SelectionChanged"/>
+
+                            <ui:TextBox Grid.Column="2" x:Name="EventLogSearchTextBox" Margin="0,0,10,0"
+                                        PlaceholderText="Search message, source..."
+                                        TextChanged="EventLogSearchTextBox_TextChanged"/>
+
+                            <ui:Button Grid.Column="3" x:Name="RefreshEventLogButton" Content="Refresh"
+                                       Icon="{ui:SymbolIcon ArrowSync24}" Width="110" Margin="0,0,10,0"
+                                       Click="RefreshEventLogButton_Click"/>
+
+                            <ui:Button Grid.Column="4" x:Name="ExportEventLogButton" Content="Export CSV"
+                                       Icon="{ui:SymbolIcon ArrowDownload24}" Width="120" Click="ExportEventLogButton_Click"/>
+                        </Grid>
+
+                        <Grid Grid.Row="1" Margin="0,10,0,0">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto"/>
+                                <ColumnDefinition Width="160"/>
+                                <ColumnDefinition Width="Auto"/>
+                                <ColumnDefinition Width="220"/>
+                            </Grid.ColumnDefinitions>
+
+                            <TextBlock Grid.Column="0" Text="Level" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                            <ComboBox Grid.Column="1" x:Name="EventLogLevelFilterComboBox" Margin="0,0,20,0"
+                                      SelectedIndex="0" SelectionChanged="EventLogLevelFilterComboBox_SelectionChanged">
+                                <ComboBoxItem Content="All levels"/>
+                                <ComboBoxItem Content="Critical"/>
+                                <ComboBoxItem Content="Error"/>
+                                <ComboBoxItem Content="Warning"/>
+                                <ComboBoxItem Content="Information"/>
+                                <ComboBoxItem Content="Verbose"/>
+                            </ComboBox>
+
+                            <TextBlock Grid.Column="2" Text="Method" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                            <ComboBox Grid.Column="3" x:Name="EventLogMethodFilterComboBox"
+                                      SelectedIndex="0" SelectionChanged="EventLogMethodFilterComboBox_SelectionChanged"/>
+                        </Grid>
+
+                        <TextBlock Grid.Row="2" x:Name="EventLogStatusTextBlock" Margin="0,10,0,8"
+                                   Foreground="{DynamicResource TextFillColorSecondaryBrush}"/>
+
+                        <DataGrid Grid.Row="3" x:Name="EventLogDataGrid" AutoGenerateColumns="False" IsReadOnly="True"
+                                  PreviewMouseLeftButtonUp="EventLogDataGrid_PreviewMouseLeftButtonUp">
+                            <DataGrid.Columns>
+                                <DataGridTextColumn Header="Time" Binding="{Binding TimeDisplay}" Width="160"/>
+                                <DataGridTemplateColumn Header="Level" Width="110">
+                                    <DataGridTemplateColumn.CellTemplate>
+                                        <DataTemplate>
+                                            <Border Background="{Binding LevelBackground}" CornerRadius="4"
+                                                    Padding="8,2" HorizontalAlignment="Left">
+                                                <TextBlock Text="{Binding Level}" Foreground="{Binding LevelForeground}"
+                                                           FontSize="12" FontWeight="SemiBold"/>
+                                            </Border>
+                                        </DataTemplate>
+                                    </DataGridTemplateColumn.CellTemplate>
+                                </DataGridTemplateColumn>
+                                <DataGridTextColumn Header="Source" Binding="{Binding Source}" Width="150"/>
+                                <DataGridTextColumn Header="Event ID" Binding="{Binding EventId}" Width="70"/>
+                                <DataGridTextColumn Header="Method" Binding="{Binding MethodName}" Width="160"/>
+                                <DataGridTextColumn Header="Message" Binding="{Binding MessageSummary}" Width="*"/>
+                            </DataGrid.Columns>
+                        </DataGrid>
                     </Grid>
                 </TabItem>
 

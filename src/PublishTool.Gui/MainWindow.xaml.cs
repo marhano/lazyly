@@ -1,11 +1,15 @@
 using System.Collections.ObjectModel;
+using System.ComponentModel;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Security.Principal;
+using System.Text;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Data;
 using System.Windows.Input;
+using System.Windows.Media;
 using Microsoft.Win32;
 using PublishTool.Commands;
 using PublishTool.Core;
@@ -34,6 +38,11 @@ public partial class MainWindow : Wpf.Ui.Controls.FluentWindow
     private bool _isExiting;
     private string? _lastSelectedProjectForForm;
     private GridLength _savedOutputColumnWidth = new(380);
+    private readonly List<EventLogRowViewModel> _eventLogRows = new();
+    private ICollectionView? _eventLogView;
+    // Session-only cache: avoids re-prompting for a password on every Refresh within the same
+    // app run, without writing anything to disk unless the user explicitly checked "Remember".
+    private readonly Dictionary<string, string> _eventLogSessionPasswords = new(StringComparer.OrdinalIgnoreCase);
 
     public MainWindow()
     {
@@ -267,12 +276,16 @@ public partial class MainWindow : Wpf.Ui.Controls.FluentWindow
         if (isCurrentlyVisible)
         {
             // Remember whatever width the user last dragged the splitter to, so re-showing the
-            // panel restores it instead of snapping back to the default.
+            // panel restores it instead of snapping back to the default. MinWidth has to drop to
+            // 0 too -- otherwise the column still reserves 260px for an empty, Collapsed panel,
+            // which is exactly the leftover-empty-space bug this is fixing.
             _savedOutputColumnWidth = OutputColumnDefinition.Width;
+            OutputColumnDefinition.MinWidth = 0;
             OutputColumnDefinition.Width = new GridLength(0);
         }
         else
         {
+            OutputColumnDefinition.MinWidth = 260;
             OutputColumnDefinition.Width = _savedOutputColumnWidth;
         }
 
@@ -472,6 +485,17 @@ public partial class MainWindow : Wpf.Ui.Controls.FluentWindow
         }
 
         RegisteredProjectsListBox.ItemsSource = registry.Projects;
+
+        // All projects, not just ones with Event Logs already enabled -- filtering the list down
+        // used to leave this combo silently empty with no explanation for anyone who hadn't yet
+        // turned the feature on for a project. LoadEventLogsForSelectedProjectAsync now says so
+        // explicitly instead.
+        var selectedInEventLogCombo = EventLogProjectComboBox.SelectedItem as string;
+        EventLogProjectComboBox.ItemsSource = registry.Projects.Select(p => p.Name).ToList();
+        if (selectedInEventLogCombo is not null)
+        {
+            EventLogProjectComboBox.SelectedItem = selectedInEventLogCombo;
+        }
     }
 
     private async void ProjectComboBox_SelectionChanged(object sender, System.Windows.Controls.SelectionChangedEventArgs e)
@@ -1002,6 +1026,16 @@ public partial class MainWindow : Wpf.Ui.Controls.FluentWindow
         }
     }
 
+    private void UseEventLogToggle_Toggled(object sender, RoutedEventArgs e)
+    {
+        var isOn = UseEventLogToggle.IsChecked == true;
+        EventLogPanel.Visibility = isOn ? Visibility.Visible : Visibility.Collapsed;
+        if (isOn && string.IsNullOrWhiteSpace(EventLogNameTextBox.Text))
+        {
+            EventLogNameTextBox.Text = "Application";
+        }
+    }
+
     private void AddBindingButton_Click(object sender, RoutedEventArgs e)
     {
         _iisBindings.Add(new IisBinding { Protocol = "http", IpAddress = "*", Port = 80, HostName = null });
@@ -1046,6 +1080,17 @@ public partial class MainWindow : Wpf.Ui.Controls.FluentWindow
         {
             MessageBox.Show(
                 "App config editing is on but the config type or file path is missing. Fill both in, or turn the toggle off.",
+                "PublishTool",
+                MessageBoxButton.OK,
+                MessageBoxImage.Warning);
+            return;
+        }
+
+        var useEventLog = UseEventLogToggle.IsChecked == true;
+        if (useEventLog && string.IsNullOrWhiteSpace(EventLogFilterValueTextBox.Text))
+        {
+            MessageBox.Show(
+                "Event Logs is on but no Source name or message text filter was entered. Fill it in, or turn the toggle off.",
                 "PublishTool",
                 MessageBoxButton.OK,
                 MessageBoxImage.Warning);
@@ -1105,6 +1150,32 @@ public partial class MainWindow : Wpf.Ui.Controls.FluentWindow
             args.Add(AppConfigPathTextBox.Text);
         }
 
+        if (useEventLog)
+        {
+            args.Add("--enable-event-log");
+            args.Add("--event-log-name");
+            args.Add(string.IsNullOrWhiteSpace(EventLogNameTextBox.Text) ? "Application" : EventLogNameTextBox.Text);
+
+            var filterType = (EventLogFilterTypeComboBox.SelectedItem as System.Windows.Controls.ComboBoxItem)?.Tag as string ?? EventLogFilterTypes.Source;
+            args.Add("--event-log-filter-type");
+            args.Add(filterType);
+
+            args.Add("--event-log-filter-value");
+            args.Add(EventLogFilterValueTextBox.Text);
+
+            if (!string.IsNullOrWhiteSpace(EventLogMachineTextBox.Text))
+            {
+                args.Add("--event-log-machine");
+                args.Add(EventLogMachineTextBox.Text);
+            }
+
+            if (!string.IsNullOrWhiteSpace(EventLogUsernameTextBox.Text))
+            {
+                args.Add("--event-log-username");
+                args.Add(EventLogUsernameTextBox.Text);
+            }
+        }
+
         await RunAsync(args.ToArray());
     }
 
@@ -1153,6 +1224,13 @@ public partial class MainWindow : Wpf.Ui.Controls.FluentWindow
         AppConfigPanel.Visibility = Visibility.Collapsed;
         AppConfigTypeComboBox.SelectedItem = null;
         AppConfigPathTextBox.Clear();
+        UseEventLogToggle.IsChecked = false;
+        EventLogPanel.Visibility = Visibility.Collapsed;
+        EventLogNameTextBox.Clear();
+        EventLogFilterTypeComboBox.SelectedIndex = 0;
+        EventLogFilterValueTextBox.Clear();
+        EventLogMachineTextBox.Clear();
+        EventLogUsernameTextBox.Clear();
         RegisteredProjectsListBox.SelectedItem = null;
     }
 
@@ -1191,7 +1269,264 @@ public partial class MainWindow : Wpf.Ui.Controls.FluentWindow
         AppConfigPanel.Visibility = project.UseAppConfig ? Visibility.Visible : Visibility.Collapsed;
         AppConfigTypeComboBox.SelectedItem = AppConfigProviderRegistry.Get(project.AppConfigType);
         AppConfigPathTextBox.Text = project.AppConfigPath ?? string.Empty;
+
+        UseEventLogToggle.IsChecked = project.UseEventLog;
+        EventLogPanel.Visibility = project.UseEventLog ? Visibility.Visible : Visibility.Collapsed;
+        EventLogNameTextBox.Text = project.EventLogName ?? "Application";
+        EventLogFilterTypeComboBox.SelectedIndex = string.Equals(project.EventLogFilterType, EventLogFilterTypes.MessageContains, StringComparison.OrdinalIgnoreCase) ? 1 : 0;
+        EventLogFilterValueTextBox.Text = project.EventLogFilterValue ?? string.Empty;
+        EventLogMachineTextBox.Text = project.EventLogMachineName ?? string.Empty;
+        EventLogUsernameTextBox.Text = project.EventLogUsername ?? string.Empty;
     }
+
+    private async void EventLogProjectComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e) =>
+        await LoadEventLogsForSelectedProjectAsync();
+
+    private async void RefreshEventLogButton_Click(object sender, RoutedEventArgs e) =>
+        await LoadEventLogsForSelectedProjectAsync();
+
+    private async Task LoadEventLogsForSelectedProjectAsync()
+    {
+        var projectName = EventLogProjectComboBox.SelectedItem as string;
+        if (string.IsNullOrWhiteSpace(projectName))
+        {
+            _eventLogRows.Clear();
+            EventLogDataGrid.ItemsSource = null;
+            EventLogStatusTextBlock.Text = string.Empty;
+            return;
+        }
+
+        var project = new ProjectRegistry(ProjectRegistry.DefaultPath).Get(projectName);
+        if (project is null)
+        {
+            return;
+        }
+
+        if (!project.UseEventLog)
+        {
+            _eventLogRows.Clear();
+            EventLogDataGrid.ItemsSource = null;
+            EventLogStatusTextBlock.Text =
+                $"Event Logs isn't enabled for '{project.Name}' -- turn on \"Enable Event Logs tab for this project\" " +
+                "in the Add Project tab first, then save.";
+            return;
+        }
+
+        EventLogStatusTextBlock.Text = "Loading...";
+        RefreshEventLogButton.IsEnabled = false;
+
+        try
+        {
+            string? password = null;
+            var needsPassword = !string.IsNullOrWhiteSpace(project.EventLogMachineName) && !string.IsNullOrWhiteSpace(project.EventLogUsername);
+            if (needsPassword)
+            {
+                password = await ResolveEventLogPasswordAsync(project);
+                if (password is null)
+                {
+                    EventLogStatusTextBlock.Text = "Cancelled -- a password is required to connect to that machine.";
+                    return;
+                }
+            }
+
+            var options = new EventLogQueryOptions
+            {
+                LogName = string.IsNullOrWhiteSpace(project.EventLogName) ? "Application" : project.EventLogName,
+                MachineName = string.IsNullOrWhiteSpace(project.EventLogMachineName) ? null : project.EventLogMachineName,
+                Username = string.IsNullOrWhiteSpace(project.EventLogUsername) ? null : project.EventLogUsername,
+                Password = password,
+                FilterType = project.EventLogFilterType ?? EventLogFilterTypes.Source,
+                FilterValue = project.EventLogFilterValue,
+            };
+
+            var reader = new EventLogReaderService();
+            // Reading (especially remote) is blocking I/O -- keep it off the UI thread, same
+            // pattern as the other Core services this GUI calls directly.
+            var records = await Task.Run(() => reader.GetRecent(options));
+
+            _eventLogRows.Clear();
+            _eventLogRows.AddRange(records.Select(r => new EventLogRowViewModel(r)));
+
+            PopulateEventLogMethodFilter();
+
+            _eventLogView = CollectionViewSource.GetDefaultView(_eventLogRows);
+            EventLogDataGrid.ItemsSource = _eventLogView;
+            ApplyEventLogFilter();
+        }
+        catch (Exception ex)
+        {
+            _eventLogRows.Clear();
+            EventLogDataGrid.ItemsSource = null;
+            EventLogStatusTextBlock.Text = $"Failed to read event log: {ex.Message}";
+        }
+        finally
+        {
+            RefreshEventLogButton.IsEnabled = true;
+        }
+    }
+
+    /// <summary>Resolves the password needed to query a remote event log with explicit
+    /// credentials, checking the in-memory session cache and any saved (DPAPI-protected) password
+    /// before falling back to prompting. Returns null if the user cancels the prompt.</summary>
+    private async Task<string?> ResolveEventLogPasswordAsync(ProjectConfig project)
+    {
+        if (_eventLogSessionPasswords.TryGetValue(project.Name, out var cached))
+        {
+            return cached;
+        }
+
+        if (project.EventLogProtectedPassword is not null)
+        {
+            var unprotected = SecretProtector.TryUnprotect(project.EventLogProtectedPassword);
+            if (unprotected is not null)
+            {
+                _eventLogSessionPasswords[project.Name] = unprotected;
+                return unprotected;
+            }
+
+            _output.Warn($"Saved password for '{project.Name}' couldn't be decrypted (saved by a different Windows user or machine?) -- re-enter it.");
+        }
+
+        var dialog = new CredentialPromptDialog(project.EventLogMachineName!, project.EventLogUsername!) { Owner = this };
+        if (dialog.ShowDialog() != true)
+        {
+            return null;
+        }
+
+        _eventLogSessionPasswords[project.Name] = dialog.Password;
+
+        if (dialog.RememberPassword)
+        {
+            project.EventLogProtectedPassword = SecretProtector.Protect(dialog.Password);
+            new ProjectRegistry(ProjectRegistry.DefaultPath).AddOrUpdate(project);
+        }
+
+        return await Task.FromResult(dialog.Password);
+    }
+
+    /// <summary>Rebuilds the Method filter's options from whatever method names were actually
+    /// extracted from the just-loaded entries -- there's no fixed list, it depends entirely on
+    /// what's in the log. Keeps the current selection if it's still a valid option.</summary>
+    private void PopulateEventLogMethodFilter()
+    {
+        var methods = _eventLogRows
+            .Select(r => r.MethodName)
+            .Where(name => !string.IsNullOrEmpty(name))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .OrderBy(name => name, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        var previouslySelected = EventLogMethodFilterComboBox.SelectedItem as string;
+
+        var items = new List<string> { "All methods" };
+        items.AddRange(methods!);
+        EventLogMethodFilterComboBox.ItemsSource = items;
+        EventLogMethodFilterComboBox.SelectedItem = previouslySelected is not null && items.Contains(previouslySelected)
+            ? previouslySelected
+            : "All methods";
+    }
+
+    private void EventLogSearchTextBox_TextChanged(object sender, TextChangedEventArgs e) => ApplyEventLogFilter();
+
+    private void EventLogLevelFilterComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e) => ApplyEventLogFilter();
+
+    private void EventLogMethodFilterComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e) => ApplyEventLogFilter();
+
+    private void ApplyEventLogFilter()
+    {
+        if (_eventLogView is null)
+        {
+            return;
+        }
+
+        var search = EventLogSearchTextBox.Text?.Trim() ?? string.Empty;
+        var levelFilter = (EventLogLevelFilterComboBox.SelectedItem as ComboBoxItem)?.Content as string;
+        var methodFilter = EventLogMethodFilterComboBox.SelectedItem as string;
+
+        _eventLogView.Filter = item =>
+            item is EventLogRowViewModel row &&
+            (string.IsNullOrWhiteSpace(levelFilter) || levelFilter == "All levels" || string.Equals(row.Level, levelFilter, StringComparison.OrdinalIgnoreCase)) &&
+            (string.IsNullOrWhiteSpace(methodFilter) || methodFilter == "All methods" || string.Equals(row.MethodName, methodFilter, StringComparison.OrdinalIgnoreCase)) &&
+            (string.IsNullOrWhiteSpace(search) || row.MatchesSearch(search));
+
+        var visibleCount = _eventLogRows.Count(row => _eventLogView.Filter(row));
+        EventLogStatusTextBlock.Text = _eventLogRows.Count == 0
+            ? "No entries found."
+            : $"Showing {visibleCount} of {_eventLogRows.Count} entries.";
+    }
+
+    private void EventLogDataGrid_PreviewMouseLeftButtonUp(object sender, MouseButtonEventArgs e)
+    {
+        // Only react to an actual click landing on a data row -- not the column headers, not an
+        // empty area below the last row, and not keyboard-driven selection changes (arrow keys),
+        // which a plain SelectionChanged handler would also (annoyingly) trigger on.
+        var row = FindAncestor<DataGridRow>(e.OriginalSource as DependencyObject);
+        if (row?.Item is not EventLogRowViewModel entry)
+        {
+            return;
+        }
+
+        // This handler runs during the tunneling (Preview) phase, before DataGrid's own internal
+        // row-selection handling (which happens on the way back up, and may still hold mouse
+        // capture at this point) has finished. Showing a modal window synchronously from inside
+        // an input event handler is a known WPF hazard -- deferring to the dispatcher queue lets
+        // the current input event finish completely first. Also wrapped in try/catch: if
+        // something about this specific interaction still throws, show it instead of letting an
+        // unhandled exception through (the App-level handler would catch it either way, but this
+        // keeps the error message specific to what the user was actually doing).
+        Dispatcher.BeginInvoke(() =>
+        {
+            try
+            {
+                new EventLogDetailDialog(entry) { Owner = this }.ShowDialog();
+            }
+            catch (Exception ex)
+            {
+                _output.Error($"Couldn't open the event log entry details: {ex.Message}");
+            }
+        });
+    }
+
+    private static T? FindAncestor<T>(DependencyObject? current) where T : DependencyObject
+    {
+        while (current is not null)
+        {
+            if (current is T match)
+            {
+                return match;
+            }
+
+            current = VisualTreeHelper.GetParent(current);
+        }
+
+        return null;
+    }
+
+    private void ExportEventLogButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (_eventLogView is null)
+        {
+            return;
+        }
+
+        var dialog = new SaveFileDialog { Filter = "CSV files (*.csv)|*.csv|All files (*.*)|*.*", FileName = "EventLogs.csv" };
+        if (dialog.ShowDialog() != true)
+        {
+            return;
+        }
+
+        var sb = new StringBuilder();
+        sb.AppendLine("Time,Level,Source,EventId,Message");
+        foreach (var row in _eventLogView.Cast<EventLogRowViewModel>())
+        {
+            sb.AppendLine(string.Join(',', CsvField(row.TimeDisplay), CsvField(row.Level), CsvField(row.Source), CsvField(row.EventId.ToString()), CsvField(row.FullMessage)));
+        }
+
+        File.WriteAllText(dialog.FileName, sb.ToString());
+        _output.Info($"Exported event logs to {dialog.FileName}");
+    }
+
+    private static string CsvField(string value) => $"\"{value.Replace("\"", "\"\"")}\"";
 
     private async void RunCommandButton_Click(object sender, RoutedEventArgs e) => await RunCommandBoxAsync();
 

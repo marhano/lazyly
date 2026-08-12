@@ -7,7 +7,6 @@
         mc:Ignorable="d"
         Height="480" Width="560"
         WindowStartupLocation="CenterOwner"
-        WindowBackdropType="Mica"
         ResizeMode="NoResize">
     <Grid Margin="20">
         <Grid.RowDefinitions>
