@@ -1,0 +1,305 @@
+:root {
+  --pt-bg: #fafafa;
+  --pt-surface: #ffffff;
+  --pt-border: #e2e2e2;
+  --pt-text: #141414;
+  --pt-text-muted: #6b6b6b;
+  --pt-accent: #141414;
+  --pt-accent-hover: #000000;
+  --pt-accent-contrast: #ffffff;
+  --pt-accent-soft: #f0f0f0;
+  --pt-shadow: 0 1px 2px rgba(0, 0, 0, 0.04), 0 4px 16px rgba(0, 0, 0, 0.05);
+  --pt-radius: 10px;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --pt-bg: #0d0d0d;
+    --pt-surface: #171717;
+    --pt-border: #2b2b2b;
+    --pt-text: #f0f0f0;
+    --pt-text-muted: #9a9a9a;
+    --pt-accent: #f0f0f0;
+    --pt-accent-hover: #ffffff;
+    --pt-accent-contrast: #141414;
+    --pt-accent-soft: #232323;
+    --pt-shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 8px 24px rgba(0, 0, 0, 0.45);
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html, body {
+  height: 100%;
+}
+
+body {
+  background: var(--pt-bg);
+  color: var(--pt-text);
+  font-family: "Segoe UI", -apple-system, BlinkMacSystemFont, Roboto, Helvetica, Arial, sans-serif;
+  margin: 0;
+}
+
+a {
+  color: var(--pt-text);
+  text-decoration: none;
+}
+
+a:hover {
+  color: var(--pt-accent-hover);
+}
+
+/* ---------- Header ---------- */
+
+.pt-header {
+  background: var(--pt-surface);
+  border-bottom: 1px solid var(--pt-border);
+  padding: 1.75rem 0;
+}
+
+.pt-header .container {
+  max-width: 1100px;
+  margin: 0 auto;
+  padding: 0 1.5rem;
+}
+
+.pt-header h1 {
+  font-size: 1.5rem;
+  font-weight: 700;
+  margin: 0;
+  color: var(--pt-text);
+  letter-spacing: -0.01em;
+}
+
+.pt-header p {
+  margin: 0.3rem 0 0;
+  color: var(--pt-text-muted);
+  font-size: 0.9rem;
+}
+
+/* ---------- Layout / page shell ---------- */
+
+.pt-page {
+  max-width: 1100px;
+  margin: 2rem auto 3rem;
+  padding: 0 1.5rem;
+}
+
+.pt-card {
+  background: var(--pt-surface);
+  border: 1px solid var(--pt-border);
+  border-radius: var(--pt-radius);
+  box-shadow: var(--pt-shadow);
+  padding: 1.5rem;
+}
+
+.pt-card + .pt-card {
+  margin-top: 1.25rem;
+}
+
+.pt-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.6rem 1.1rem;
+  border-radius: 8px;
+  border: 1px solid transparent;
+  font-size: 0.9rem;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.pt-btn-primary {
+  background: var(--pt-accent);
+  color: var(--pt-accent-contrast);
+}
+
+.pt-btn-primary:hover {
+  background: var(--pt-accent-hover);
+  color: var(--pt-accent-contrast);
+}
+
+.pt-btn-ghost {
+  background: transparent;
+  color: var(--pt-text-muted);
+  border-color: var(--pt-border);
+}
+
+.pt-btn-ghost:hover {
+  color: var(--pt-text);
+  border-color: var(--pt-text-muted);
+}
+
+.pt-btn-sm {
+  padding: 0.4rem 0.8rem;
+  font-size: 0.82rem;
+}
+
+/* ---------- Table ---------- */
+
+.pt-table-wrap {
+  overflow-x: auto;
+}
+
+table.pt-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.92rem;
+}
+
+.pt-table td {
+  padding: 0.75rem 0.9rem;
+  border-bottom: 1px solid var(--pt-border);
+  vertical-align: middle;
+}
+
+.pt-table td.pt-num {
+  text-align: right;
+  color: var(--pt-text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.pt-version {
+  font-family: "Cascadia Mono", Consolas, "SFMono-Regular", monospace;
+  font-size: 0.85rem;
+  background: var(--pt-accent-soft);
+  color: var(--pt-text);
+  padding: 0.15rem 0.5rem;
+  border-radius: 6px;
+  white-space: nowrap;
+}
+
+.pt-muted {
+  color: var(--pt-text-muted);
+}
+
+/* ---------- Alerts ---------- */
+
+.pt-alert {
+  border-radius: var(--pt-radius);
+  padding: 1rem 1.25rem;
+  border: 1px solid var(--pt-border);
+  background: var(--pt-accent-soft);
+  color: var(--pt-text);
+}
+
+.pt-alert code {
+  background: rgba(127, 127, 127, 0.18);
+  padding: 0.1rem 0.35rem;
+  border-radius: 4px;
+}
+
+/* ---------- Footer ---------- */
+
+.pt-footer {
+  text-align: center;
+  color: var(--pt-text-muted);
+  font-size: 0.82rem;
+  padding: 1.5rem 0 2.5rem;
+}
+
+/* Bootstrap utility class still used by the scaffolded Error page */
+.text-danger {
+  color: var(--pt-text);
+}
+
+/* ---------- DataTables (monochrome overrides) ---------- */
+
+.dt-container {
+  font-size: 0.92rem;
+  color: var(--pt-text);
+}
+
+.dt-container .dt-layout-row:first-child {
+  margin-bottom: 1rem;
+}
+
+.dt-container .dt-search {
+  gap: 0.5rem;
+}
+
+.dt-container .dt-input {
+  padding: 0.5rem 0.8rem;
+  border: 1px solid var(--pt-border);
+  border-radius: 8px;
+  background: var(--pt-bg);
+  color: var(--pt-text);
+}
+
+.dt-container .dt-input:focus {
+  outline: none;
+  border-color: var(--pt-text-muted);
+}
+
+.dt-container .dt-length select.dt-input {
+  padding: 0.35rem 0.5rem;
+}
+
+table.dataTable {
+  border-collapse: collapse;
+  width: 100%;
+}
+
+table.dataTable thead th {
+  text-align: left;
+  padding: 0.65rem 0.9rem;
+  border-bottom: 2px solid var(--pt-border);
+  color: var(--pt-text-muted);
+  font-weight: 600;
+  font-size: 0.76rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+}
+
+table.dataTable thead th.dt-orderable-asc:hover,
+table.dataTable thead th.dt-orderable-desc:hover {
+  color: var(--pt-text);
+}
+
+table.dataTable tbody tr:hover > * {
+  background: var(--pt-accent-soft);
+}
+
+.dt-paging .dt-paging-button {
+  border: 1px solid var(--pt-border) !important;
+  background: var(--pt-surface) !important;
+  color: var(--pt-text) !important;
+  border-radius: 6px;
+  margin: 0 2px;
+  padding: 0.35rem 0.65rem !important;
+}
+
+.dt-paging .dt-paging-button:hover {
+  background: var(--pt-accent-soft) !important;
+  border-color: var(--pt-text-muted) !important;
+  color: var(--pt-text) !important;
+}
+
+.dt-paging .dt-paging-button.current,
+.dt-paging .dt-paging-button.current:hover {
+  background: var(--pt-accent) !important;
+  color: var(--pt-accent-contrast) !important;
+  border-color: var(--pt-accent) !important;
+}
+
+.dt-paging .dt-paging-button.disabled,
+.dt-paging .dt-paging-button.disabled:hover {
+  opacity: 0.4;
+  background: var(--pt-surface) !important;
+  color: var(--pt-text-muted) !important;
+}
+
+.dt-info {
+  color: var(--pt-text-muted);
+  font-size: 0.85rem;
+}
+
+@media (max-width: 640px) {
+  .pt-header {
+    padding: 1.5rem 0;
+  }
+}

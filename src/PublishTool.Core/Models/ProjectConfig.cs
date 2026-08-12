@@ -27,4 +27,20 @@ public sealed class ProjectConfig
     public bool AutoCreateIisSite { get; set; }
 
     public List<IisBinding> IisBindings { get; set; } = new();
+
+    /// <summary>
+    /// True for modern SDK-style projects (e.g. ASP.NET Core), which publish via an explicit
+    /// Publish target and PublishDir. False (default) for classic .NET Framework Web Deploy
+    /// projects, which publish via DeployOnBuild and PublishUrl -- mixing the two conventions
+    /// causes an MSBuild circular-dependency error, so this must be set correctly per project.
+    /// </summary>
+    public bool SdkStyleProject { get; set; }
+
+    /// <summary>
+    /// Whether this project's builds should appear in the build-hosting site's listing. Builds
+    /// are always archived to the build repository either way; this only controls visibility
+    /// there. Stamped onto each build's manifest at publish time, so the hosting site (which may
+    /// run on a different machine) only needs to read manifests, not this registry.
+    /// </summary>
+    public bool ListInHosting { get; set; } = true;
 }

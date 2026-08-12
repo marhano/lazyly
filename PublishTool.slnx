@@ -4,5 +4,6 @@
     <Project Path="src/PublishTool.Commands/PublishTool.Commands.csproj" />
     <Project Path="src/PublishTool.Core/PublishTool.Core.csproj" />
     <Project Path="src/PublishTool.Gui/PublishTool.Gui.csproj" />
+    <Project Path="src/PublishTool.Hosting/PublishTool.Hosting.csproj" />
   </Folder>
 </Solution>

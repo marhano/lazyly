@@ -70,17 +70,24 @@
                 <TabItem Header="Add Project">
                     <Grid Margin="12">
                         <Grid.RowDefinitions>
-                            <RowDefinition Height="Auto"/>
-                            <RowDefinition Height="Auto"/>
-                            <RowDefinition Height="Auto"/>
-                            <RowDefinition Height="Auto"/>
-                            <RowDefinition Height="Auto"/>
-                            <RowDefinition Height="Auto"/>
-                            <RowDefinition Height="Auto"/>
-                            <RowDefinition Height="Auto"/>
-                            <RowDefinition Height="Auto"/>
-                            <RowDefinition Height="Auto"/>
                             <RowDefinition Height="*"/>
+                            <RowDefinition Height="*"/>
+                        </Grid.RowDefinitions>
+
+                        <ScrollViewer Grid.Row="0" VerticalScrollBarVisibility="Auto">
+                        <Grid>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/>
                         </Grid.RowDefinitions>
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="140"/>
@@ -121,11 +128,19 @@
                                     PlaceholderText="e.g. CollectSQLiteInteropFiles"
                                     ToolTip="Semicolon-separated MSBuild targets to force during publish, for packages whose own .targets don't hook into this toolset -- e.g. CollectSQLiteInteropFiles"/>
 
-                        <ui:ToggleSwitch Grid.Row="6" Grid.Column="1" Grid.ColumnSpan="2" x:Name="AutoCreateIisSiteToggle"
+                        <ui:ToggleSwitch Grid.Row="6" Grid.Column="0" Grid.ColumnSpan="3" x:Name="SdkStyleProjectToggle"
+                                         Content="Modern SDK-style project (e.g. ASP.NET Core)" Margin="0,10,0,0"
+                                         ToolTip="Leave off for classic .NET Framework Web Deploy projects -- the two publish very differently."/>
+
+                        <ui:ToggleSwitch Grid.Row="7" Grid.Column="0" Grid.ColumnSpan="3" x:Name="ListInHostingToggle"
+                                         Content="List builds in hosting site" IsChecked="True" Margin="0,10,0,0"
+                                         ToolTip="Builds are always archived to the build repository either way; this only controls whether they show up in the build-hosting site's listing."/>
+
+                        <ui:ToggleSwitch Grid.Row="8" Grid.Column="1" Grid.ColumnSpan="2" x:Name="AutoCreateIisSiteToggle"
                                          Content="Auto-create IIS site if missing" Margin="0,10,0,0"
                                          Checked="AutoCreateIisSiteToggle_Toggled" Unchecked="AutoCreateIisSiteToggle_Toggled"/>
 
-                        <StackPanel Grid.Row="7" Grid.Column="0" Grid.ColumnSpan="3" x:Name="IisBindingsPanel"
+                        <StackPanel Grid.Row="9" Grid.Column="0" Grid.ColumnSpan="3" x:Name="IisBindingsPanel"
                                     Visibility="Collapsed" Margin="0,10,0,0">
                             <TextBlock Text="Site bindings" Margin="0,0,0,6"
                                        Foreground="{DynamicResource TextFillColorSecondaryBrush}"/>
@@ -143,7 +158,7 @@
                             </StackPanel>
                         </StackPanel>
 
-                        <StackPanel Grid.Row="8" Grid.Column="1" Orientation="Horizontal" Margin="0,14,0,0">
+                        <StackPanel Grid.Row="10" Grid.Column="1" Orientation="Horizontal" Margin="0,14,0,0">
                             <ui:Button x:Name="SaveProjectButton" Content="Save project" Appearance="Primary"
                                        Icon="{ui:SymbolIcon Save24}" Width="140" Click="SaveProjectButton_Click"/>
                             <ui:Button x:Name="NewProjectButton" Content="Clear form" Icon="{ui:SymbolIcon Eraser24}"
@@ -151,11 +166,20 @@
                             <ui:Button x:Name="RemoveProjectButton" Content="Remove selected" Icon="{ui:SymbolIcon Delete24}"
                                        Width="150" Margin="10,0,0,0" Click="RemoveProjectButton_Click"/>
                         </StackPanel>
+                        </Grid>
+                        </ScrollViewer>
 
-                        <TextBlock Grid.Row="9" Grid.Column="0" Grid.ColumnSpan="3" Text="Registered projects (click to edit)"
-                                   Margin="0,16,0,6" Foreground="{DynamicResource TextFillColorSecondaryBrush}"/>
-                        <ListBox Grid.Row="10" Grid.Column="0" Grid.ColumnSpan="3" x:Name="RegisteredProjectsListBox"
-                                 DisplayMemberPath="Name" SelectionChanged="RegisteredProjectsListBox_SelectionChanged"/>
+                        <Grid Grid.Row="1" Margin="0,12,0,0">
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="*"/>
+                            </Grid.RowDefinitions>
+
+                            <TextBlock Grid.Row="0" Text="Registered projects (click to edit)"
+                                       Margin="0,0,0,6" Foreground="{DynamicResource TextFillColorSecondaryBrush}"/>
+                            <ListBox Grid.Row="1" x:Name="RegisteredProjectsListBox"
+                                     DisplayMemberPath="Name" SelectionChanged="RegisteredProjectsListBox_SelectionChanged"/>
+                        </Grid>
                     </Grid>
                 </TabItem>
 
@@ -190,6 +214,7 @@
                                     <StackPanel Grid.Row="1" Orientation="Horizontal" Margin="0,10,0,0">
                                         <ui:Button Content="Start site" Icon="{ui:SymbolIcon Play24}" Width="120" Click="StartSiteButton_Click"/>
                                         <ui:Button Content="Stop site" Icon="{ui:SymbolIcon Stop24}" Width="120" Margin="10,0,0,0" Click="StopSiteButton_Click"/>
+                                        <ui:Button Content="Browse site" Icon="{ui:SymbolIcon Globe24}" Width="130" Margin="10,0,0,0" Click="BrowseSiteButton_Click"/>
                                     </StackPanel>
                                 </Grid>
                             </TabItem>
@@ -248,6 +273,7 @@
                             <RowDefinition Height="Auto"/>
                             <RowDefinition Height="Auto"/>
                             <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/>
                             <RowDefinition Height="*"/>
                         </Grid.RowDefinitions>
                         <Grid.ColumnDefinitions>
@@ -280,6 +306,11 @@
                             <Border Width="32" Height="32" CornerRadius="16" Background="#107C10" Cursor="Hand"
                                     Tag="Green" ToolTip="Green" Margin="10,0,0,0" MouseLeftButtonUp="AccentSwatch_Click"/>
                         </StackPanel>
+
+                        <ui:ToggleSwitch Grid.Row="4" Grid.Column="0" Grid.ColumnSpan="2" x:Name="StartOnStartupToggle"
+                                         Content="Start on Windows startup" Margin="0,20,0,0"
+                                         Checked="StartOnStartupToggle_Toggled" Unchecked="StartOnStartupToggle_Toggled"
+                                         ToolTip="Closing the window minimizes PublishTool to the system tray instead of exiting -- right-click the tray icon to exit fully."/>
                     </Grid>
                 </TabItem>
 

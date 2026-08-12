@@ -1,0 +1,107 @@
+@page
+@model IndexModel
+@{
+    ViewData["Title"] = "Builds";
+}
+
+<div class="pt-header">
+    <div class="container">
+        <h1>Build Archive</h1>
+        <p>Browse and download builds published by the team.</p>
+    </div>
+</div>
+
+<div class="pt-page">
+    @if (Model.BuildsRootNotConfigured)
+    {
+        <div class="pt-alert">
+            <strong>Builds root is not configured.</strong>
+            Set <code>BuildsRoot</code> in appsettings.json (or a <code>BuildsRoot</code> environment
+            variable, e.g. via web.config's <code>&lt;aspNetCore&gt;&lt;environmentVariables&gt;</code>)
+            to the same path PublishTool's publisher archives builds to. Editing appsettings.json
+            directly on the deployed site will be overwritten the next time this site is republished --
+            prefer setting it in the source file or via web.config's environment variable instead.
+        </div>
+    }
+    else if (Model.BuildsRootNotAccessible)
+    {
+        <div class="pt-alert">
+            <strong>Builds root <code>@Model.BuildsRootPath</code> doesn't exist, or this process can't see it.</strong>
+            This site is currently running as <code>@Model.RunningAs</code>. If that path exists and is
+            readable from wherever you published it, this is very often an IIS Application Pool identity
+            permission problem: the app pool's identity (often <code>ApplicationPoolIdentity</code>) can't
+            read another user's <code>%APPDATA%</code> folder. Either grant that identity read access to
+            <code>@Model.BuildsRootPath</code>, or (recommended) move the build repository to a location
+            every relevant identity can read, such as <code>C:\ProgramData\PublishTool\Builds</code> or a
+            shared network path -- and point both PublishTool's Settings and this site's <code>BuildsRoot</code>
+            at the same new location.
+        </div>
+    }
+    else
+    {
+        <div class="pt-card">
+            @if (Model.Builds.Count == 0)
+            {
+                <p class="pt-muted" style="margin: 0;">No builds found yet.</p>
+            }
+            else
+            {
+                <div class="pt-table-wrap">
+                    <table id="buildsTable" class="pt-table">
+                        <thead>
+                            <tr>
+                                <th>Project</th>
+                                <th>Version</th>
+                                <th>Published</th>
+                                <th>By</th>
+                                <th>Size</th>
+                                <th>&nbsp;</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var build in Model.Builds)
+                            {
+                                <tr>
+                                    <td>@build.ProjectName</td>
+                                    <td><span class="pt-version">@build.Version</span></td>
+                                    <td class="pt-muted" data-sort="@build.PublishedAtUtc.ToUnixTimeSeconds()">@build.PublishedAtUtc.ToLocalTime().ToString("yyyy-MM-dd HH:mm")</td>
+                                    <td class="pt-muted">@build.PublishedBy</td>
+                                    <td class="pt-num" data-sort="@IndexModel.GetFileSizeBytes(build.ZipPath)">@IndexModel.FormatFileSize(build.ZipPath)</td>
+                                    <td>
+                                        <a class="pt-btn pt-btn-primary pt-btn-sm"
+                                           href="/download?path=@Uri.EscapeDataString(Model.RelativeZipPath(build))">
+                                            Download
+                                        </a>
+                                    </td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+            }
+        </div>
+    }
+
+    <div class="pt-footer">Build Archive</div>
+</div>
+
+@section Scripts {
+    <script>
+        $(function () {
+            $('#buildsTable').DataTable({
+                order: [[2, 'desc']],
+                pageLength: 25,
+                lengthMenu: [10, 25, 50, 100],
+                columnDefs: [{ orderable: false, targets: 5 }],
+                language: {
+                    search: 'Search:',
+                    info: 'Showing _START_-_END_ of _TOTAL_ builds',
+                    infoEmpty: 'No builds to show',
+                    infoFiltered: '(filtered from _MAX_ total)',
+                    emptyTable: 'No builds match your search.',
+                    lengthMenu: 'Show _MENU_ per page',
+                },
+            });
+        });
+    </script>
+}

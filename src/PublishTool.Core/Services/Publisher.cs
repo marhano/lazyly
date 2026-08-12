@@ -46,7 +46,8 @@ public sealed class Publisher
 
             _output.Stage("Running MSBuild publish...");
             await _msBuild.PublishAsync(
-                msBuildExePath, project.CsprojPath, project.PubxmlName, stagingDir, project.ExtraPublishTargets, ct);
+                msBuildExePath, project.CsprojPath, project.PubxmlName, stagingDir,
+                project.SdkStyleProject, project.ExtraPublishTargets, ct);
 
             _output.Stage("Archiving build to repository (zip)...");
             // ZipFile.CreateFromDirectory is synchronous and can take real time on large
@@ -61,6 +62,7 @@ public sealed class Publisher
                 PublishedAtUtc = DateTimeOffset.UtcNow,
                 PublishedBy = Environment.UserName,
                 ZipPath = archive.ZipPath,
+                ListInHosting = project.ListInHosting,
             });
 
             _output.Info($"Archived to {archive.ZipPath}");

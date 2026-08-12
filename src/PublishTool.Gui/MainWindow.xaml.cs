@@ -27,6 +27,7 @@ public partial class MainWindow : Wpf.Ui.Controls.FluentWindow
     private readonly System.Windows.Forms.NotifyIcon _notifyIcon;
     private readonly ObservableCollection<IisBinding> _iisBindings = new();
     private bool _isBusy;
+    private bool _isExiting;
 
     public MainWindow()
     {
@@ -54,8 +55,11 @@ public partial class MainWindow : Wpf.Ui.Controls.FluentWindow
             Icon = LoadAppIcon(),
             Text = "PublishTool",
             Visible = true,
+            ContextMenuStrip = BuildTrayContextMenu(),
         };
+        _notifyIcon.DoubleClick += (_, _) => RestoreFromTray();
         Closed += (_, _) => _notifyIcon.Dispose();
+        Closing += MainWindow_Closing;
 
         IisBindingsDataGrid.ItemsSource = _iisBindings;
         ElevationInfoBar.IsOpen = !IsRunningAsAdministrator();
@@ -82,11 +86,79 @@ public partial class MainWindow : Wpf.Ui.Controls.FluentWindow
             : System.Drawing.SystemIcons.Application;
     }
 
+    private System.Windows.Forms.ContextMenuStrip BuildTrayContextMenu()
+    {
+        var menu = new System.Windows.Forms.ContextMenuStrip();
+        menu.Items.Add("Open PublishTool", null, (_, _) => RestoreFromTray());
+        menu.Items.Add(new System.Windows.Forms.ToolStripSeparator());
+        menu.Items.Add("Exit", null, (_, _) => ExitFromTray());
+        return menu;
+    }
+
+    private void RestoreFromTray()
+    {
+        Show();
+        WindowState = WindowState.Normal;
+        Activate();
+    }
+
+    // The X button hides the window instead of closing the app, so PublishTool keeps running
+    // in the tray (e.g. so a background publish or the IIS monitoring stays available). Only
+    // the tray menu's "Exit" (which sets _isExiting first) actually shuts the app down.
+    private void MainWindow_Closing(object? sender, System.ComponentModel.CancelEventArgs e)
+    {
+        if (_isExiting)
+        {
+            return;
+        }
+
+        e.Cancel = true;
+        Hide();
+    }
+
+    private void ExitFromTray()
+    {
+        _isExiting = true;
+        Close();
+    }
+
+    private const string StartupRegistryKeyPath = @"Software\Microsoft\Windows\CurrentVersion\Run";
+    private const string StartupValueName = "PublishTool";
+
+    private static bool IsStartupEnabled()
+    {
+        using var key = Registry.CurrentUser.OpenSubKey(StartupRegistryKeyPath, writable: false);
+        return key?.GetValue(StartupValueName) is not null;
+    }
+
+    private static void SetStartupEnabled(bool enabled)
+    {
+        using var key = Registry.CurrentUser.CreateSubKey(StartupRegistryKeyPath);
+
+        if (!enabled)
+        {
+            key.DeleteValue(StartupValueName, throwOnMissingValue: false);
+            return;
+        }
+
+        var exePath = Process.GetCurrentProcess().MainModule?.FileName;
+        if (exePath is not null)
+        {
+            key.SetValue(StartupValueName, $"\"{exePath}\"");
+        }
+    }
+
+    private void StartOnStartupToggle_Toggled(object sender, RoutedEventArgs e)
+    {
+        SetStartupEnabled(StartOnStartupToggle.IsChecked == true);
+    }
+
     private void LoadSettingsIntoForm()
     {
         var settings = AppSettings.Load(AppSettings.DefaultPath);
         BuildsRootTextBox.Text = settings.BuildsRoot;
         DarkModeToggle.IsChecked = ApplicationThemeManager.GetAppTheme() == ApplicationTheme.Dark;
+        StartOnStartupToggle.IsChecked = IsStartupEnabled();
     }
 
     private async void DarkModeToggle_Toggled(object sender, RoutedEventArgs e)
@@ -265,6 +337,59 @@ public partial class MainWindow : Wpf.Ui.Controls.FluentWindow
 
         await RunAsync(new[] { "iis-stop-site", "--name", site.Name });
         await RefreshIisStatusAsync();
+    }
+
+    private void BrowseSiteButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (IisSitesDataGrid.SelectedItem is not IisSiteStatus site)
+        {
+            MessageBox.Show("Select a site first.", "PublishTool", MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
+        }
+
+        var url = BuildBrowseUrl(site.Bindings);
+        if (url is null)
+        {
+            MessageBox.Show(
+                $"Couldn't figure out a URL from this site's bindings ({site.Bindings}).",
+                "PublishTool", MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
+        }
+
+        Process.Start(new ProcessStartInfo { FileName = url, UseShellExecute = true });
+    }
+
+    // Bindings come from appcmd as comma-separated "protocol/ip:port:hostname" segments (see
+    // IisSiteManager.FormatBinding). Picks the first one -- good enough for "open this site" --
+    // and falls back to localhost when the binding's IP is "*" (all unassigned) with no hostname.
+    private static string? BuildBrowseUrl(string bindingsRaw)
+    {
+        var firstBinding = bindingsRaw.Split(',', StringSplitOptions.RemoveEmptyEntries).FirstOrDefault();
+        if (firstBinding is null)
+        {
+            return null;
+        }
+
+        var slashIndex = firstBinding.IndexOf('/');
+        if (slashIndex < 0)
+        {
+            return null;
+        }
+
+        var protocol = firstBinding[..slashIndex];
+        var addressParts = firstBinding[(slashIndex + 1)..].Split(':', 3);
+        if (addressParts.Length < 2)
+        {
+            return null;
+        }
+
+        var port = addressParts[1];
+        var hostname = addressParts.Length > 2 && !string.IsNullOrWhiteSpace(addressParts[2])
+            ? addressParts[2]
+            : "localhost";
+
+        var isDefaultPort = (protocol == "http" && port == "80") || (protocol == "https" && port == "443");
+        return isDefaultPort ? $"{protocol}://{hostname}/" : $"{protocol}://{hostname}:{port}/";
     }
 
     private async void StartAppPoolButton_Click(object sender, RoutedEventArgs e)
@@ -454,6 +579,14 @@ public partial class MainWindow : Wpf.Ui.Controls.FluentWindow
             }
         }
 
+        if (SdkStyleProjectToggle.IsChecked == true)
+        {
+            args.Add("--sdk-style-project");
+        }
+
+        args.Add("--list-in-hosting");
+        args.Add(ListInHostingToggle.IsChecked == true ? "true" : "false");
+
         await RunAsync(args.ToArray());
     }
 
@@ -495,6 +628,8 @@ public partial class MainWindow : Wpf.Ui.Controls.FluentWindow
         AutoCreateIisSiteToggle.IsChecked = false;
         IisBindingsPanel.Visibility = Visibility.Collapsed;
         _iisBindings.Clear();
+        SdkStyleProjectToggle.IsChecked = false;
+        ListInHostingToggle.IsChecked = true;
         RegisteredProjectsListBox.SelectedItem = null;
     }
 
@@ -511,6 +646,8 @@ public partial class MainWindow : Wpf.Ui.Controls.FluentWindow
         NewProjectAssemblyInfoTextBox.Text = project.AssemblyInfoPath ?? string.Empty;
         NewProjectIisHostTextBox.Text = project.IisHostPath;
         NewProjectExtraTargetsTextBox.Text = project.ExtraPublishTargets ?? string.Empty;
+        SdkStyleProjectToggle.IsChecked = project.SdkStyleProject;
+        ListInHostingToggle.IsChecked = project.ListInHosting;
 
         AutoCreateIisSiteToggle.IsChecked = project.AutoCreateIisSite;
         IisBindingsPanel.Visibility = project.AutoCreateIisSite ? Visibility.Visible : Visibility.Collapsed;

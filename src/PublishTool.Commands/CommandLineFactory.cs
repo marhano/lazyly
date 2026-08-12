@@ -94,6 +94,17 @@ public static class CommandLineFactory
             Description = "A site binding as protocol:ip:port:hostname, e.g. http:*:80: or https:*:443:example.com " +
                            "(hostname may be empty). Repeatable.",
         };
+        var sdkStyleOption = new Option<bool>("--sdk-style-project")
+        {
+            Description = "Set for modern SDK-style projects (e.g. ASP.NET Core), which publish differently than " +
+                           "classic .NET Framework Web Deploy projects. Leave unset for classic projects.",
+        };
+        var listInHostingOption = new Option<bool>("--list-in-hosting")
+        {
+            Description = "Whether this project's builds appear in the build-hosting site's listing. " +
+                           "Builds are always archived either way; this only controls visibility there.",
+            DefaultValueFactory = _ => true,
+        };
 
         var command = new Command("add-project", "Register a project (or update an existing registration).");
         command.Add(nameOption);
@@ -104,6 +115,8 @@ public static class CommandLineFactory
         command.Add(extraTargetsOption);
         command.Add(autoCreateIisSiteOption);
         command.Add(iisBindingOption);
+        command.Add(sdkStyleOption);
+        command.Add(listInHostingOption);
 
         command.SetAction(parseResult =>
         {
@@ -124,6 +137,8 @@ public static class CommandLineFactory
                     ExtraPublishTargets = parseResult.GetValue(extraTargetsOption),
                     AutoCreateIisSite = parseResult.GetValue(autoCreateIisSiteOption),
                     IisBindings = bindings,
+                    SdkStyleProject = parseResult.GetValue(sdkStyleOption),
+                    ListInHosting = parseResult.GetValue(listInHostingOption),
                 });
 
                 output.Info($"Registered project '{parseResult.GetValue(nameOption)}'.");
