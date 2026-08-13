@@ -10,7 +10,10 @@
             <h1>Build Archive</h1>
             <p>Browse and download builds published by the team.</p>
         </div>
-        <a href="/Upload" class="pt-btn pt-btn-primary">Upload a build</a>
+        <div class="pt-actions">
+            <a href="/UploadBuild" class="pt-btn pt-btn-ghost">Upload build files</a>
+            <a href="/Upload" class="pt-btn pt-btn-primary">Upload a build</a>
+        </div>
     </div>
 </div>
 
@@ -54,6 +57,17 @@
             }
             else
             {
+                <div class="pt-filter-bar">
+                    <label for="projectFilter">Project</label>
+                    <select id="projectFilter" class="pt-input">
+                        <option value="">All projects</option>
+                        @foreach (var name in Model.ProjectNames)
+                        {
+                            <option value="@name">@name</option>
+                        }
+                    </select>
+                </div>
+
                 <div class="pt-table-wrap">
                     <table id="buildsTable" class="pt-table">
                         <thead>
@@ -71,7 +85,13 @@
                             {
                                 <tr>
                                     <td>@build.ProjectName</td>
-                                    <td><span class="pt-version">@build.Version</span></td>
+                                    <td>
+                                        <span class="pt-version">@build.Version</span>
+                                        @if (build.IsLatest)
+                                        {
+                                            <span class="pt-badge-latest">latest</span>
+                                        }
+                                    </td>
                                     <td class="pt-muted" data-sort="@build.PublishedAtUtc.ToUnixTimeSeconds()">@build.PublishedAtUtc.ToLocalTime().ToString("yyyy-MM-dd HH:mm")</td>
                                     <td class="pt-muted">@build.PublishedBy</td>
                                     <td class="pt-num" data-sort="@IndexModel.GetFileSizeBytes(build.ZipPath)">@IndexModel.FormatFileSize(build.ZipPath)</td>
@@ -122,7 +142,7 @@
         var releaseNotesData = @Html.Raw(System.Text.Json.JsonSerializer.Serialize(Model.ReleaseNotesByPath));
 
         $(function () {
-            $('#buildsTable').DataTable({
+            var buildsTable = $('#buildsTable').DataTable({
                 order: [[2, 'desc']],
                 pageLength: 25,
                 lengthMenu: [10, 25, 50, 100],
@@ -135,6 +155,15 @@
                     emptyTable: 'No builds match your search.',
                     lengthMenu: 'Show _MENU_ per page',
                 },
+            });
+
+            // Exact-match filter on the Project column, separate from the free-text search box --
+            // a plain column().search() would treat the project name as a regex/substring pattern,
+            // which breaks for names containing regex-special characters (parentheses, dots, etc.)
+            // and would also match "OmniPay" against a project literally named "OmniPay Business".
+            $('#projectFilter').on('change', function () {
+                var selected = this.value;
+                buildsTable.column(0).search(selected ? '^' + $.fn.dataTable.util.escapeRegex(selected) + '$' : '', true, false).draw();
             });
 
             var $overlay = $('#releaseNotesModal');

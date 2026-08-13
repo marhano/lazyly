@@ -8,6 +8,7 @@
     <div class="container">
         <h1>Upload a Build</h1>
         <p>Publish a build to the archive without needing write access to the shared build storage.</p>
+        <p>Already have a zip, manifest.json, and release notes from a local publish? <a href="/UploadBuild">Upload the files directly</a> instead -- no retyping needed.</p>
     </div>
 </div>
 
@@ -66,6 +67,12 @@
                 <label class="pt-checkbox">
                     <input type="checkbox" name="ListInHosting" value="true" @(Model.ListInHosting ? "checked" : "") />
                     List in the build archive
+                </label>
+
+                <span></span>
+                <label class="pt-checkbox">
+                    <input type="checkbox" name="MarkAsLatest" value="true" @(Model.MarkAsLatest ? "checked" : "") />
+                    Mark as latest release (un-flags any other build of this project)
                 </label>
             </div>
 

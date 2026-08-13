@@ -27,6 +27,9 @@ public class IndexModel : PageModel
 
     public IReadOnlyList<BuildManifest> Builds { get; private set; } = Array.Empty<BuildManifest>();
 
+    /// <summary>Distinct project names among <see cref="Builds"/>, for the project filter dropdown.</summary>
+    public IReadOnlyList<string> ProjectNames { get; private set; } = Array.Empty<string>();
+
     /// <summary>
     /// Release notes text keyed by each build's relative release-notes path (the same key used
     /// in the "View" button's data attribute and the /download?path= query string), serialized
@@ -54,6 +57,12 @@ public class IndexModel : PageModel
         Builds = _buildRepository.ListBuilds(BuildsRootPath)
             .Where(b => b.ListInHosting)
             .OrderByDescending(b => b.PublishedAtUtc)
+            .ToList();
+
+        ProjectNames = Builds
+            .Select(b => b.ProjectName)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .OrderBy(name => name, StringComparer.OrdinalIgnoreCase)
             .ToList();
 
         var releaseNotes = new Dictionary<string, ReleaseNotesModalEntry>();

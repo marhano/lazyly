@@ -20,6 +20,14 @@ public sealed class BuildManifest
     public bool ListInHosting { get; set; } = true;
 
     /// <summary>
+    /// Whether this is the project's flagged "latest release" build, shown as "(latest)" next to
+    /// its name/version on the hosting site. At most one build per project should have this set --
+    /// enforced by <see cref="Services.BuildRepository.SetLatest"/>, which is the only supported
+    /// way to set it to true (it un-flags whatever build previously held it for the same project).
+    /// </summary>
+    public bool IsLatest { get; set; }
+
+    /// <summary>
     /// Absolute path to this build's release notes .txt, or null if none was generated (the
     /// project had no Project ID set at publish time, or this build predates the feature).
     /// Deliberately kept out of the zip -- it's meant to be browsable/downloadable on its own

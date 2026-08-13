@@ -96,6 +96,39 @@ public sealed class BuildRepository
         File.WriteAllText(manifestPath, JsonSerializer.Serialize(manifest, JsonOptions));
     }
 
+    /// <summary>
+    /// Flags the build at <paramref name="latestManifestPath"/> as this project's "latest release"
+    /// and un-flags every other build for the same project -- the only way <see cref="BuildManifest.IsLatest"/>
+    /// should ever be set to true, so at most one build per project can ever hold it. Only rewrites
+    /// manifests whose flag actually changes, so re-marking the same build already-latest is a no-op.
+    /// </summary>
+    public void SetLatest(string buildsRoot, string projectName, string latestManifestPath)
+    {
+        var projectDir = Path.Combine(buildsRoot, projectName);
+        if (!Directory.Exists(projectDir))
+        {
+            return;
+        }
+
+        var targetFullPath = Path.GetFullPath(latestManifestPath);
+
+        foreach (var file in Directory.EnumerateFiles(projectDir, "*.manifest.json"))
+        {
+            var manifest = JsonSerializer.Deserialize<BuildManifest>(File.ReadAllText(file));
+            if (manifest is null)
+            {
+                continue;
+            }
+
+            var shouldBeLatest = string.Equals(Path.GetFullPath(file), targetFullPath, StringComparison.OrdinalIgnoreCase);
+            if (manifest.IsLatest != shouldBeLatest)
+            {
+                manifest.IsLatest = shouldBeLatest;
+                WriteManifest(file, manifest);
+            }
+        }
+    }
+
     public void WriteReleaseNotes(string releaseNotesPath, string content)
     {
         File.WriteAllText(releaseNotesPath, content);

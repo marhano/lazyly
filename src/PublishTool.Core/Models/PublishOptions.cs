@@ -8,6 +8,11 @@ public sealed class PublishOptions
 
     public required string BuildsRoot { get; set; }
 
+    /// <summary>Flags this build as the project's "latest release" on the hosting site once
+    /// published, un-flagging whatever build previously held that for the same project. See
+    /// <see cref="Services.BuildRepository.SetLatest"/>.</summary>
+    public bool MarkAsLatest { get; set; }
+
     public string? MsBuildPath { get; set; }
 
     /// <summary>Git branch to check out before building, if set. The project must be inside a

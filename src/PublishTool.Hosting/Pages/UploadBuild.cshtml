@@ -1,0 +1,71 @@
+@page
+@model UploadBuildModel
+@{
+    ViewData["Title"] = "Upload Build Files";
+}
+
+<div class="pt-header">
+    <div class="container">
+        <h1>Upload Build Files</h1>
+        <p>Already published locally? Upload the zip, manifest.json, and (optionally) the release notes exactly as PublishTool wrote them -- project name, version, and everything else is read straight from the manifest.</p>
+    </div>
+</div>
+
+<div class="pt-page">
+    @if (Model.BuildsRootNotConfigured)
+    {
+        <div class="pt-alert">
+            <strong>Builds root is not configured.</strong>
+            Set <code>BuildsRoot</code> in appsettings.json before uploads can be accepted.
+        </div>
+    }
+    else if (Model.BuildsRootNotAccessible)
+    {
+        <div class="pt-alert">
+            <strong>Builds root doesn't exist, or this process can't see it.</strong>
+            Uploads can't be saved until that's fixed -- see the same note on the main page.
+        </div>
+    }
+    else
+    {
+        if (Model.ErrorMessage is not null)
+        {
+            <div class="pt-alert">@Model.ErrorMessage</div>
+        }
+
+        <form method="post" enctype="multipart/form-data" class="pt-card">
+            @Html.AntiForgeryToken()
+
+            <div class="pt-form-grid">
+                <label for="BuildZip">Build .zip</label>
+                <div>
+                    <input class="pt-input" type="file" id="BuildZip" name="BuildZip" accept=".zip" required />
+                    <p class="pt-muted" style="margin: 0.4rem 0 0;">Max upload size: @Model.MaxUploadSizeDisplay</p>
+                </div>
+
+                <label for="ManifestFile">manifest.json</label>
+                <input class="pt-input" type="file" id="ManifestFile" name="ManifestFile" accept=".json" required />
+
+                <label for="ReleaseNotesFile">Release notes .txt (optional)</label>
+                <input class="pt-input" type="file" id="ReleaseNotesFile" name="ReleaseNotesFile" accept=".txt" />
+
+                <span></span>
+                <label class="pt-checkbox">
+                    <input type="checkbox" name="MarkAsLatest" value="true" @(Model.MarkAsLatest ? "checked" : "") />
+                    Mark as latest release (un-flags any other build of this project)
+                </label>
+            </div>
+
+            <div class="pt-upload-actions">
+                <button type="submit" class="pt-btn pt-btn-primary">Upload</button>
+                <a href="/" class="pt-btn pt-btn-ghost">Cancel</a>
+            </div>
+        </form>
+
+        <p class="pt-muted">
+            Prefer typing the details in yourself instead? <a href="/Upload">Use the manual upload form</a>.
+        </p>
+    }
+
+    <div class="pt-footer">Build Archive</div>
+</div>

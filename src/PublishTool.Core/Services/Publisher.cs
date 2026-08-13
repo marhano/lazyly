@@ -155,7 +155,14 @@ public sealed class Publisher
                 ListInHosting = project.ListInHosting,
                 ReleaseNotesPath = writtenReleaseNotesPath,
                 AppConfigSettings = project.UseAppConfig ? options.AppConfigSettings : null,
+                IsLatest = options.MarkAsLatest,
             });
+
+            if (options.MarkAsLatest)
+            {
+                await Task.Run(() => _buildRepository.SetLatest(options.BuildsRoot, project.Name, manifestPath), ct);
+                _output.Info($"Flagged {project.Name} v{options.Version} as the latest release.");
+            }
 
             _output.Info($"Archived to {zipPath}");
 
@@ -166,7 +173,24 @@ public sealed class Publisher
             }
 
             _output.Stage($"Deploying to IIS host path: {project.IisHostPath}");
-            await _mirror.MirrorAsync(stagingDir, project.IisHostPath, ct);
+
+            // A running IIS app pool for this site holds its DLLs open (in-process hosting keeps
+            // them loaded in w3wp.exe), which makes robocopy fail to overwrite them with a sharing
+            // violation -- stopping the pool first (best-effort; most projects aren't IIS-hosted at
+            // all, so a missing pool is the normal case, not a problem) avoids that entirely instead
+            // of relying on robocopy's slow 30-second retry loop.
+            var appPoolWasStopped = await TryStopAppPoolForDeployAsync(project.Name, ct);
+            try
+            {
+                await _mirror.MirrorAsync(stagingDir, project.IisHostPath, ct);
+            }
+            finally
+            {
+                if (appPoolWasStopped)
+                {
+                    await TryStartAppPoolAsync(project.Name, ct);
+                }
+            }
 
             _output.Stage("Publish complete.");
             _output.Notify($"{project.Name} published", $"Version {options.Version}", zipPath);
@@ -178,6 +202,44 @@ public sealed class Publisher
             {
                 Directory.Delete(stagingDir, recursive: true);
             }
+        }
+    }
+
+    /// <summary>Stops the IIS application pool sharing this project's name, if one exists, so its
+    /// files can be overwritten. Swallows any failure silently (IIS not installed, no such pool,
+    /// no permission) -- most projects aren't IIS-hosted at all, so that's the expected case, not
+    /// something worth warning about on every publish.</summary>
+    private async Task<bool> TryStopAppPoolForDeployAsync(string poolName, CancellationToken ct)
+    {
+        try
+        {
+            if (!await IisSiteManager.AppPoolExistsAsync(poolName, ct))
+            {
+                return false;
+            }
+
+            _output.Info($"Stopping IIS application pool '{poolName}' before copying files...");
+            await _iisSiteManager.StopAppPoolAsync(poolName, ct);
+            return true;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            return false;
+        }
+    }
+
+    /// <summary>Restarts a pool this same publish stopped. Unlike the stop side, a failure here is
+    /// worth surfacing -- it means the site was left down.</summary>
+    private async Task TryStartAppPoolAsync(string poolName, CancellationToken ct)
+    {
+        try
+        {
+            await _iisSiteManager.StartAppPoolAsync(poolName, ct);
+            _output.Info($"Restarted IIS application pool '{poolName}'.");
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _output.Warn($"Couldn't restart IIS application pool '{poolName}' after deploying -- start it manually. ({ex.Message})");
         }
     }
 }

@@ -66,6 +66,11 @@ public static class CommandLineFactory
             Description = "An app config key=value pair to write before building, for projects with " +
                            "app config enabled (see add-project --app-config-type). Repeatable.",
         };
+        var markLatestOption = new Option<bool>("--mark-latest")
+        {
+            Description = "Flag this build as the project's \"latest release\" on the hosting site, " +
+                           "un-flagging whichever build previously held that. At most one build per project can be latest.",
+        };
 
         var command = new Command("publish", "Publish a registered project: build, archive, and deploy to IIS.");
         command.Add(projectOption);
@@ -76,6 +81,7 @@ public static class CommandLineFactory
         command.Add(otherUpdateOption);
         command.Add(backlogItemOption);
         command.Add(appConfigSettingOption);
+        command.Add(markLatestOption);
 
         command.SetAction(async (parseResult, ct) =>
         {
@@ -94,6 +100,7 @@ public static class CommandLineFactory
                 ReleaseNotesFixes = (parseResult.GetValue(fixOption) ?? Array.Empty<string>()).ToList(),
                 ReleaseNotesOtherUpdates = (parseResult.GetValue(otherUpdateOption) ?? Array.Empty<string>()).ToList(),
                 ReleaseNotesBacklogItems = (parseResult.GetValue(backlogItemOption) ?? Array.Empty<string>()).ToList(),
+                MarkAsLatest = parseResult.GetValue(markLatestOption),
             };
 
             try

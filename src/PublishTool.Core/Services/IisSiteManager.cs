@@ -102,8 +102,16 @@ public sealed partial class IisSiteManager
         return exitCode == 0;
     }
 
-    private static async Task<bool> AppPoolExistsAsync(string poolName, CancellationToken ct)
+    /// <summary>True if an application pool with this exact name exists. Also false (rather than
+    /// throwing) if IIS itself isn't installed on this machine -- callers checking "is this
+    /// project even IIS-hosted" want that treated the same as "no such pool".</summary>
+    public static async Task<bool> AppPoolExistsAsync(string poolName, CancellationToken ct = default)
     {
+        if (!File.Exists(AppCmdPath))
+        {
+            return false;
+        }
+
         var exitCode = await ProcessRunner.RunSilentAsync(AppCmdPath, $"list apppool /name:\"{poolName}\"", ct);
         return exitCode == 0;
     }

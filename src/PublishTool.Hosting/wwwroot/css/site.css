@@ -191,6 +191,39 @@ table.pt-table {
   white-space: nowrap;
 }
 
+.pt-filter-bar {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  margin-bottom: 1rem;
+}
+
+.pt-filter-bar label {
+  font-size: 0.85rem;
+  color: var(--pt-text-muted);
+  white-space: nowrap;
+}
+
+.pt-filter-bar select.pt-input {
+  width: auto;
+  min-width: 220px;
+}
+
+.pt-badge-latest {
+  display: inline-block;
+  margin-left: 0.4rem;
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: #ffffff;
+  background: #2e7d32;
+  padding: 0.12rem 0.45rem;
+  border-radius: 6px;
+  white-space: nowrap;
+  vertical-align: middle;
+}
+
 .pt-muted {
   color: var(--pt-text-muted);
 }

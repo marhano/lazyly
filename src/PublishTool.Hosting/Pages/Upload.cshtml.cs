@@ -33,6 +33,11 @@ public class UploadModel : PageModel
     [BindProperty]
     public bool ListInHosting { get; set; } = true;
 
+    /// <summary>Only one build per project can be latest -- <see cref="BuildRepository.SetLatest"/>
+    /// un-flags whichever build previously held it, so this is the only path that can set it true.</summary>
+    [BindProperty]
+    public bool MarkAsLatest { get; set; }
+
     [BindProperty]
     public IFormFile? UploadedZip { get; set; }
 
@@ -99,7 +104,7 @@ public class UploadModel : PageModel
             return Page();
         }
 
-        if (!IsValidPathSegment(ProjectName) || !IsValidPathSegment(Version))
+        if (!UploadValidation.IsValidPathSegment(ProjectName) || !UploadValidation.IsValidPathSegment(Version))
         {
             ErrorMessage = "Project name and version can't contain \\ / : * ? \" < > | and can't be \".\" or \"..\".";
             return Page();
@@ -140,7 +145,7 @@ public class UploadModel : PageModel
             await UploadedZip.CopyToAsync(fileStream);
         }
 
-        if (!IsValidZip(paths.ZipPath))
+        if (!UploadValidation.IsValidZip(paths.ZipPath))
         {
             System.IO.File.Delete(paths.ZipPath);
             ErrorMessage = "The uploaded file isn't a valid .zip archive.";
@@ -174,7 +179,13 @@ public class UploadModel : PageModel
             ZipPath = paths.ZipPath,
             ListInHosting = ListInHosting,
             ReleaseNotesPath = releaseNotesPath,
+            IsLatest = MarkAsLatest,
         });
+
+        if (MarkAsLatest)
+        {
+            _buildRepository.SetLatest(buildsRoot, ProjectName, paths.ManifestPath);
+        }
 
         TempData["UploadSuccessMessage"] = $"Uploaded {ProjectName} v{Version}.";
         return RedirectToPage("/Index");
@@ -186,25 +197,6 @@ public class UploadModel : PageModel
         if (!string.IsNullOrWhiteSpace(buildsRoot))
         {
             ExistingProjectNames = _buildRepository.ListProjectNames(buildsRoot);
-        }
-    }
-
-    private static bool IsValidPathSegment(string value) =>
-        value.Length > 0 &&
-        value != "." &&
-        value != ".." &&
-        value.IndexOfAny(Path.GetInvalidFileNameChars()) < 0;
-
-    private static bool IsValidZip(string zipPath)
-    {
-        try
-        {
-            using var archive = System.IO.Compression.ZipFile.OpenRead(zipPath);
-            return archive.Entries.Count > 0;
-        }
-        catch (InvalidDataException)
-        {
-            return false;
         }
     }
 

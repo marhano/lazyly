@@ -1026,6 +1026,11 @@ public partial class MainWindow : Wpf.Ui.Controls.FluentWindow
         foreach (var item in OtherUpdatesEditor.Items) { args.Add("--other-update"); args.Add(item); }
         foreach (var item in BacklogItemsEditor.Items) { args.Add("--backlog-item"); args.Add(item); }
 
+        if (MarkAsLatestToggle.IsChecked == true)
+        {
+            args.Add("--mark-latest");
+        }
+
         if (AppConfigExpander.Visibility == Visibility.Visible)
         {
             foreach (var row in _appConfigSettings)
