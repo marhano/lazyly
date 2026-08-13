@@ -13,19 +13,24 @@ public sealed class PublishOptions
     /// <see cref="Services.BuildRepository.SetLatest"/>.</summary>
     public bool MarkAsLatest { get; set; }
 
-    /// <summary>Whether to also push this build to the configured Remote Build Hosting API after
-    /// archiving it locally (see <see cref="Services.RemoteHostingClient"/>). Purely additive --
-    /// the local/shared BuildsRoot archive always happens regardless of this flag.</summary>
-    public bool PublishToRemoteHosting { get; set; }
-
     /// <summary>Base URL of the Remote Build Hosting API, e.g. "https://devserver.internal". Only
-    /// meaningful when <see cref="PublishToRemoteHosting"/> is true.</summary>
+    /// used when <see cref="UseRemoteMode"/> is true -- supplied so <see cref="Services.Publisher"/>
+    /// doesn't need to load <see cref="AppSettings"/> itself.</summary>
     public string? RemoteHostingUrl { get; set; }
 
     /// <summary>Plaintext API key for <see cref="RemoteHostingUrl"/>, already decrypted by the
     /// caller (see <see cref="AppSettings.RemoteHostingProtectedApiKey"/>) -- <see cref="Publisher"/>
     /// itself never touches DPAPI directly.</summary>
     public string? RemoteHostingApiKey { get; set; }
+
+    /// <summary>Mirrors <see cref="AppSettings.UseRemoteMode"/> at the moment this publish started
+    /// (resolved by the caller, same reasoning as <see cref="RemoteHostingUrl"/>). When true, the
+    /// build is never archived to <see cref="BuildsRoot"/> at all -- it's built straight into a
+    /// throwaway staging location and uploaded to <see cref="RemoteHostingUrl"/> instead, so every
+    /// dev's local machine doesn't accumulate its own redundant copy of every team build. Local IIS
+    /// deployment (see <see cref="ProjectConfig.LocalIisDeploymentEnabled"/>) is independent of this
+    /// -- a dev can still deploy to their own local IIS for testing while in remote mode.</summary>
+    public bool UseRemoteMode { get; set; }
 
     public string? MsBuildPath { get; set; }
 

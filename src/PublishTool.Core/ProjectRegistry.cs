@@ -3,7 +3,10 @@ using PublishTool.Core.Models;
 
 namespace PublishTool.Core;
 
-public sealed class ProjectRegistry
+/// <summary>Local, single-file project registry -- the "Local" half of <see cref="IProjectRegistry"/>.
+/// See <see cref="Services.ProjectRegistryFactory"/> for how this and
+/// <see cref="Services.RemoteProjectRegistry"/> get chosen.</summary>
+public sealed class ProjectRegistry : IProjectRegistry
 {
     private static readonly JsonSerializerOptions JsonOptions = new() { WriteIndented = true };
 
@@ -21,19 +24,21 @@ public sealed class ProjectRegistry
         "PublishTool",
         "projects.json");
 
-    public IReadOnlyList<ProjectConfig> Projects => _projects;
+    public Task<IReadOnlyList<ProjectConfig>> GetProjectsAsync(CancellationToken ct = default) =>
+        Task.FromResult<IReadOnlyList<ProjectConfig>>(_projects);
 
-    public ProjectConfig? Get(string name) =>
-        _projects.FirstOrDefault(p => string.Equals(p.Name, name, StringComparison.OrdinalIgnoreCase));
+    public Task<ProjectConfig?> GetAsync(string name, CancellationToken ct = default) =>
+        Task.FromResult(_projects.FirstOrDefault(p => string.Equals(p.Name, name, StringComparison.OrdinalIgnoreCase)));
 
-    public void AddOrUpdate(ProjectConfig config)
+    public Task AddOrUpdateAsync(ProjectConfig config, CancellationToken ct = default)
     {
         _projects.RemoveAll(p => string.Equals(p.Name, config.Name, StringComparison.OrdinalIgnoreCase));
         _projects.Add(config);
         Save();
+        return Task.CompletedTask;
     }
 
-    public bool Remove(string name)
+    public Task<bool> RemoveAsync(string name, CancellationToken ct = default)
     {
         var removed = _projects.RemoveAll(p => string.Equals(p.Name, name, StringComparison.OrdinalIgnoreCase)) > 0;
         if (removed)
@@ -41,7 +46,18 @@ public sealed class ProjectRegistry
             Save();
         }
 
-        return removed;
+        return Task.FromResult(removed);
+    }
+
+    public Task<int> ReserveNextReleaseSequenceAsync(string projectName, CancellationToken ct = default)
+    {
+        var project = _projects.FirstOrDefault(p => string.Equals(p.Name, projectName, StringComparison.OrdinalIgnoreCase))
+            ?? throw new InvalidOperationException($"Project '{projectName}' is not registered.");
+
+        var sequence = project.LastReleaseNotesSequence + 1;
+        project.LastReleaseNotesSequence = sequence;
+        Save();
+        return Task.FromResult(sequence);
     }
 
     private void Load()

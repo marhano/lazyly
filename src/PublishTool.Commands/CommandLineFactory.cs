@@ -71,11 +71,6 @@ public static class CommandLineFactory
             Description = "Flag this build as the project's \"latest release\" on the hosting site, " +
                            "un-flagging whichever build previously held that. At most one build per project can be latest.",
         };
-        var publishToRemoteHostingOption = new Option<bool>("--publish-to-remote-hosting")
-        {
-            Description = "Also upload this build to the Remote Build Hosting API configured in Settings, in addition to " +
-                           "the usual local/shared BuildsRoot archive. Requires a Remote Hosting URL to be configured first.",
-        };
 
         var command = new Command("publish", "Publish a registered project: build, archive, and deploy to IIS.");
         command.Add(projectOption);
@@ -87,11 +82,10 @@ public static class CommandLineFactory
         command.Add(backlogItemOption);
         command.Add(appConfigSettingOption);
         command.Add(markLatestOption);
-        command.Add(publishToRemoteHostingOption);
 
         command.SetAction(async (parseResult, ct) =>
         {
-            var registry = new ProjectRegistry(ProjectRegistry.DefaultPath);
+            var registry = ProjectRegistryFactory.Create();
             var settings = AppSettings.Load(AppSettings.DefaultPath);
 
             var publisher = new Publisher(registry, output);
@@ -107,7 +101,10 @@ public static class CommandLineFactory
                 ReleaseNotesOtherUpdates = (parseResult.GetValue(otherUpdateOption) ?? Array.Empty<string>()).ToList(),
                 ReleaseNotesBacklogItems = (parseResult.GetValue(backlogItemOption) ?? Array.Empty<string>()).ToList(),
                 MarkAsLatest = parseResult.GetValue(markLatestOption),
-                PublishToRemoteHosting = parseResult.GetValue(publishToRemoteHostingOption),
+                // Whether this uploads to the dev server instead of archiving locally is decided
+                // purely by the global "Use dev server for projects" setting -- see
+                // PublishOptions.UseRemoteMode and Publisher itself.
+                UseRemoteMode = settings.UseRemoteMode,
                 RemoteHostingUrl = settings.RemoteHostingUrl,
 #pragma warning disable CA1416 // DPAPI (SecretProtector) is Windows-only; this whole tool (MSBuild, IIS, appcmd) only ever runs on Windows despite PublishTool.Commands' plain net8.0 TFM.
                 RemoteHostingApiKey = settings.RemoteHostingProtectedApiKey is null
@@ -153,9 +150,9 @@ public static class CommandLineFactory
 
         command.SetAction(async (parseResult, ct) =>
         {
-            var registry = new ProjectRegistry(ProjectRegistry.DefaultPath);
+            var registry = ProjectRegistryFactory.Create();
             var projectName = parseResult.GetValue(projectOption)!;
-            var project = registry.Get(projectName);
+            var project = await registry.GetAsync(projectName, ct);
             if (project is null)
             {
                 output.Error($"Project '{projectName}' is not registered.");
@@ -206,7 +203,15 @@ public static class CommandLineFactory
         var csprojOption = new Option<string>("--csproj") { Description = "Path to the .csproj file.", Required = true };
         var pubxmlOption = new Option<string>("--pubxml") { Description = "Publish profile name (e.g. FolderProfile).", Required = true };
         var assemblyInfoOption = new Option<string?>("--assembly-info") { Description = "Path to AssemblyInfo.cs, for version stamping (optional)." };
-        var iisHostOption = new Option<string>("--iis-host") { Description = "Directory the latest build is mirrored to for IIS hosting.", Required = true };
+        var localIisDeploymentOption = new Option<bool>("--local-iis-deployment")
+        {
+            Description = "Deploy every publish of this project straight to --iis-host on this machine. " +
+                           "Off by default -- a project can be registered with no local IIS target at all.",
+        };
+        var iisHostOption = new Option<string?>("--iis-host")
+        {
+            Description = "Directory the latest build is mirrored to for local IIS hosting. Required if --local-iis-deployment is set.",
+        };
         var extraTargetsOption = new Option<string?>("--extra-publish-targets")
         {
             Description = "Semicolon-separated MSBuild targets to force during publish, for packages whose " +
@@ -277,6 +282,7 @@ public static class CommandLineFactory
         command.Add(csprojOption);
         command.Add(pubxmlOption);
         command.Add(assemblyInfoOption);
+        command.Add(localIisDeploymentOption);
         command.Add(iisHostOption);
         command.Add(extraTargetsOption);
         command.Add(autoCreateIisSiteOption);
@@ -292,7 +298,7 @@ public static class CommandLineFactory
         command.Add(eventLogMachineOption);
         command.Add(eventLogUsernameOption);
 
-        command.SetAction(parseResult =>
+        command.SetAction(async (parseResult, ct) =>
         {
             try
             {
@@ -317,6 +323,13 @@ public static class CommandLineFactory
                     }
                 }
 
+                var localIisDeployment = parseResult.GetValue(localIisDeploymentOption);
+                if (localIisDeployment && string.IsNullOrWhiteSpace(parseResult.GetValue(iisHostOption)))
+                {
+                    output.Error("--iis-host is required when --local-iis-deployment is set.");
+                    return 1;
+                }
+
                 var enableEventLog = parseResult.GetValue(enableEventLogOption);
                 var eventLogFilterType = parseResult.GetValue(eventLogFilterTypeOption);
                 if (enableEventLog && eventLogFilterType is not null &&
@@ -328,14 +341,14 @@ public static class CommandLineFactory
                     return 1;
                 }
 
-                var registry = new ProjectRegistry(ProjectRegistry.DefaultPath);
+                var registry = ProjectRegistryFactory.Create();
                 var name = parseResult.GetValue(nameOption)!;
                 // add-project doubles as "update" -- preserve the release notes sequence counter
                 // and any saved event log password across edits instead of resetting them, since
                 // there's no CLI option for either.
-                var existing = registry.Get(name);
+                var existing = await registry.GetAsync(name, ct);
 
-                registry.AddOrUpdate(new ProjectConfig
+                await registry.AddOrUpdateAsync(new ProjectConfig
                 {
                     Name = name,
                     ProjectId = parseResult.GetValue(projectIdOption),
@@ -343,7 +356,8 @@ public static class CommandLineFactory
                     CsprojPath = parseResult.GetValue(csprojOption)!,
                     PubxmlName = parseResult.GetValue(pubxmlOption)!,
                     AssemblyInfoPath = parseResult.GetValue(assemblyInfoOption),
-                    IisHostPath = parseResult.GetValue(iisHostOption)!,
+                    LocalIisDeploymentEnabled = localIisDeployment,
+                    IisHostPath = parseResult.GetValue(iisHostOption),
                     ExtraPublishTargets = parseResult.GetValue(extraTargetsOption),
                     AutoCreateIisSite = parseResult.GetValue(autoCreateIisSiteOption),
                     IisBindings = bindings,
@@ -400,12 +414,12 @@ public static class CommandLineFactory
         var command = new Command("remove-project", "Unregister a project. Does not touch any files it produced.");
         command.Add(nameOption);
 
-        command.SetAction(parseResult =>
+        command.SetAction(async (parseResult, ct) =>
         {
             var name = parseResult.GetValue(nameOption)!;
-            var registry = new ProjectRegistry(ProjectRegistry.DefaultPath);
+            var registry = ProjectRegistryFactory.Create();
 
-            if (registry.Remove(name))
+            if (await registry.RemoveAsync(name, ct))
             {
                 output.Info($"Removed project '{name}'.");
                 return 0;
@@ -422,18 +436,20 @@ public static class CommandLineFactory
     {
         var command = new Command("list-projects", "List registered projects.");
 
-        command.SetAction(_ =>
+        command.SetAction(async (_, ct) =>
         {
-            var registry = new ProjectRegistry(ProjectRegistry.DefaultPath);
-            if (registry.Projects.Count == 0)
+            var registry = ProjectRegistryFactory.Create();
+            var projects = await registry.GetProjectsAsync(ct);
+            if (projects.Count == 0)
             {
                 output.Info("No projects registered yet. Use 'add-project' to register one.");
                 return 0;
             }
 
-            foreach (var project in registry.Projects)
+            foreach (var project in projects)
             {
-                output.Info($"{project.Name}  ->  {project.CsprojPath}  [{project.PubxmlName}]  host: {project.IisHostPath}");
+                var host = string.IsNullOrWhiteSpace(project.IisHostPath) ? "(no local IIS deployment)" : project.IisHostPath;
+                output.Info($"{project.Name}  ->  {project.CsprojPath}  [{project.PubxmlName}]  host: {host}");
             }
 
             return 0;

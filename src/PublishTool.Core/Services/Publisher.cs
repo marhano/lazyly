@@ -5,32 +5,37 @@ namespace PublishTool.Core.Services;
 
 public sealed class Publisher
 {
-    private readonly ProjectRegistry _registry;
+    private readonly IProjectRegistry _registry;
     private readonly IOutputSink _output;
     private readonly MsBuildRunner _msBuild;
-    private readonly RobocopyMirror _mirror;
     private readonly BuildRepository _buildRepository;
-    private readonly IisSiteManager _iisSiteManager;
     private readonly GitService _git;
     private readonly RemoteHostingClient _remoteHostingClient;
+    private readonly BuildDeployer _buildDeployer;
 
-    public Publisher(ProjectRegistry registry, IOutputSink output)
+    public Publisher(IProjectRegistry registry, IOutputSink output)
     {
         _registry = registry;
         _output = output;
         _msBuild = new MsBuildRunner(output);
-        _mirror = new RobocopyMirror(output);
         _buildRepository = new BuildRepository();
-        _iisSiteManager = new IisSiteManager(output);
         _git = new GitService(output);
         _remoteHostingClient = new RemoteHostingClient();
+        _buildDeployer = new BuildDeployer(output);
     }
 
     public async Task<string> PublishAsync(PublishOptions options, CancellationToken ct = default)
     {
-        var project = _registry.Get(options.ProjectName)
+        var project = await _registry.GetAsync(options.ProjectName, ct)
             ?? throw new InvalidOperationException(
                 $"Project '{options.ProjectName}' is not registered. Add it first with 'add-project'.");
+
+        if (options.UseRemoteMode && string.IsNullOrWhiteSpace(options.RemoteHostingUrl))
+        {
+            throw new InvalidOperationException(
+                $"'{project.Name}' can't be published -- \"Use dev server for projects\" is on, but no Remote " +
+                "Build Hosting URL is configured in Settings. Configure one, or turn remote mode off to build locally.");
+        }
 
         _output.Stage($"Publishing {project.Name} v{options.Version}...");
 
@@ -64,6 +69,10 @@ public sealed class Publisher
 
         var stagingDir = Path.Combine(Path.GetTempPath(), "PublishTool", Guid.NewGuid().ToString("N"));
 
+        // Only populated in remote mode -- a throwaway location for the zip/manifest/release-notes
+        // built purely to upload, never the shared local BuildsRoot (see PublishOptions.UseRemoteMode).
+        string? uploadStagingDir = null;
+
         try
         {
             var msBuildExePath = await MsBuildLocator.LocateAsync(options.MsBuildPath, ct);
@@ -74,32 +83,56 @@ public sealed class Publisher
                 msBuildExePath, project.CsprojPath, project.PubxmlName, stagingDir,
                 project.SdkStyleProject, project.ExtraPublishTargets, ct);
 
-            var existing = await Task.Run(
-                () => _buildRepository.FindBuild(options.BuildsRoot, project.Name, options.Version), ct);
-
             string zipPath, manifestPath, releaseNotesPath;
-            if (existing is not null)
+            string? existingReleaseNotesReference;
+
+            if (options.UseRemoteMode)
             {
-                _output.Stage($"Version {options.Version} already exists for {project.Name} -- overwriting in place...");
-                zipPath = existing.Manifest.ZipPath;
-                manifestPath = existing.ManifestPath;
-                // Pre-this-feature manifests may not have a release notes path yet -- fall back to
-                // the naming convention derived from the existing zip so an overwrite can still add one.
-                releaseNotesPath = existing.Manifest.ReleaseNotesPath
-                    ?? Path.ChangeExtension(zipPath, null) + ".releasenotes.txt";
+                _output.Stage("Preparing build for upload to dev server...");
+                uploadStagingDir = Path.Combine(Path.GetTempPath(), "PublishTool", Guid.NewGuid().ToString("N") + "-upload");
+                Directory.CreateDirectory(uploadStagingDir);
+                zipPath = Path.Combine(uploadStagingDir, $"{options.Version}.zip");
+                manifestPath = Path.Combine(uploadStagingDir, $"{options.Version}.manifest.json");
+                releaseNotesPath = Path.Combine(uploadStagingDir, $"{options.Version}.releasenotes.txt");
 
                 await Task.Run(() => _buildRepository.WriteZip(zipPath, stagingDir), ct);
+                existingReleaseNotesReference = await TryGetExistingRemoteReleaseNotesReferenceAsync(options, project, ct);
             }
             else
             {
-                _output.Stage("Archiving build to repository (zip)...");
-                // ZipFile.CreateFromDirectory is synchronous and can take real time on large
-                // builds (tens of MB, thousands of files) -- Task.Run keeps that off the UI thread.
-                var archive = await Task.Run(
-                    () => _buildRepository.Archive(options.BuildsRoot, project.Name, options.Version, stagingDir), ct);
-                zipPath = archive.ZipPath;
-                manifestPath = archive.ManifestPath;
-                releaseNotesPath = archive.ReleaseNotesPath;
+                var existing = await Task.Run(
+                    () => _buildRepository.FindBuild(options.BuildsRoot, project.Name, options.Version), ct);
+
+                if (existing is not null)
+                {
+                    _output.Stage($"Version {options.Version} already exists for {project.Name} -- overwriting in place...");
+                    zipPath = existing.Manifest.ZipPath;
+                    manifestPath = existing.ManifestPath;
+                    // Pre-this-feature manifests may not have a release notes path yet -- fall back to
+                    // the naming convention derived from the existing zip so an overwrite can still add one.
+                    releaseNotesPath = existing.Manifest.ReleaseNotesPath
+                        ?? Path.ChangeExtension(zipPath, null) + ".releasenotes.txt";
+
+                    await Task.Run(() => _buildRepository.WriteZip(zipPath, stagingDir), ct);
+
+                    // Overwriting a build that already had release notes reuses its reference number
+                    // instead of minting a new one -- this is still the same release, just edited.
+                    existingReleaseNotesReference = existing.Manifest.ReleaseNotesPath is { } existingNotesPath && File.Exists(existingNotesPath)
+                        ? ReleaseNotesFormatter.Parse(File.ReadAllText(existingNotesPath))?.Reference
+                        : null;
+                }
+                else
+                {
+                    _output.Stage("Archiving build to repository (zip)...");
+                    // ZipFile.CreateFromDirectory is synchronous and can take real time on large
+                    // builds (tens of MB, thousands of files) -- Task.Run keeps that off the UI thread.
+                    var archive = await Task.Run(
+                        () => _buildRepository.Archive(options.BuildsRoot, project.Name, options.Version, stagingDir), ct);
+                    zipPath = archive.ZipPath;
+                    manifestPath = archive.ManifestPath;
+                    releaseNotesPath = archive.ReleaseNotesPath;
+                    existingReleaseNotesReference = null;
+                }
             }
 
             string? writtenReleaseNotesPath = null;
@@ -107,24 +140,16 @@ public sealed class Publisher
             {
                 _output.Stage("Generating release notes...");
 
-                // Overwriting a build that already had release notes reuses its reference number
-                // instead of minting a new one -- this is still the same release, just edited.
-                var existingReference = existing?.Manifest.ReleaseNotesPath is { } existingNotesPath && File.Exists(existingNotesPath)
-                    ? ReleaseNotesFormatter.Parse(File.ReadAllText(existingNotesPath))?.Reference
-                    : null;
-
                 string reference;
-                if (existingReference is not null)
+                if (existingReleaseNotesReference is not null)
                 {
-                    reference = existingReference;
+                    reference = existingReleaseNotesReference;
                     _output.Info($"Reusing existing release notes reference: {reference}");
                 }
                 else
                 {
-                    var sequence = project.LastReleaseNotesSequence + 1;
+                    var sequence = await _registry.ReserveNextReleaseSequenceAsync(project.Name, ct);
                     reference = $"{project.ProjectId}-{DateTime.Now.Year}-{sequence:D4}";
-                    project.LastReleaseNotesSequence = sequence;
-                    _registry.AddOrUpdate(project);
                     _output.Info($"Release notes reference: {reference}");
                 }
 
@@ -160,56 +185,52 @@ public sealed class Publisher
                 IsLatest = options.MarkAsLatest,
             });
 
-            if (options.MarkAsLatest)
+            if (options.UseRemoteMode)
             {
-                await Task.Run(() => _buildRepository.SetLatest(options.BuildsRoot, project.Name, manifestPath), ct);
-                _output.Info($"Flagged {project.Name} v{options.Version} as the latest release.");
-            }
+                _output.Stage("Uploading to dev server...");
+                var remoteManifestPath = await _remoteHostingClient.UploadBuildAsync(
+                    options.RemoteHostingUrl!, options.RemoteHostingApiKey, zipPath, manifestPath, writtenReleaseNotesPath, ct);
+                _output.Info("Uploaded to dev server.");
+                // The uploaded manifest already carries IsLatest = options.MarkAsLatest -- the server
+                // applies its own SetLatest from that when it accepts the upload, same as marking
+                // latest locally does below, just server-side (see BuildUploadHandler).
 
-            _output.Info($"Archived to {zipPath}");
-
-            if (options.PublishToRemoteHosting)
-            {
-                if (string.IsNullOrWhiteSpace(options.RemoteHostingUrl))
+                if (project.AutoDeployOnPublish && !string.IsNullOrWhiteSpace(project.RemoteIisHostPath))
                 {
-                    throw new InvalidOperationException(
-                        "\"Also upload to remote hosting\" is checked, but no Remote Hosting URL is configured in Settings.");
+                    _output.Stage("Deploying to dev server IIS...");
+                    await _remoteHostingClient.DeployAsync(options.RemoteHostingUrl!, options.RemoteHostingApiKey, remoteManifestPath, ct);
+                    _output.Info("Deployed to dev server IIS.");
+                }
+                else if (project.AutoDeployOnPublish)
+                {
+                    _output.Info($"'{project.Name}' has auto-deploy on, but no dev-server IIS host path is configured -- skipping deploy.");
+                }
+            }
+            else
+            {
+                if (options.MarkAsLatest)
+                {
+                    await Task.Run(() => _buildRepository.SetLatest(options.BuildsRoot, project.Name, manifestPath), ct);
+                    _output.Info($"Flagged {project.Name} v{options.Version} as the latest release.");
                 }
 
-                _output.Stage("Uploading to remote hosting...");
-                await _remoteHostingClient.UploadBuildAsync(
-                    options.RemoteHostingUrl, options.RemoteHostingApiKey, zipPath, manifestPath, writtenReleaseNotesPath, ct);
-                _output.Info("Uploaded to remote hosting.");
+                _output.Info($"Archived to {zipPath}");
             }
 
-            if (project.AutoCreateIisSite)
+            if (project.LocalIisDeploymentEnabled)
             {
-                _output.Stage("Ensuring IIS site exists...");
-                await _iisSiteManager.EnsureSiteExistsAsync(project.Name, project.IisHostPath, project.IisBindings, ct);
-            }
-
-            _output.Stage($"Deploying to IIS host path: {project.IisHostPath}");
-
-            // A running IIS app pool for this site holds its DLLs open (in-process hosting keeps
-            // them loaded in w3wp.exe), which makes robocopy fail to overwrite them with a sharing
-            // violation -- stopping the pool first (best-effort; most projects aren't IIS-hosted at
-            // all, so a missing pool is the normal case, not a problem) avoids that entirely instead
-            // of relying on robocopy's slow 30-second retry loop.
-            var appPoolWasStopped = await TryStopAppPoolForDeployAsync(project.Name, ct);
-            try
-            {
-                await _mirror.MirrorAsync(stagingDir, project.IisHostPath, ct);
-            }
-            finally
-            {
-                if (appPoolWasStopped)
+                if (!string.IsNullOrWhiteSpace(project.IisHostPath))
                 {
-                    await TryStartAppPoolAsync(project.Name, ct);
+                    await _buildDeployer.DeployAsync(project.Name, project.IisHostPath, project.IisBindings, project.AutoCreateIisSite, stagingDir, ct);
+                }
+                else
+                {
+                    _output.Warn($"'{project.Name}' has local IIS deployment on, but no local IIS host folder is configured -- skipping.");
                 }
             }
 
             _output.Stage("Publish complete.");
-            _output.Notify($"{project.Name} published", $"Version {options.Version}", zipPath);
+            _output.Notify($"{project.Name} published", $"Version {options.Version}", options.UseRemoteMode ? null : zipPath);
             return zipPath;
         }
         finally
@@ -218,44 +239,49 @@ public sealed class Publisher
             {
                 Directory.Delete(stagingDir, recursive: true);
             }
+
+            if (uploadStagingDir is not null && Directory.Exists(uploadStagingDir))
+            {
+                Directory.Delete(uploadStagingDir, recursive: true);
+            }
         }
     }
 
-    /// <summary>Stops the IIS application pool sharing this project's name, if one exists, so its
-    /// files can be overwritten. Swallows any failure silently (IIS not installed, no such pool,
-    /// no permission) -- most projects aren't IIS-hosted at all, so that's the expected case, not
-    /// something worth warning about on every publish.</summary>
-    private async Task<bool> TryStopAppPoolForDeployAsync(string poolName, CancellationToken ct)
+    /// <summary>Looks for an already-uploaded build of this exact version on the dev server so
+    /// republishing it reuses its release notes reference instead of minting a new one -- the
+    /// remote-mode counterpart to the local <see cref="BuildRepository.FindBuild"/> lookup. Resilient
+    /// to failure (network hiccup, server briefly unreachable): worst case a republish gets a fresh
+    /// reference number instead of reusing the old one, which is far better than blocking the whole
+    /// publish over a nice-to-have lookup.</summary>
+    private async Task<string?> TryGetExistingRemoteReleaseNotesReferenceAsync(PublishOptions options, ProjectConfig project, CancellationToken ct)
     {
         try
         {
-            if (!await IisSiteManager.AppPoolExistsAsync(poolName, ct))
+            var builds = await _remoteHostingClient.ListBuildsAsync(options.RemoteHostingUrl!, options.RemoteHostingApiKey, project.Name, ct);
+            var match = builds.FirstOrDefault(b => string.Equals(b.Version, options.Version, StringComparison.OrdinalIgnoreCase));
+            if (match?.ReleaseNotesPath is null)
             {
-                return false;
+                return null;
             }
 
-            _output.Info($"Stopping IIS application pool '{poolName}' before copying files...");
-            await _iisSiteManager.StopAppPoolAsync(poolName, ct);
-            return true;
+            var tempNotesPath = Path.Combine(Path.GetTempPath(), "PublishTool", Guid.NewGuid().ToString("N") + ".releasenotes.txt");
+            try
+            {
+                await _remoteHostingClient.DownloadAsync(options.RemoteHostingUrl!, options.RemoteHostingApiKey, match.ReleaseNotesPath, tempNotesPath, ct);
+                return ReleaseNotesFormatter.Parse(await File.ReadAllTextAsync(tempNotesPath, ct))?.Reference;
+            }
+            finally
+            {
+                if (File.Exists(tempNotesPath))
+                {
+                    File.Delete(tempNotesPath);
+                }
+            }
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            return false;
-        }
-    }
-
-    /// <summary>Restarts a pool this same publish stopped. Unlike the stop side, a failure here is
-    /// worth surfacing -- it means the site was left down.</summary>
-    private async Task TryStartAppPoolAsync(string poolName, CancellationToken ct)
-    {
-        try
-        {
-            await _iisSiteManager.StartAppPoolAsync(poolName, ct);
-            _output.Info($"Restarted IIS application pool '{poolName}'.");
-        }
-        catch (Exception ex) when (ex is not OperationCanceledException)
-        {
-            _output.Warn($"Couldn't restart IIS application pool '{poolName}' after deploying -- start it manually. ({ex.Message})");
+            _output.Warn($"Couldn't check the dev server for an existing release notes reference: {ex.Message}");
+            return null;
         }
     }
 }

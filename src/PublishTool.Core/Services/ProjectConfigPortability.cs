@@ -50,28 +50,36 @@ public static class ProjectConfigPortability
         return file;
     }
 
-    public static IReadOnlyList<ProjectImportPreviewItem> Preview(ProjectConfigExportFile file, ProjectRegistry registry) =>
-        file.Projects
-            .Select(p => new ProjectImportPreviewItem(p.Name, registry.Get(p.Name) is not null))
-            .ToList();
+    public static async Task<IReadOnlyList<ProjectImportPreviewItem>> PreviewAsync(
+        ProjectConfigExportFile file, IProjectRegistry registry, CancellationToken ct = default)
+    {
+        var results = new List<ProjectImportPreviewItem>();
+        foreach (var p in file.Projects)
+        {
+            results.Add(new ProjectImportPreviewItem(p.Name, await registry.GetAsync(p.Name, ct) is not null));
+        }
+
+        return results;
+    }
 
     /// <summary>Imports only the named projects, leaving everything else in the file untouched.
     /// When a project already exists locally, its <see cref="ProjectConfig.LastReleaseNotesSequence"/>
     /// is preserved rather than taken from the file -- that counter is locally-managed publish
     /// state, not portable config, and overwriting it could duplicate or skip release note
     /// numbers.</summary>
-    public static void Import(ProjectConfigExportFile file, ProjectRegistry registry, IEnumerable<string> namesToImport)
+    public static async Task ImportAsync(
+        ProjectConfigExportFile file, IProjectRegistry registry, IEnumerable<string> namesToImport, CancellationToken ct = default)
     {
         var wanted = new HashSet<string>(namesToImport, StringComparer.OrdinalIgnoreCase);
         foreach (var project in file.Projects.Where(p => wanted.Contains(p.Name)))
         {
-            var existing = registry.Get(project.Name);
+            var existing = await registry.GetAsync(project.Name, ct);
             if (existing is not null)
             {
                 project.LastReleaseNotesSequence = existing.LastReleaseNotesSequence;
             }
 
-            registry.AddOrUpdate(project);
+            await registry.AddOrUpdateAsync(project, ct);
         }
     }
 
@@ -85,6 +93,7 @@ public static class ProjectConfigPortability
         AssemblyInfoPath = source.AssemblyInfoPath,
         IisHostPath = source.IisHostPath,
         ExtraPublishTargets = source.ExtraPublishTargets,
+        LocalIisDeploymentEnabled = source.LocalIisDeploymentEnabled,
         AutoCreateIisSite = source.AutoCreateIisSite,
         IisBindings = source.IisBindings,
         SdkStyleProject = source.SdkStyleProject,
@@ -99,5 +108,9 @@ public static class ProjectConfigPortability
         EventLogMachineName = source.EventLogMachineName,
         EventLogUsername = source.EventLogUsername,
         EventLogProtectedPassword = null,
+        RemoteIisHostPath = source.RemoteIisHostPath,
+        RemoteIisBindings = source.RemoteIisBindings,
+        RemoteAutoCreateIisSite = source.RemoteAutoCreateIisSite,
+        AutoDeployOnPublish = source.AutoDeployOnPublish,
     };
 }

@@ -81,7 +81,6 @@
                                        Visibility="Collapsed" TextWrapping="Wrap"/>
                             <ui:ToggleSwitch x:Name="MarkAsLatestToggle" Content="Mark as latest release" Margin="0,10,0,0"
                                              ToolTip="Shown as &quot;(latest)&quot; next to this build on the hosting site. Only one build per project can be latest -- marking this one un-flags whichever build had it before."/>
-                            <ui:ToggleSwitch x:Name="PublishToRemoteHostingToggle" Content="Also upload to remote hosting" Margin="0,10,0,0"/>
                         </StackPanel>
 
                         <StackPanel Grid.Row="3" Grid.Column="1" Orientation="Horizontal" Margin="0,14,0,0">
@@ -128,202 +127,75 @@
                     </Grid>
                 </TabItem>
 
-                <TabItem Header="Add Project">
+                <TabItem Header="Projects">
                     <Grid Margin="12">
-                        <Grid.RowDefinitions>
-                            <RowDefinition Height="*"/>
-                            <RowDefinition Height="*"/>
-                        </Grid.RowDefinitions>
-
-                        <ScrollViewer Grid.Row="0" VerticalScrollBarVisibility="Auto">
-                        <Grid>
-                        <Grid.RowDefinitions>
-                            <RowDefinition Height="Auto"/>
-                            <RowDefinition Height="Auto"/>
-                            <RowDefinition Height="Auto"/>
-                            <RowDefinition Height="Auto"/>
-                            <RowDefinition Height="Auto"/>
-                            <RowDefinition Height="Auto"/>
-                            <RowDefinition Height="Auto"/>
-                            <RowDefinition Height="Auto"/>
-                            <RowDefinition Height="Auto"/>
-                            <RowDefinition Height="Auto"/>
-                            <RowDefinition Height="Auto"/>
-                            <RowDefinition Height="Auto"/>
-                            <RowDefinition Height="Auto"/>
-                            <RowDefinition Height="Auto"/>
-                            <RowDefinition Height="Auto"/>
-                            <RowDefinition Height="Auto"/>
-                        </Grid.RowDefinitions>
                         <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="140"/>
-                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="280"/>
                             <ColumnDefinition Width="Auto"/>
+                            <ColumnDefinition Width="*"/>
                         </Grid.ColumnDefinitions>
 
-                        <TextBlock Grid.Row="0" Grid.Column="0" Text="Name" VerticalAlignment="Center"/>
-                        <ui:TextBox Grid.Row="0" Grid.Column="1" Grid.ColumnSpan="2" x:Name="NewProjectNameTextBox"
-                                    Margin="0,6" PlaceholderText="MyProject"/>
+                        <Grid Grid.Column="0">
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="*"/>
+                                <RowDefinition Height="Auto"/>
+                            </Grid.RowDefinitions>
 
-                        <TextBlock Grid.Row="1" Grid.Column="0" Text="Project ID" VerticalAlignment="Center"/>
-                        <ui:TextBox Grid.Row="1" Grid.Column="1" Grid.ColumnSpan="2" x:Name="NewProjectIdTextBox"
-                                    Margin="0,6" PlaceholderText="e.g. BPS"
-                                    ToolTip="Short project code used as the release notes reference prefix, e.g. &quot;BPS&quot; produces references like BPS-2026-0007. Optional -- release notes are only generated at publish time when this is set."/>
+                            <TextBlock Grid.Row="0" Text="Registered projects"
+                                       Margin="0,0,0,6" Foreground="{DynamicResource TextFillColorSecondaryBrush}"/>
+                            <ListBox Grid.Row="1" x:Name="RegisteredProjectsListBox"
+                                     DisplayMemberPath="Name" SelectionChanged="RegisteredProjectsListBox_SelectionChanged"/>
 
-                        <TextBlock Grid.Row="2" Grid.Column="0" Text=".csproj path" VerticalAlignment="Center"/>
-                        <ui:TextBox Grid.Row="2" Grid.Column="1" x:Name="NewProjectCsprojTextBox" Margin="0,6,6,6"
-                                    PlaceholderText="C:\src\MyProject\MyProject.csproj"/>
-                        <ui:Button Grid.Row="2" Grid.Column="2" Content="Browse..." Icon="{ui:SymbolIcon FolderOpen24}"
-                                   Width="100" Click="BrowseCsproj_Click"/>
-
-                        <TextBlock Grid.Row="3" Grid.Column="0" Text="Publish profile" VerticalAlignment="Center"/>
-                        <ui:TextBox Grid.Row="3" Grid.Column="1" x:Name="NewProjectPubxmlTextBox" Margin="0,6,6,6"
-                                    PlaceholderText="FolderProfile"/>
-                        <ui:Button Grid.Row="3" Grid.Column="2" Content="Browse..." Icon="{ui:SymbolIcon FolderOpen24}"
-                                   Width="100" Click="BrowsePubxml_Click"/>
-
-                        <TextBlock Grid.Row="4" Grid.Column="0" Text="AssemblyInfo.cs&#10;(optional)" VerticalAlignment="Center"/>
-                        <ui:TextBox Grid.Row="4" Grid.Column="1" x:Name="NewProjectAssemblyInfoTextBox" Margin="0,6,6,6"
-                                    PlaceholderText="Properties\AssemblyInfo.cs"/>
-                        <ui:Button Grid.Row="4" Grid.Column="2" Content="Browse..." Icon="{ui:SymbolIcon FolderOpen24}"
-                                   Width="100" Click="BrowseAssemblyInfo_Click"/>
-
-                        <TextBlock Grid.Row="5" Grid.Column="0" Text="IIS host folder" VerticalAlignment="Center"/>
-                        <ui:TextBox Grid.Row="5" Grid.Column="1" x:Name="NewProjectIisHostTextBox" Margin="0,6,6,6"
-                                    PlaceholderText="C:\inetpub\wwwroot\MyProject"/>
-                        <ui:Button Grid.Row="5" Grid.Column="2" Content="Browse..." Icon="{ui:SymbolIcon FolderOpen24}"
-                                   Width="100" Click="BrowseIisHost_Click"/>
-
-                        <TextBlock Grid.Row="6" Grid.Column="0" Text="Extra publish&#10;targets (optional)" VerticalAlignment="Center"/>
-                        <ui:TextBox Grid.Row="6" Grid.Column="1" Grid.ColumnSpan="2" x:Name="NewProjectExtraTargetsTextBox" Margin="0,6"
-                                    PlaceholderText="e.g. CollectSQLiteInteropFiles"
-                                    ToolTip="Semicolon-separated MSBuild targets to force during publish, for packages whose own .targets don't hook into this toolset -- e.g. CollectSQLiteInteropFiles"/>
-
-                        <ui:ToggleSwitch Grid.Row="7" Grid.Column="0" Grid.ColumnSpan="3" x:Name="SdkStyleProjectToggle"
-                                         Content="Modern SDK-style project (e.g. ASP.NET Core)" Margin="0,10,0,0"
-                                         ToolTip="Leave off for classic .NET Framework Web Deploy projects -- the two publish very differently."/>
-
-                        <ui:ToggleSwitch Grid.Row="8" Grid.Column="0" Grid.ColumnSpan="3" x:Name="ListInHostingToggle"
-                                         Content="List builds in hosting site" IsChecked="True" Margin="0,10,0,0"
-                                         ToolTip="Builds are always archived to the build repository either way; this only controls whether they show up in the build-hosting site's listing."/>
-
-                        <ui:ToggleSwitch Grid.Row="9" Grid.Column="1" Grid.ColumnSpan="2" x:Name="AutoCreateIisSiteToggle"
-                                         Content="Auto-create IIS site if missing" Margin="0,10,0,0"
-                                         Checked="AutoCreateIisSiteToggle_Toggled" Unchecked="AutoCreateIisSiteToggle_Toggled"/>
-
-                        <ui:ToggleSwitch Grid.Row="10" Grid.Column="0" Grid.ColumnSpan="3" x:Name="UseAppConfigToggle"
-                                         Content="Edit user-visible app config from the Publish tab" Margin="0,10,0,0"
-                                         ToolTip="For a version number or other appSettings shown to end users -- separate from AssemblyInfo.cs, which only affects the .NET assembly's own version."
-                                         Checked="UseAppConfigToggle_Toggled" Unchecked="UseAppConfigToggle_Toggled"/>
-
-                        <StackPanel Grid.Row="11" Grid.Column="0" Grid.ColumnSpan="3" x:Name="AppConfigPanel"
-                                    Visibility="Collapsed" Margin="0,10,0,0">
-                            <TextBlock Text="Config type" Margin="0,0,0,6"
-                                       Foreground="{DynamicResource TextFillColorSecondaryBrush}"/>
-                            <ComboBox x:Name="AppConfigTypeComboBox" HorizontalAlignment="Left" Width="240"
-                                      DisplayMemberPath="DisplayName"/>
-
-                            <TextBlock Text="Config file path" Margin="0,10,0,6"
-                                       Foreground="{DynamicResource TextFillColorSecondaryBrush}"/>
-                            <Grid>
-                                <Grid.ColumnDefinitions>
-                                    <ColumnDefinition Width="*"/>
-                                    <ColumnDefinition Width="Auto"/>
-                                </Grid.ColumnDefinitions>
-                                <ui:TextBox Grid.Column="0" x:Name="AppConfigPathTextBox" Margin="0,0,6,0"
-                                            PlaceholderText="C:\src\MyProject\Web.config"/>
-                                <ui:Button Grid.Column="1" Content="Browse..." Icon="{ui:SymbolIcon FolderOpen24}"
-                                           Width="100" Click="BrowseAppConfigPath_Click"/>
-                            </Grid>
-                        </StackPanel>
-
-                        <ui:ToggleSwitch Grid.Row="12" Grid.Column="0" Grid.ColumnSpan="3" x:Name="UseEventLogToggle"
-                                         Content="Enable Event Logs tab for this project" Margin="0,10,0,0"
-                                         ToolTip="Reads Windows Event Log entries for this project into the Event Logs tab."
-                                         Checked="UseEventLogToggle_Toggled" Unchecked="UseEventLogToggle_Toggled"/>
-
-                        <StackPanel Grid.Row="13" Grid.Column="0" Grid.ColumnSpan="3" x:Name="EventLogPanel"
-                                    Visibility="Collapsed" Margin="0,10,0,0">
-                            <Grid>
-                                <Grid.RowDefinitions>
-                                    <RowDefinition Height="Auto"/>
-                                    <RowDefinition Height="Auto"/>
-                                    <RowDefinition Height="Auto"/>
-                                    <RowDefinition Height="Auto"/>
-                                    <RowDefinition Height="Auto"/>
-                                </Grid.RowDefinitions>
-                                <Grid.ColumnDefinitions>
-                                    <ColumnDefinition Width="140"/>
-                                    <ColumnDefinition Width="*"/>
-                                </Grid.ColumnDefinitions>
-
-                                <TextBlock Grid.Row="0" Grid.Column="0" Text="Log name" VerticalAlignment="Center"/>
-                                <ui:TextBox Grid.Row="0" Grid.Column="1" x:Name="EventLogNameTextBox" Margin="0,6"
-                                            PlaceholderText="Application"/>
-
-                                <TextBlock Grid.Row="1" Grid.Column="0" Text="Identify entries by" VerticalAlignment="Center"/>
-                                <ComboBox Grid.Row="1" Grid.Column="1" x:Name="EventLogFilterTypeComboBox" Margin="0,6"
-                                          HorizontalAlignment="Left" Width="240" SelectedIndex="0">
-                                    <ComboBoxItem Content="Event Source name" Tag="Source"/>
-                                    <ComboBoxItem Content="Message contains" Tag="MessageContains"/>
-                                </ComboBox>
-
-                                <TextBlock Grid.Row="2" Grid.Column="0" Text="Source name or&#10;message text" VerticalAlignment="Center"/>
-                                <ui:TextBox Grid.Row="2" Grid.Column="1" x:Name="EventLogFilterValueTextBox" Margin="0,6"
-                                            PlaceholderText="e.g. MyApp, or a distinctive substring"
-                                            ToolTip="An Event Log Source name if 'Identify entries by' is Source, or a substring to match against each entry's message if it's Message Contains."/>
-
-                                <TextBlock Grid.Row="3" Grid.Column="0" Text="Machine&#10;(optional)" VerticalAlignment="Center"/>
-                                <ui:TextBox Grid.Row="3" Grid.Column="1" x:Name="EventLogMachineTextBox" Margin="0,6"
-                                            PlaceholderText="(local machine)"
-                                            ToolTip="Read the event log from a different computer instead of this one. Requires Remote Event Log Management to be allowed through that machine's firewall."/>
-
-                                <TextBlock Grid.Row="4" Grid.Column="0" Text="Username&#10;(optional)" VerticalAlignment="Center"/>
-                                <ui:TextBox Grid.Row="4" Grid.Column="1" x:Name="EventLogUsernameTextBox" Margin="0,6"
-                                            PlaceholderText="(use current Windows identity)"
-                                            ToolTip="Only needed for a remote machine that doesn't trust your current Windows identity. You'll be prompted for the password (with an option to save it) from the Event Logs tab."/>
-                            </Grid>
-                        </StackPanel>
-
-                        <StackPanel Grid.Row="14" Grid.Column="0" Grid.ColumnSpan="3" x:Name="IisBindingsPanel"
-                                    Visibility="Collapsed" Margin="0,10,0,0">
-                            <TextBlock Text="Site bindings" Margin="0,0,0,6"
-                                       Foreground="{DynamicResource TextFillColorSecondaryBrush}"/>
-                            <DataGrid x:Name="IisBindingsDataGrid" Height="140" AutoGenerateColumns="False" CanUserAddRows="False">
-                                <DataGrid.Columns>
-                                    <DataGridTextColumn Header="Type" Binding="{Binding Protocol}" Width="80"/>
-                                    <DataGridTextColumn Header="IP Address" Binding="{Binding IpAddress}" Width="130"/>
-                                    <DataGridTextColumn Header="Port" Binding="{Binding Port}" Width="70"/>
-                                    <DataGridTextColumn Header="Host name" Binding="{Binding HostName}" Width="*"/>
-                                </DataGrid.Columns>
-                            </DataGrid>
-                            <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
-                                <ui:Button Content="Add binding" Icon="{ui:SymbolIcon Add24}" Width="130" Click="AddBindingButton_Click"/>
-                                <ui:Button Content="Remove binding" Icon="{ui:SymbolIcon Delete24}" Width="140" Margin="10,0,0,0" Click="RemoveBindingButton_Click"/>
+                            <StackPanel Grid.Row="2" Margin="0,10,0,0">
+                                <ui:Button x:Name="AddProjectButton" Content="Add project" Appearance="Primary"
+                                           Icon="{ui:SymbolIcon Add24}" HorizontalAlignment="Stretch" Click="AddProjectButton_Click"/>
+                                <ui:Button x:Name="EditProjectButton" Content="Edit" Icon="{ui:SymbolIcon Edit24}"
+                                           Margin="0,8,0,0" HorizontalAlignment="Stretch" Click="EditProjectButton_Click"/>
+                                <ui:Button x:Name="RemoveProjectButton" Content="Remove" Icon="{ui:SymbolIcon Delete24}"
+                                           Margin="0,8,0,0" HorizontalAlignment="Stretch" Click="RemoveProjectButton_Click"/>
                             </StackPanel>
-                        </StackPanel>
-
-                        <StackPanel Grid.Row="15" Grid.Column="1" Orientation="Horizontal" Margin="0,14,0,0">
-                            <ui:Button x:Name="SaveProjectButton" Content="Save project" Appearance="Primary"
-                                       Icon="{ui:SymbolIcon Save24}" Width="140" Click="SaveProjectButton_Click"/>
-                            <ui:Button x:Name="NewProjectButton" Content="Clear form" Icon="{ui:SymbolIcon Eraser24}"
-                                       Width="110" Margin="10,0,0,0" Click="NewProjectButton_Click"/>
-                            <ui:Button x:Name="RemoveProjectButton" Content="Remove selected" Icon="{ui:SymbolIcon Delete24}"
-                                       Width="150" Margin="10,0,0,0" Click="RemoveProjectButton_Click"/>
-                        </StackPanel>
                         </Grid>
-                        </ScrollViewer>
 
-                        <Grid Grid.Row="1" Margin="0,12,0,0">
+                        <Border Grid.Column="1" Width="1" Margin="12,0" Background="{DynamicResource CardStrokeColorDefaultBrush}"/>
+
+                        <Grid Grid.Column="2">
                             <Grid.RowDefinitions>
                                 <RowDefinition Height="Auto"/>
                                 <RowDefinition Height="*"/>
                             </Grid.RowDefinitions>
 
-                            <TextBlock Grid.Row="0" Text="Registered projects (click to edit)"
-                                       Margin="0,0,0,6" Foreground="{DynamicResource TextFillColorSecondaryBrush}"/>
-                            <ListBox Grid.Row="1" x:Name="RegisteredProjectsListBox"
-                                     DisplayMemberPath="Name" SelectionChanged="RegisteredProjectsListBox_SelectionChanged"/>
+                            <DockPanel Grid.Row="0" Margin="0,0,0,10">
+                                <ui:Button DockPanel.Dock="Right" x:Name="RefreshBuildsButton" Content="Refresh"
+                                           Icon="{ui:SymbolIcon ArrowSync24}" Width="110" Click="RefreshBuildsButton_Click"/>
+                                <TextBlock x:Name="BuildHistoryTitleTextBlock" Text="Select a project to see its build history"
+                                           VerticalAlignment="Center" FontWeight="SemiBold"/>
+                            </DockPanel>
+
+                            <DataGrid Grid.Row="1" x:Name="BuildHistoryDataGrid" AutoGenerateColumns="False" CanUserAddRows="False"
+                                      IsReadOnly="True">
+                                <DataGrid.Columns>
+                                    <DataGridTextColumn Header="Version" Binding="{Binding Version}" Width="120"/>
+                                    <DataGridTextColumn Header="Published" Binding="{Binding PublishedAtUtc}" Width="160"/>
+                                    <DataGridTextColumn Header="Published by" Binding="{Binding PublishedBy}" Width="140"/>
+                                    <DataGridTextColumn Header="Latest" Binding="{Binding IsLatest}" Width="60"/>
+                                    <DataGridTextColumn Header="Listed" Binding="{Binding ListInHosting}" Width="60"/>
+                                    <DataGridTemplateColumn Header="Actions" Width="*">
+                                        <DataGridTemplateColumn.CellTemplate>
+                                            <DataTemplate>
+                                                <StackPanel Orientation="Horizontal">
+                                                    <ui:Button Content="Deploy this version" Icon="{ui:SymbolIcon Rocket24}"
+                                                               Width="150" Margin="0,2,6,2" Click="DeployBuildButton_Click"/>
+                                                    <ui:Button Content="Mark latest" Icon="{ui:SymbolIcon Star24}"
+                                                               Width="110" Margin="0,2,6,2" Click="MarkBuildLatestButton_Click"/>
+                                                    <ui:Button Content="Delete" Icon="{ui:SymbolIcon Delete24}"
+                                                               Width="90" Margin="0,2" Click="DeleteBuildButton_Click"/>
+                                                </StackPanel>
+                                            </DataTemplate>
+                                        </DataGridTemplateColumn.CellTemplate>
+                                    </DataGridTemplateColumn>
+                                </DataGrid.Columns>
+                            </DataGrid>
                         </Grid>
                     </Grid>
                 </TabItem>
@@ -572,7 +444,7 @@
                             <TextBlock Text="Remote Build Hosting" FontWeight="SemiBold" Margin="0,0,0,6"/>
                             <TextBlock TextWrapping="Wrap" Margin="0,0,0,10"
                                        Foreground="{DynamicResource TextFillColorSecondaryBrush}"
-                                       Text="Publish straight to a dev server this machine has no filesystem access to, over its /api/builds endpoint. Configure it here, then check &quot;Also upload to remote hosting&quot; on the Publish tab per build -- the local/shared archive always happens either way."/>
+                                       Text="Publish straight to a dev server this machine has no filesystem access to. Configure it here -- whether a given project's builds actually go there is a per-project setting in the Projects tab, not a per-publish choice."/>
                             <Grid>
                                 <Grid.RowDefinitions>
                                     <RowDefinition Height="Auto"/>
@@ -599,6 +471,9 @@
                             </StackPanel>
                             <TextBlock x:Name="RemoteHostingStatusTextBlock" Margin="0,8,0,0" FontSize="12"
                                        Foreground="{DynamicResource TextFillColorSecondaryBrush}" TextWrapping="Wrap"/>
+                            <ui:ToggleSwitch x:Name="UseRemoteModeToggle" Content="Use dev server for projects + IIS tab (all GUI users share this)"
+                                             Margin="0,14,0,0" Checked="UseRemoteModeToggle_Toggled" Unchecked="UseRemoteModeToggle_Toggled"
+                                             ToolTip="When on, the Projects tab and IIS tab read from/manage the dev server above instead of this machine. Independent of whether any individual project uploads/deploys its builds there (set per-project in the Projects tab)."/>
                         </StackPanel>
                     </Grid>
                 </TabItem>

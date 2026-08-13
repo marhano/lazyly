@@ -30,6 +30,16 @@ public sealed class AppSettings
     /// API key for <see cref="RemoteHostingUrl"/>. Never stored in plain text.</summary>
     public string? RemoteHostingProtectedApiKey { get; set; }
 
+    /// <summary>When true: the Projects tab and IIS tab read from/write to the dev server
+    /// (<see cref="RemoteHostingUrl"/>) instead of this machine's local project registry/IIS -- see
+    /// <see cref="Services.ProjectRegistryFactory"/> -- and every publish uploads straight to the
+    /// dev server instead of archiving to this machine's local BuildsRoot at all, see
+    /// <see cref="Services.Publisher"/>. Local IIS deployment
+    /// (<see cref="Models.ProjectConfig.LocalIisDeploymentEnabled"/>) and dev-server auto-deploy
+    /// (<see cref="Models.ProjectConfig.AutoDeployOnPublish"/>) remain independent per-project
+    /// choices on top of this.</summary>
+    public bool UseRemoteMode { get; set; }
+
     public static string DefaultPath => Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
         "PublishTool",
