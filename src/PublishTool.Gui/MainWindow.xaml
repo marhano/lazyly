@@ -428,6 +428,8 @@
                                 <ColumnDefinition Width="160"/>
                                 <ColumnDefinition Width="Auto"/>
                                 <ColumnDefinition Width="220"/>
+                                <ColumnDefinition Width="Auto"/>
+                                <ColumnDefinition Width="150"/>
                             </Grid.ColumnDefinitions>
 
                             <TextBlock Grid.Column="0" Text="Level" VerticalAlignment="Center" Margin="0,0,8,0"/>
@@ -442,8 +444,17 @@
                             </ComboBox>
 
                             <TextBlock Grid.Column="2" Text="Method" VerticalAlignment="Center" Margin="0,0,8,0"/>
-                            <ComboBox Grid.Column="3" x:Name="EventLogMethodFilterComboBox"
+                            <ComboBox Grid.Column="3" x:Name="EventLogMethodFilterComboBox" Margin="0,0,20,0"
                                       SelectedIndex="0" SelectionChanged="EventLogMethodFilterComboBox_SelectionChanged"/>
+
+                            <TextBlock Grid.Column="4" Text="Type" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                            <ComboBox Grid.Column="5" x:Name="EventLogTypeFilterComboBox"
+                                      SelectedIndex="0" SelectionChanged="EventLogTypeFilterComboBox_SelectionChanged">
+                                <ComboBoxItem Content="All types"/>
+                                <ComboBoxItem Content="Response"/>
+                                <ComboBoxItem Content="Payload"/>
+                                <ComboBoxItem Content="Exception"/>
+                            </ComboBox>
                         </Grid>
 
                         <TextBlock Grid.Row="2" x:Name="EventLogStatusTextBlock" Margin="0,10,0,8"
@@ -464,9 +475,9 @@
                                         </DataTemplate>
                                     </DataGridTemplateColumn.CellTemplate>
                                 </DataGridTemplateColumn>
-                                <DataGridTextColumn Header="Source" Binding="{Binding Source}" Width="150"/>
                                 <DataGridTextColumn Header="Event ID" Binding="{Binding EventId}" Width="70"/>
                                 <DataGridTextColumn Header="Method" Binding="{Binding MethodName}" Width="160"/>
+                                <DataGridTextColumn Header="Type" Binding="{Binding MessageType}" Width="90"/>
                                 <DataGridTextColumn Header="Message" Binding="{Binding MessageSummary}" Width="*"/>
                             </DataGrid.Columns>
                         </DataGrid>
@@ -496,6 +507,7 @@
                 <TabItem Header="Settings">
                     <Grid Margin="12">
                         <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto"/>
                             <RowDefinition Height="Auto"/>
                             <RowDefinition Height="Auto"/>
                             <RowDefinition Height="Auto"/>
@@ -538,6 +550,19 @@
                                          Content="Start on Windows startup" Margin="0,20,0,0"
                                          Checked="StartOnStartupToggle_Toggled" Unchecked="StartOnStartupToggle_Toggled"
                                          ToolTip="Closing the window minimizes PublishTool to the system tray instead of exiting -- right-click the tray icon to exit fully."/>
+
+                        <StackPanel Grid.Row="5" Grid.Column="0" Grid.ColumnSpan="2" Margin="0,24,0,0">
+                            <TextBlock Text="Project configs" FontWeight="SemiBold" Margin="0,0,0,6"/>
+                            <TextBlock TextWrapping="Wrap" Margin="0,0,0,10"
+                                       Foreground="{DynamicResource TextFillColorSecondaryBrush}"
+                                       Text="Share project setup with teammates without hand re-entering every field. You choose which projects go in an export, and which imported projects are allowed to overwrite what's already here."/>
+                            <StackPanel Orientation="Horizontal">
+                                <ui:Button x:Name="ExportProjectsButton" Content="Export projects..." Icon="{ui:SymbolIcon ArrowDownload24}"
+                                           Width="160" Click="ExportProjectsButton_Click"/>
+                                <ui:Button x:Name="ImportProjectsButton" Content="Import projects..." Icon="{ui:SymbolIcon ArrowUpload24}"
+                                           Width="160" Margin="10,0,0,0" Click="ImportProjectsButton_Click"/>
+                            </StackPanel>
+                        </StackPanel>
                     </Grid>
                 </TabItem>
 

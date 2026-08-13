@@ -270,6 +270,85 @@ public partial class MainWindow : Wpf.Ui.Controls.FluentWindow
         Process.Start(new ProcessStartInfo { FileName = settings.BuildsRoot, UseShellExecute = true });
     }
 
+    private void ExportProjectsButton_Click(object sender, RoutedEventArgs e)
+    {
+        var registry = new ProjectRegistry(ProjectRegistry.DefaultPath);
+        if (registry.Projects.Count == 0)
+        {
+            MessageBox.Show("There are no registered projects to export yet.", "PublishTool", MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+
+        var pickDialog = new ExportProjectsDialog(registry.Projects.Select(p => p.Name)) { Owner = this };
+        if (pickDialog.ShowDialog() != true)
+        {
+            return;
+        }
+
+        var saveDialog = new SaveFileDialog
+        {
+            Filter = "PublishTool project export (*.ptproj.json)|*.ptproj.json|All files (*.*)|*.*",
+            FileName = pickDialog.SelectedProjectNames.Count == 1
+                ? $"{pickDialog.SelectedProjectNames[0]}.ptproj.json"
+                : "PublishTool-projects.ptproj.json",
+        };
+        if (saveDialog.ShowDialog() != true)
+        {
+            return;
+        }
+
+        try
+        {
+            var projects = pickDialog.SelectedProjectNames
+                .Select(name => registry.Get(name))
+                .Where(p => p is not null)
+                .Select(p => p!);
+
+            ProjectConfigPortability.Export(projects, saveDialog.FileName);
+            _output.Info($"Exported {pickDialog.SelectedProjectNames.Count} project(s) to {saveDialog.FileName}");
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show($"Couldn't export: {ex.Message}", "PublishTool", MessageBoxButton.OK, MessageBoxImage.Error);
+        }
+    }
+
+    private void ImportProjectsButton_Click(object sender, RoutedEventArgs e)
+    {
+        var openDialog = new OpenFileDialog
+        {
+            Filter = "PublishTool project export (*.ptproj.json;*.json)|*.ptproj.json;*.json|All files (*.*)|*.*",
+        };
+        if (openDialog.ShowDialog() != true)
+        {
+            return;
+        }
+
+        ProjectConfigExportFile file;
+        try
+        {
+            file = ProjectConfigPortability.Load(openDialog.FileName);
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show($"Couldn't read that file: {ex.Message}", "PublishTool", MessageBoxButton.OK, MessageBoxImage.Error);
+            return;
+        }
+
+        var registry = new ProjectRegistry(ProjectRegistry.DefaultPath);
+        var preview = ProjectConfigPortability.Preview(file, registry);
+
+        var previewDialog = new ImportProjectsDialog(file, preview) { Owner = this };
+        if (previewDialog.ShowDialog() != true)
+        {
+            return;
+        }
+
+        ProjectConfigPortability.Import(file, registry, previewDialog.SelectedProjectNames);
+        _output.Info($"Imported {previewDialog.SelectedProjectNames.Count} project(s) from {openDialog.FileName}");
+        RefreshProjects();
+    }
+
     private void ToggleOutputButton_Click(object sender, RoutedEventArgs e)
     {
         var isCurrentlyVisible = OutputPanel.Visibility == Visibility.Visible;
@@ -1432,6 +1511,8 @@ public partial class MainWindow : Wpf.Ui.Controls.FluentWindow
 
     private void EventLogMethodFilterComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e) => ApplyEventLogFilter();
 
+    private void EventLogTypeFilterComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e) => ApplyEventLogFilter();
+
     private void ApplyEventLogFilter()
     {
         if (_eventLogView is null)
@@ -1442,11 +1523,13 @@ public partial class MainWindow : Wpf.Ui.Controls.FluentWindow
         var search = EventLogSearchTextBox.Text?.Trim() ?? string.Empty;
         var levelFilter = (EventLogLevelFilterComboBox.SelectedItem as ComboBoxItem)?.Content as string;
         var methodFilter = EventLogMethodFilterComboBox.SelectedItem as string;
+        var typeFilter = (EventLogTypeFilterComboBox.SelectedItem as ComboBoxItem)?.Content as string;
 
         _eventLogView.Filter = item =>
             item is EventLogRowViewModel row &&
             (string.IsNullOrWhiteSpace(levelFilter) || levelFilter == "All levels" || string.Equals(row.Level, levelFilter, StringComparison.OrdinalIgnoreCase)) &&
             (string.IsNullOrWhiteSpace(methodFilter) || methodFilter == "All methods" || string.Equals(row.MethodName, methodFilter, StringComparison.OrdinalIgnoreCase)) &&
+            (string.IsNullOrWhiteSpace(typeFilter) || typeFilter == "All types" || string.Equals(row.MessageType, typeFilter, StringComparison.OrdinalIgnoreCase)) &&
             (string.IsNullOrWhiteSpace(search) || row.MatchesSearch(search));
 
         var visibleCount = _eventLogRows.Count(row => _eventLogView.Filter(row));

@@ -12,18 +12,19 @@ public sealed class EventLogRowViewModel
     // Same three message shapes OmniBusiness's own EventLogService looks for (its
     // OPIBizAPIService.cs embeds the calling method's nameof(...) into these fixed sentences).
     // Anything else just doesn't get a MethodName -- it still shows up in the grid, it's only
-    // excluded from the Method filter, same as the reference behaves.
-    private static readonly Regex[] MethodNamePatterns =
+    // excluded from the Method filter, same as the reference behaves. Each pattern also tags
+    // what kind of entry it is, for the Type column.
+    private static readonly (Regex Pattern, string Kind)[] MethodNamePatterns =
     {
-        new(@"Request payload for (\w+):", RegexOptions.Compiled),
-        new(@"API Response for (\w+):", RegexOptions.Compiled),
-        new(@"Exception occured during OPIBiz API (\w+) call:", RegexOptions.Compiled),
+        (new(@"Request payload for (\w+):", RegexOptions.Compiled), "Payload"),
+        (new(@"API Response for (\w+):", RegexOptions.Compiled), "Response"),
+        (new(@"Exception occured during OPIBiz API (\w+) call:", RegexOptions.Compiled), "Exception"),
     };
 
     public EventLogRowViewModel(EventLogEntryRecord record)
     {
         Record = record;
-        MethodName = ExtractMethodName(record.Message);
+        (MethodName, MessageType) = ExtractMethodInfo(record.Message);
     }
 
     public EventLogEntryRecord Record { get; }
@@ -44,6 +45,11 @@ public sealed class EventLogRowViewModel
     /// it doesn't match a known shape.</summary>
     public string? MethodName { get; }
 
+    /// <summary>"Payload", "Response", or "Exception", extracted from the message body via
+    /// <see cref="MethodNamePatterns"/> alongside <see cref="MethodName"/>; null if it doesn't
+    /// match a known shape.</summary>
+    public string? MessageType { get; }
+
     public Brush LevelBackground => LevelBrushes.GetBackground(Record.Level);
 
     public Brush LevelForeground => LevelBrushes.GetForeground(Record.Level);
@@ -54,18 +60,18 @@ public sealed class EventLogRowViewModel
         Record.Source.Contains(search, StringComparison.OrdinalIgnoreCase) ||
         Record.Level.Contains(search, StringComparison.OrdinalIgnoreCase);
 
-    private static string? ExtractMethodName(string message)
+    private static (string? MethodName, string? MessageType) ExtractMethodInfo(string message)
     {
-        foreach (var pattern in MethodNamePatterns)
+        foreach (var (pattern, kind) in MethodNamePatterns)
         {
             var match = pattern.Match(message);
             if (match.Success)
             {
-                return match.Groups[1].Value;
+                return (match.Groups[1].Value, kind);
             }
         }
 
-        return null;
+        return (null, null);
     }
 
     private static string Truncate(string text, int maxLength)

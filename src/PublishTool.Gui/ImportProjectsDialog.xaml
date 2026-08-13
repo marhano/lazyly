@@ -1,0 +1,48 @@
+<ui:FluentWindow x:Class="PublishTool.Gui.ImportProjectsDialog"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:ui="http://schemas.lepo.co/wpfui/2022/xaml"
+        mc:Ignorable="d"
+        Title="Import Project Configs" Height="480" Width="460"
+        WindowStartupLocation="CenterOwner"
+        ResizeMode="NoResize">
+    <Grid Margin="20">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <TextBlock Grid.Row="0" x:Name="IntroTextBlock" TextWrapping="Wrap" Margin="0,0,0,12"
+                   Foreground="{DynamicResource TextFillColorSecondaryBrush}"/>
+
+        <StackPanel Grid.Row="1" Orientation="Horizontal" Margin="0,0,0,8">
+            <ui:Button Content="Select all" Click="SelectAllButton_Click" Margin="0,0,8,0"/>
+            <ui:Button Content="Select none" Click="SelectNoneButton_Click"/>
+        </StackPanel>
+
+        <Border Grid.Row="2" BorderThickness="1" CornerRadius="6"
+                BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}">
+            <ListBox x:Name="ProjectsListBox" BorderThickness="0">
+                <ListBox.ItemTemplate>
+                    <DataTemplate>
+                        <StackPanel Orientation="Horizontal" Margin="4">
+                            <CheckBox IsChecked="{Binding IsChecked, Mode=TwoWay}" VerticalAlignment="Center"/>
+                            <TextBlock Text="{Binding Name}" VerticalAlignment="Center" Margin="6,0,8,0"/>
+                            <TextBlock Text="{Binding StatusText}" VerticalAlignment="Center"
+                                       Foreground="#B8721A" FontSize="12"/>
+                        </StackPanel>
+                    </DataTemplate>
+                </ListBox.ItemTemplate>
+            </ListBox>
+        </Border>
+
+        <StackPanel Grid.Row="3" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,14,0,0">
+            <ui:Button Content="Cancel" Click="CancelButton_Click" Margin="0,0,8,0"/>
+            <ui:Button Content="Import" Appearance="Primary" Click="ImportButton_Click"/>
+        </StackPanel>
+    </Grid>
+</ui:FluentWindow>
