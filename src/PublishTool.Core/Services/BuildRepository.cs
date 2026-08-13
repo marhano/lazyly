@@ -91,6 +91,30 @@ public sealed class BuildRepository
         return new BuildArchiveResult(zipPath, manifestPath, releaseNotesPath);
     }
 
+    /// <summary>
+    /// Resolves the paths an upload for this exact project+version should write to: an existing
+    /// build's own paths if one is already there (so uploading the same version again overwrites
+    /// it in place instead of creating a duplicate, matching how <see cref="Publisher"/> already
+    /// treats a republish of the same version), or freshly reserved ones otherwise. This is the
+    /// one place every upload entry point (the manual Upload form, the build-files upload, and the
+    /// remote hosting API) decides "new build or overwrite?".
+    /// </summary>
+    public BuildArchiveResult ResolvePaths(string buildsRoot, string projectName, string version)
+    {
+        var existing = FindBuild(buildsRoot, projectName, version);
+        if (existing is null)
+        {
+            return ReservePaths(buildsRoot, projectName, version);
+        }
+
+        // Pre-this-feature manifests may not have a release notes path yet -- fall back to the
+        // naming convention derived from the existing zip, same as Publisher does.
+        var releaseNotesPath = existing.Manifest.ReleaseNotesPath
+            ?? Path.ChangeExtension(existing.Manifest.ZipPath, null) + ".releasenotes.txt";
+
+        return new BuildArchiveResult(existing.Manifest.ZipPath, existing.ManifestPath, releaseNotesPath);
+    }
+
     public void WriteManifest(string manifestPath, BuildManifest manifest)
     {
         File.WriteAllText(manifestPath, JsonSerializer.Serialize(manifest, JsonOptions));
@@ -134,15 +158,90 @@ public sealed class BuildRepository
         File.WriteAllText(releaseNotesPath, content);
     }
 
-    public IReadOnlyList<BuildManifest> ListBuilds(string buildsRoot, string? projectName = null)
+    /// <summary>Deletes a build entirely: its zip, its release notes (if any), and the manifest
+    /// itself. Identified by the manifest's own path rather than project+version, since more than
+    /// one manifest can exist for the same version (see <see cref="FindBuild"/>) -- this always
+    /// removes exactly the one build the manifest path points to. A no-op if the manifest is
+    /// already gone.</summary>
+    public void DeleteBuild(string manifestPath)
+    {
+        if (!File.Exists(manifestPath))
+        {
+            return;
+        }
+
+        var manifest = JsonSerializer.Deserialize<BuildManifest>(File.ReadAllText(manifestPath));
+        if (manifest is not null)
+        {
+            if (File.Exists(manifest.ZipPath))
+            {
+                File.Delete(manifest.ZipPath);
+            }
+
+            if (manifest.ReleaseNotesPath is not null && File.Exists(manifest.ReleaseNotesPath))
+            {
+                File.Delete(manifest.ReleaseNotesPath);
+            }
+        }
+
+        File.Delete(manifestPath);
+    }
+
+    /// <summary>Updates just <see cref="BuildManifest.ListInHosting"/> and/or
+    /// <see cref="BuildManifest.IsLatest"/> on an existing build without touching its zip/release
+    /// notes. Setting <paramref name="isLatest"/> to true delegates to <see cref="SetLatest"/> (which
+    /// un-flags every other build for the project) rather than duplicating that logic here. Returns
+    /// null if the manifest doesn't exist.</summary>
+    public BuildManifest? UpdateMetadata(string buildsRoot, string projectName, string manifestPath, bool? listInHosting, bool? isLatest)
+    {
+        if (!File.Exists(manifestPath))
+        {
+            return null;
+        }
+
+        var manifest = JsonSerializer.Deserialize<BuildManifest>(File.ReadAllText(manifestPath));
+        if (manifest is null)
+        {
+            return null;
+        }
+
+        if (listInHosting.HasValue)
+        {
+            manifest.ListInHosting = listInHosting.Value;
+        }
+
+        if (isLatest == false)
+        {
+            manifest.IsLatest = false;
+        }
+
+        WriteManifest(manifestPath, manifest);
+
+        if (isLatest == true)
+        {
+            SetLatest(buildsRoot, projectName, manifestPath);
+            manifest.IsLatest = true;
+        }
+
+        return manifest;
+    }
+
+    public IReadOnlyList<BuildManifest> ListBuilds(string buildsRoot, string? projectName = null) =>
+        ListBuildsWithPaths(buildsRoot, projectName).Select(b => b.Manifest).ToList();
+
+    /// <summary>Same listing as <see cref="ListBuilds"/>, but keeps each manifest's own file path
+    /// alongside it -- needed by anything that has to act on one specific build afterward (delete,
+    /// update, or an API response's <c>ManifestPath</c> token), since project+version alone isn't
+    /// guaranteed unique (see <see cref="FindBuild"/>).</summary>
+    public IReadOnlyList<(BuildManifest Manifest, string ManifestPath)> ListBuildsWithPaths(string buildsRoot, string? projectName = null)
     {
         if (!Directory.Exists(buildsRoot))
         {
-            return Array.Empty<BuildManifest>();
+            return Array.Empty<(BuildManifest, string)>();
         }
 
         var manifestFiles = Directory.EnumerateFiles(buildsRoot, "*.manifest.json", SearchOption.AllDirectories);
-        var manifests = new List<BuildManifest>();
+        var results = new List<(BuildManifest Manifest, string ManifestPath)>();
 
         foreach (var file in manifestFiles)
         {
@@ -157,11 +256,11 @@ public sealed class BuildRepository
                 continue;
             }
 
-            manifests.Add(manifest);
+            results.Add((manifest, file));
         }
 
-        return manifests
-            .OrderByDescending(m => m.PublishedAtUtc)
+        return results
+            .OrderByDescending(b => b.Manifest.PublishedAtUtc)
             .ToList();
     }
 

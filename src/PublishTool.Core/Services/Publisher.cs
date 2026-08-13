@@ -12,6 +12,7 @@ public sealed class Publisher
     private readonly BuildRepository _buildRepository;
     private readonly IisSiteManager _iisSiteManager;
     private readonly GitService _git;
+    private readonly RemoteHostingClient _remoteHostingClient;
 
     public Publisher(ProjectRegistry registry, IOutputSink output)
     {
@@ -22,6 +23,7 @@ public sealed class Publisher
         _buildRepository = new BuildRepository();
         _iisSiteManager = new IisSiteManager(output);
         _git = new GitService(output);
+        _remoteHostingClient = new RemoteHostingClient();
     }
 
     public async Task<string> PublishAsync(PublishOptions options, CancellationToken ct = default)
@@ -165,6 +167,20 @@ public sealed class Publisher
             }
 
             _output.Info($"Archived to {zipPath}");
+
+            if (options.PublishToRemoteHosting)
+            {
+                if (string.IsNullOrWhiteSpace(options.RemoteHostingUrl))
+                {
+                    throw new InvalidOperationException(
+                        "\"Also upload to remote hosting\" is checked, but no Remote Hosting URL is configured in Settings.");
+                }
+
+                _output.Stage("Uploading to remote hosting...");
+                await _remoteHostingClient.UploadBuildAsync(
+                    options.RemoteHostingUrl, options.RemoteHostingApiKey, zipPath, manifestPath, writtenReleaseNotesPath, ct);
+                _output.Info("Uploaded to remote hosting.");
+            }
 
             if (project.AutoCreateIisSite)
             {

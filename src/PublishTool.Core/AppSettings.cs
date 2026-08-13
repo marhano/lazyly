@@ -20,6 +20,16 @@ public sealed class AppSettings
     /// <summary>Hex accent color (from <see cref="AccentPresets"/>); null uses WPF-UI's default.</summary>
     public string? AccentColor { get; set; }
 
+    /// <summary>Base URL of a Remote Build Hosting API (a PublishTool.Hosting instance's
+    /// <c>/api/builds</c> surface), for publishing straight to a dev server this machine has no
+    /// filesystem access to. Null/empty means the feature is unconfigured -- the Publish tab's
+    /// "Also upload to remote hosting" toggle is disabled in that case.</summary>
+    public string? RemoteHostingUrl { get; set; }
+
+    /// <summary>DPAPI-protected (current-user-scoped, <see cref="Services.SecretProtector.RemoteHostingPurpose"/>)
+    /// API key for <see cref="RemoteHostingUrl"/>. Never stored in plain text.</summary>
+    public string? RemoteHostingProtectedApiKey { get; set; }
+
     public static string DefaultPath => Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
         "PublishTool",

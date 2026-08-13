@@ -18,9 +18,9 @@
 </div>
 
 <div class="pt-page">
-    @if (TempData["UploadSuccessMessage"] is string uploadSuccessMessage)
+    @if (TempData["StatusMessage"] is string statusMessage)
     {
-        <div class="pt-alert pt-alert-success">@uploadSuccessMessage</div>
+        <div class="pt-alert pt-alert-success">@statusMessage</div>
     }
 
     @if (Model.BuildsRootNotConfigured)

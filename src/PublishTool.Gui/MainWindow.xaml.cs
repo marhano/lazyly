@@ -185,6 +185,21 @@ public partial class MainWindow : Wpf.Ui.Controls.FluentWindow
         BuildsRootTextBox.Text = settings.BuildsRoot;
         DarkModeToggle.IsChecked = ApplicationThemeManager.GetAppTheme() == ApplicationTheme.Dark;
         StartOnStartupToggle.IsChecked = IsStartupEnabled();
+
+        // Never re-display the saved API key itself -- the box always starts empty; leaving it
+        // empty on Save keeps whatever's already saved, typing a new value replaces it.
+        RemoteHostingUrlTextBox.Text = settings.RemoteHostingUrl ?? string.Empty;
+        RemoteHostingStatusTextBlock.Text = string.Empty;
+
+        var remoteHostingConfigured = !string.IsNullOrWhiteSpace(settings.RemoteHostingUrl);
+        PublishToRemoteHostingToggle.IsEnabled = remoteHostingConfigured;
+        PublishToRemoteHostingToggle.ToolTip = remoteHostingConfigured
+            ? "Also upload this build to the configured Remote Build Hosting API."
+            : "Configure a Remote Hosting URL in Settings first.";
+        if (!remoteHostingConfigured)
+        {
+            PublishToRemoteHostingToggle.IsChecked = false;
+        }
     }
 
     private async void DarkModeToggle_Toggled(object sender, RoutedEventArgs e)
@@ -347,6 +362,63 @@ public partial class MainWindow : Wpf.Ui.Controls.FluentWindow
         ProjectConfigPortability.Import(file, registry, previewDialog.SelectedProjectNames);
         _output.Info($"Imported {previewDialog.SelectedProjectNames.Count} project(s) from {openDialog.FileName}");
         RefreshProjects();
+    }
+
+    private void SaveRemoteHostingButton_Click(object sender, RoutedEventArgs e)
+    {
+        var settings = AppSettings.Load(AppSettings.DefaultPath);
+        settings.RemoteHostingUrl = string.IsNullOrWhiteSpace(RemoteHostingUrlTextBox.Text) ? null : RemoteHostingUrlTextBox.Text.Trim();
+
+        // Empty box keeps whatever's already saved -- the box never shows the real key back, so
+        // "empty" can't be distinguished from "didn't mean to change it" any other way.
+        if (!string.IsNullOrEmpty(RemoteHostingApiKeyBox.Password))
+        {
+            settings.RemoteHostingProtectedApiKey = SecretProtector.Protect(RemoteHostingApiKeyBox.Password, SecretProtector.RemoteHostingPurpose);
+        }
+
+        settings.Save(AppSettings.DefaultPath);
+        RemoteHostingApiKeyBox.Password = string.Empty;
+        RemoteHostingStatusTextBlock.Text = "Saved.";
+        LoadSettingsIntoForm();
+    }
+
+    private async void TestRemoteHostingButton_Click(object sender, RoutedEventArgs e)
+    {
+        var url = RemoteHostingUrlTextBox.Text?.Trim();
+        if (string.IsNullOrWhiteSpace(url))
+        {
+            MessageBox.Show("Enter a Remote Hosting URL first.", "PublishTool", MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
+        }
+
+        // Test whatever's in the box right now if the user typed a new key without saving yet;
+        // otherwise fall back to whatever's already saved, same as a real publish would use.
+        string? apiKey;
+        if (!string.IsNullOrEmpty(RemoteHostingApiKeyBox.Password))
+        {
+            apiKey = RemoteHostingApiKeyBox.Password;
+        }
+        else
+        {
+            var settings = AppSettings.Load(AppSettings.DefaultPath);
+            apiKey = settings.RemoteHostingProtectedApiKey is null
+                ? null
+                : SecretProtector.TryUnprotect(settings.RemoteHostingProtectedApiKey, SecretProtector.RemoteHostingPurpose);
+        }
+
+        RemoteHostingStatusTextBlock.Text = "Testing...";
+        TestRemoteHostingButton.IsEnabled = false;
+        try
+        {
+            var ok = await new RemoteHostingClient().PingAsync(url, apiKey);
+            RemoteHostingStatusTextBlock.Text = ok
+                ? "Connected -- URL and API key are accepted."
+                : "Couldn't connect -- check the URL and API key, and that the server is reachable.";
+        }
+        finally
+        {
+            TestRemoteHostingButton.IsEnabled = true;
+        }
     }
 
     private void ToggleOutputButton_Click(object sender, RoutedEventArgs e)
@@ -1029,6 +1101,11 @@ public partial class MainWindow : Wpf.Ui.Controls.FluentWindow
         if (MarkAsLatestToggle.IsChecked == true)
         {
             args.Add("--mark-latest");
+        }
+
+        if (PublishToRemoteHostingToggle.IsChecked == true)
+        {
+            args.Add("--publish-to-remote-hosting");
         }
 
         if (AppConfigExpander.Visibility == Visibility.Visible)

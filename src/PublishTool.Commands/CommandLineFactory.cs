@@ -71,6 +71,11 @@ public static class CommandLineFactory
             Description = "Flag this build as the project's \"latest release\" on the hosting site, " +
                            "un-flagging whichever build previously held that. At most one build per project can be latest.",
         };
+        var publishToRemoteHostingOption = new Option<bool>("--publish-to-remote-hosting")
+        {
+            Description = "Also upload this build to the Remote Build Hosting API configured in Settings, in addition to " +
+                           "the usual local/shared BuildsRoot archive. Requires a Remote Hosting URL to be configured first.",
+        };
 
         var command = new Command("publish", "Publish a registered project: build, archive, and deploy to IIS.");
         command.Add(projectOption);
@@ -82,6 +87,7 @@ public static class CommandLineFactory
         command.Add(backlogItemOption);
         command.Add(appConfigSettingOption);
         command.Add(markLatestOption);
+        command.Add(publishToRemoteHostingOption);
 
         command.SetAction(async (parseResult, ct) =>
         {
@@ -101,6 +107,13 @@ public static class CommandLineFactory
                 ReleaseNotesOtherUpdates = (parseResult.GetValue(otherUpdateOption) ?? Array.Empty<string>()).ToList(),
                 ReleaseNotesBacklogItems = (parseResult.GetValue(backlogItemOption) ?? Array.Empty<string>()).ToList(),
                 MarkAsLatest = parseResult.GetValue(markLatestOption),
+                PublishToRemoteHosting = parseResult.GetValue(publishToRemoteHostingOption),
+                RemoteHostingUrl = settings.RemoteHostingUrl,
+#pragma warning disable CA1416 // DPAPI (SecretProtector) is Windows-only; this whole tool (MSBuild, IIS, appcmd) only ever runs on Windows despite PublishTool.Commands' plain net8.0 TFM.
+                RemoteHostingApiKey = settings.RemoteHostingProtectedApiKey is null
+                    ? null
+                    : SecretProtector.TryUnprotect(settings.RemoteHostingProtectedApiKey, SecretProtector.RemoteHostingPurpose),
+#pragma warning restore CA1416
             };
 
             try

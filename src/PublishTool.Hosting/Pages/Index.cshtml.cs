@@ -4,6 +4,11 @@ using PublishTool.Core.Services;
 
 namespace PublishTool.Hosting.Pages;
 
+/// <summary>
+/// View, download, and upload only -- this is the human-facing side of the build archive. Delete
+/// and update live exclusively behind the API (<c>/api/builds</c>), for the dev team's GUI to use;
+/// intentionally not exposed here.
+/// </summary>
 public class IndexModel : PageModel
 {
     private readonly IConfiguration _configuration;

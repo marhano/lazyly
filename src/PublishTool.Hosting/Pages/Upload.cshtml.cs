@@ -129,16 +129,16 @@ public class UploadModel : PageModel
         }
 
         // Defense in depth beyond IsValidPathSegment -- confirm the resolved path still lands
-        // inside BuildsRoot, the same check /download applies to its own path parameter.
-        var normalizedRoot = Path.GetFullPath(buildsRoot) + Path.DirectorySeparatorChar;
-        var projectDir = Path.GetFullPath(Path.Combine(buildsRoot, ProjectName));
-        if (!projectDir.StartsWith(normalizedRoot, StringComparison.OrdinalIgnoreCase))
+        // inside BuildsRoot, the same check every other path-taking endpoint applies.
+        if (!SafeBuildPath.IsValidProjectName(buildsRoot, ProjectName))
         {
             ErrorMessage = "Invalid project name.";
             return Page();
         }
 
-        var paths = _buildRepository.ReservePaths(buildsRoot, ProjectName, Version);
+        // Same version uploaded again overwrites in place instead of creating a duplicate --
+        // matches how a republish of the same version already behaves.
+        var paths = _buildRepository.ResolvePaths(buildsRoot, ProjectName, Version);
 
         await using (var fileStream = System.IO.File.Create(paths.ZipPath))
         {
@@ -187,7 +187,7 @@ public class UploadModel : PageModel
             _buildRepository.SetLatest(buildsRoot, ProjectName, paths.ManifestPath);
         }
 
-        TempData["UploadSuccessMessage"] = $"Uploaded {ProjectName} v{Version}.";
+        TempData["StatusMessage"] = $"Uploaded {ProjectName} v{Version}.";
         return RedirectToPage("/Index");
     }
 
