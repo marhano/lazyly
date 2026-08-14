@@ -1,0 +1,52 @@
+name: Release GUI
+
+# Cutting a release: bump <Version> in src/PublishTool.Gui/PublishTool.Gui.csproj, commit, then
+#   git tag v1.2.0 && git push --tags
+# This workflow does the rest -- see src/PublishTool.Gui/README.md for the full process and a
+# manual local fallback.
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+
+      - name: Derive version from tag
+        id: version
+        shell: pwsh
+        run: |
+          $tag = "${{ github.ref_name }}"
+          $version = $tag -replace '^v', ''
+          "version=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+
+      - name: Install vpk
+        run: dotnet tool install -g vpk
+
+      - name: Publish
+        run: >
+          dotnet publish src/PublishTool.Gui/PublishTool.Gui.csproj
+          -c Release -r win-x64 --self-contained true
+          -p:PublishSingleFile=false
+          -p:Version=${{ steps.version.outputs.version }}
+          -o publish/PublishTool.Gui
+
+      - name: Pack with vpk
+        run: >
+          vpk pack -u PublishTool.Gui -v ${{ steps.version.outputs.version }}
+          -p publish/PublishTool.Gui -e PublishTool.Gui.exe
+
+      - name: Upload release to GitHub
+        run: >
+          vpk upload github --repoUrl https://github.com/marhano/lazyly
+          --tag ${{ github.ref_name }} --publish true --token ${{ secrets.GITHUB_TOKEN }}

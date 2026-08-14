@@ -20,6 +20,10 @@ public partial class App : Application
         // down whatever the user had in progress (unsaved form fields, an in-flight publish) with
         // no explanation. Show what happened instead and keep running wherever that's possible.
         DispatcherUnhandledException += OnDispatcherUnhandledException;
+
+        // No StartupUri (Program.cs is the real entry point now, ahead of VelopackApp's own
+        // startup hook), so the main window has to be shown explicitly.
+        new MainWindow().Show();
     }
 
     private void OnDispatcherUnhandledException(object sender, DispatcherUnhandledExceptionEventArgs e)

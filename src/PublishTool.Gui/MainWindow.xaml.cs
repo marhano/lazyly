@@ -36,6 +36,11 @@ public partial class MainWindow : Wpf.Ui.Controls.FluentWindow
     private readonly HashSet<string> _currentProjectBranches = new(StringComparer.OrdinalIgnoreCase);
     private bool _isBusy;
     private bool _isExiting;
+    // Set once a background update check finds and finishes downloading a new version. Applied
+    // immediately if the user picks "Restart Now" in UpdateAvailableDialog, or on the next real
+    // exit (ExitFromTray) if they picked "Later" -- never during a tray-hide.
+    private Velopack.UpdateManager? _pendingUpdateManager;
+    private Velopack.UpdateInfo? _pendingUpdateInfo;
     private string? _lastSelectedProjectForForm;
     private GridLength _savedOutputColumnWidth = new(380);
     private readonly List<EventLogRowViewModel> _eventLogRows = new();
@@ -90,6 +95,7 @@ public partial class MainWindow : Wpf.Ui.Controls.FluentWindow
             await RefreshProjectsAsync();
             await RefreshEnvironmentsAsync();
             await RefreshDependenciesAsync(showDialogIfMissing: true);
+            await CheckForUpdatesAsync();
         };
     }
 
@@ -148,8 +154,69 @@ public partial class MainWindow : Wpf.Ui.Controls.FluentWindow
 
     private void ExitFromTray()
     {
+        // Apply any update that was downloaded and deferred (user picked "Later" in
+        // UpdateAvailableDialog) now, since this is a real exit and not just a tray-hide.
+        if (_pendingUpdateManager is not null && _pendingUpdateInfo is not null)
+        {
+            _pendingUpdateManager.WaitExitThenApplyUpdates(_pendingUpdateInfo.TargetFullRelease);
+        }
+
         _isExiting = true;
         Close();
+    }
+
+    // Runs unattended on every launch: silent if there's nothing new, and still silent while
+    // downloading (aside from the status bar) once something is found -- the only thing the user
+    // actually sees is UpdateAvailableDialog, and only once a new version is fully staged and
+    // ready to go.
+    private async Task CheckForUpdatesAsync()
+    {
+        try
+        {
+            var mgr = new Velopack.UpdateManager(new Velopack.Sources.GithubSource("https://github.com/marhano/lazyly", null, false));
+            if (!mgr.IsInstalled)
+            {
+                // Running from `dotnet run`/a loose build rather than a Velopack-installed copy --
+                // there's no installed app for an update to apply to.
+                return;
+            }
+
+            var newVersion = await mgr.CheckForUpdatesAsync();
+            if (newVersion is null)
+            {
+                return;
+            }
+
+            var previousStatus = StatusTextBlock.Text;
+            PublishProgressBar.Visibility = Visibility.Visible;
+            StatusTextBlock.Text = "Downloading update...";
+            try
+            {
+                await mgr.DownloadUpdatesAsync(newVersion);
+            }
+            finally
+            {
+                PublishProgressBar.Visibility = Visibility.Collapsed;
+                StatusTextBlock.Text = previousStatus;
+            }
+
+            _pendingUpdateManager = mgr;
+            _pendingUpdateInfo = newVersion;
+
+            var versionText = newVersion.TargetFullRelease.Version.ToString();
+            var releaseNotes = newVersion.TargetFullRelease.NotesMarkdown;
+            var dialog = new UpdateAvailableDialog(versionText, releaseNotes) { Owner = this };
+            if (dialog.ShowDialog() == true)
+            {
+                mgr.ApplyUpdatesAndRestart(newVersion.TargetFullRelease);
+            }
+        }
+        catch (Exception ex)
+        {
+            // Update checks are best-effort background work -- a network hiccup or an
+            // unreachable/still-private repo shouldn't interrupt anything the user is doing.
+            _output.Info($"Update check failed: {ex.Message}");
+        }
     }
 
     private const string StartupRegistryKeyPath = @"Software\Microsoft\Windows\CurrentVersion\Run";

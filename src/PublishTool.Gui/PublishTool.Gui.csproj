@@ -15,6 +15,7 @@
   </ItemGroup>
   <ItemGroup>
     <PackageReference Include="WPF-UI" Version="4.3.0" />
+    <PackageReference Include="Velopack" Version="1.2.0" />
   </ItemGroup>
 
   <PropertyGroup>
@@ -25,11 +26,23 @@
     <UseWPF>true</UseWPF>
     <ApplicationIcon>Assets\app.ico</ApplicationIcon>
     <!-- The app's own version, shown in the Help tab: bump this by hand on notable releases. -->
-    <Version>1.1.0</Version>
+    <Version>1.2.0</Version>
   </PropertyGroup>
 
   <ItemGroup>
     <Resource Include="Assets\app.ico" />
+  </ItemGroup>
+
+  <!--
+    App.xaml normally compiles as ApplicationDefinition, which makes the SDK auto-generate a
+    Main() that constructs App and calls Run() before anything else gets a chance to run.
+    Velopack's own startup hook (VelopackApp.Build().Run() in Program.cs) has to execute before
+    that, so App.xaml is demoted to a plain Page here (still generates InitializeComponent,
+    just not a competing Main), and Program.cs supplies the real entry point instead.
+  -->
+  <ItemGroup>
+    <ApplicationDefinition Remove="App.xaml" />
+    <Page Include="App.xaml" />
   </ItemGroup>
 
 </Project>

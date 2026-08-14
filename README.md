@@ -26,6 +26,7 @@ src/
                           Command tab so both surfaces run identical parsing/handlers.
   PublishTool.Cli/       Console entry point.
   PublishTool.Gui/       WPF app: Publish / Projects / Settings / IIS / Event Logs / Command tabs.
+                          Self-updates via Velopack + GitHub Releases -- see its own README.md.
   PublishTool.Hosting/   ASP.NET Core dev server: build archive site + key-protected /api/*
                           surface (upload, shared project registry, remote deploy, remote IIS).
                           See its own README.md for deployment steps.
