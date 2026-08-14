@@ -10,8 +10,10 @@ common actions plus an embedded command panel that runs the exact same commands 
 
 ## Status
 
-The publisher (this repo) is done and in real use. A separate build-hosting web app — where the
-team browses/downloads the archived builds over IIS — hasn't been started yet.
+The publisher (this repo) is done and in real use, including a build-hosting web app
+(`PublishTool.Hosting`) where the team browses/downloads archived builds and PublishTool's
+GUI/CLI can publish straight to a shared dev server. See
+[`src/PublishTool.Hosting/README.md`](src/PublishTool.Hosting/README.md) for how to deploy it.
 
 ## Solution layout
 
@@ -23,7 +25,10 @@ src/
   PublishTool.Commands/  System.CommandLine command tree, shared by the CLI and the GUI's
                           Command tab so both surfaces run identical parsing/handlers.
   PublishTool.Cli/       Console entry point.
-  PublishTool.Gui/       WPF app: Publish / Add Project / Settings / Command tabs.
+  PublishTool.Gui/       WPF app: Publish / Projects / Settings / IIS / Event Logs / Command tabs.
+  PublishTool.Hosting/   ASP.NET Core dev server: build archive site + key-protected /api/*
+                          surface (upload, shared project registry, remote deploy, remote IIS).
+                          See its own README.md for deployment steps.
 ```
 
 ## Requirements
