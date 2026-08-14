@@ -219,30 +219,55 @@ public partial class MainWindow : Wpf.Ui.Controls.FluentWindow
         }
     }
 
-    private const string StartupRegistryKeyPath = @"Software\Microsoft\Windows\CurrentVersion\Run";
-    private const string StartupValueName = "PublishTool";
+    private const string StartupTaskName = "PublishTool";
 
+    // PublishTool requires Administrator (see app.manifest), which rules out the classic
+    // HKCU...\Run registry approach for "start at login" -- Windows deliberately never elevates
+    // anything launched from that key, so an admin-required exe placed there would just silently
+    // fail to start with no error shown anywhere. A Scheduled Task with "run with highest
+    // privileges" is the standard workaround: for an account that's already an administrator, it
+    // launches elevated at logon without a UAC prompt.
     private static bool IsStartupEnabled()
     {
-        using var key = Registry.CurrentUser.OpenSubKey(StartupRegistryKeyPath, writable: false);
-        return key?.GetValue(StartupValueName) is not null;
+        var (exitCode, _) = RunSchtasks("/Query", "/TN", StartupTaskName);
+        return exitCode == 0;
     }
 
     private static void SetStartupEnabled(bool enabled)
     {
-        using var key = Registry.CurrentUser.CreateSubKey(StartupRegistryKeyPath);
-
         if (!enabled)
         {
-            key.DeleteValue(StartupValueName, throwOnMissingValue: false);
+            RunSchtasks("/Delete", "/TN", StartupTaskName, "/F");
             return;
         }
 
         var exePath = Process.GetCurrentProcess().MainModule?.FileName;
-        if (exePath is not null)
+        if (exePath is null)
         {
-            key.SetValue(StartupValueName, $"\"{exePath}\"");
+            return;
         }
+
+        RunSchtasks("/Create", "/TN", StartupTaskName, "/TR", $"\"{exePath}\"", "/SC", "ONLOGON", "/RL", "HIGHEST", "/F");
+    }
+
+    private static (int ExitCode, string Output) RunSchtasks(params string[] arguments)
+    {
+        var psi = new ProcessStartInfo("schtasks.exe")
+        {
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+            CreateNoWindow = true,
+        };
+        foreach (var arg in arguments)
+        {
+            psi.ArgumentList.Add(arg);
+        }
+
+        using var process = Process.Start(psi)!;
+        var output = process.StandardOutput.ReadToEnd() + process.StandardError.ReadToEnd();
+        process.WaitForExit();
+        return (process.ExitCode, output);
     }
 
     private void StartOnStartupToggle_Toggled(object sender, RoutedEventArgs e)

@@ -29,6 +29,18 @@
     <Version>1.2.0</Version>
   </PropertyGroup>
 
+  <!--
+    app.manifest (requireAdministrator) only applies to Release, which is what actually gets
+    shipped via Velopack. Debug builds keep the SDK's default asInvoker manifest so
+    `dotnet build`/`dotnet run` stay launchable without an interactive UAC prompt during
+    day-to-day development, same as before this was added; elevation-gated features (IIS
+    management, etc.) just no-op/show the existing "not elevated" banner in a Debug run, exactly
+    like before.
+  -->
+  <PropertyGroup Condition="'$(Configuration)'=='Release'">
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+  </PropertyGroup>
+
   <ItemGroup>
     <Resource Include="Assets\app.ico" />
   </ItemGroup>
