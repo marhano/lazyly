@@ -169,6 +169,59 @@ public partial class MainWindow : Wpf.Ui.Controls.FluentWindow
     // downloading (aside from the status bar) once something is found -- the only thing the user
     // actually sees is UpdateAvailableDialog, and only once a new version is fully staged and
     // ready to go.
+    // GitHub's unauthenticated API rate limit is 60 requests/hour *per IP* -- fine for one
+    // person, but a whole team behind the same office NAT (especially if everyone's machine
+    // launches PublishTool around the same time via "Start on Windows startup") can exhaust that
+    // shared budget easily, since it's also shared with every other unrelated tool on that
+    // network hitting GitHub. Two cheap, no-tradeoff mitigations: don't check more than once per
+    // UpdateCheckIntervalHours per machine (regardless of how many times the app is launched --
+    // even a *failed* check still counts, so a rate-limit error doesn't just get retried on the
+    // next launch minutes later), and spread out exactly when each machine checks so a bunch of
+    // simultaneous morning launches don't all land in the same instant.
+    private const int UpdateCheckIntervalHours = 6;
+
+    private static string LastUpdateCheckPath => Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "PublishTool", "last-update-check.txt");
+
+    private static bool ShouldCheckForUpdates()
+    {
+        try
+        {
+            if (!File.Exists(LastUpdateCheckPath))
+            {
+                return true;
+            }
+
+            var lastCheck = DateTimeOffset.Parse(File.ReadAllText(LastUpdateCheckPath), System.Globalization.CultureInfo.InvariantCulture);
+            return DateTimeOffset.UtcNow - lastCheck >= TimeSpan.FromHours(UpdateCheckIntervalHours);
+        }
+        catch
+        {
+            // Can't tell when we last checked (missing/corrupt file) -- default to checking rather
+            // than silently never checking again.
+            return true;
+        }
+    }
+
+    private static void RecordUpdateCheckNow()
+    {
+        try
+        {
+            var dir = Path.GetDirectoryName(LastUpdateCheckPath);
+            if (!string.IsNullOrEmpty(dir))
+            {
+                Directory.CreateDirectory(dir);
+            }
+
+            File.WriteAllText(LastUpdateCheckPath, DateTimeOffset.UtcNow.ToString("O", System.Globalization.CultureInfo.InvariantCulture));
+        }
+        catch
+        {
+            // Best-effort -- worst case this machine just checks again next launch instead of
+            // waiting out the interval, same as before this existed.
+        }
+    }
+
     private async Task CheckForUpdatesAsync()
     {
         try
@@ -180,6 +233,17 @@ public partial class MainWindow : Wpf.Ui.Controls.FluentWindow
                 // there's no installed app for an update to apply to.
                 return;
             }
+
+            if (!ShouldCheckForUpdates())
+            {
+                return;
+            }
+
+            // Recorded before the network call itself (not just on success) so a rate-limited or
+            // otherwise failed check still backs off for the full interval instead of being retried
+            // on the very next launch.
+            RecordUpdateCheckNow();
+            await Task.Delay(TimeSpan.FromSeconds(Random.Shared.Next(0, 180)));
 
             var newVersion = await mgr.CheckForUpdatesAsync();
             if (newVersion is null)
