@@ -20,14 +20,18 @@ embedded credential) and the first release has actually been published.
 
 ### Automated (normal path)
 
-1. Bump `<Version>` in [`PublishTool.Gui.csproj`](PublishTool.Gui.csproj), e.g. `1.2.0`.
-2. Commit that change.
-3. Tag and push:
+1. Bump `<Version>` in [`PublishTool.Gui.csproj`](PublishTool.Gui.csproj), e.g. `1.2.1`.
+2. Add `release-notes/v<version>.md` (e.g. `release-notes/v1.2.1.md`) -- markdown, written for the
+   person receiving the update. This becomes both the GitHub Release body and the text shown in the
+   installed app's "what's new" prompt (see Distribution model above), so keep it user-facing, not a
+   raw commit log. The workflow fails fast with a clear error if this file is missing.
+3. Commit both changes.
+4. Tag and push:
    ```
-   git tag v1.2.0
+   git tag v1.2.1
    git push --tags
    ```
-4. That's it -- [`.github/workflows/release-gui.yml`](../../.github/workflows/release-gui.yml)
+5. That's it -- [`.github/workflows/release-gui.yml`](../../.github/workflows/release-gui.yml)
    picks up the `v*` tag, builds, packs, and publishes the GitHub Release automatically. Check the
    Actions tab for progress; the release (with `Setup.exe` and the Velopack update assets) shows up
    on the repo's Releases page once it's green.
@@ -42,11 +46,11 @@ Run from the repo root, on Windows, with the .NET 8 SDK installed:
 ```
 dotnet tool install -g vpk
 
-dotnet publish src/PublishTool.Gui/PublishTool.Gui.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=false -p:Version=1.2.0 -o publish/PublishTool.Gui
+dotnet publish src/PublishTool.Gui/PublishTool.Gui.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=false -p:Version=1.2.1 -o publish/PublishTool.Gui
 
-vpk pack -u PublishTool.Gui -v 1.2.0 -p publish/PublishTool.Gui -e PublishTool.Gui.exe
+vpk pack -u PublishTool.Gui -v 1.2.1 -p publish/PublishTool.Gui -e PublishTool.Gui.exe --releaseNotes release-notes/v1.2.1.md
 
-vpk upload github --repoUrl https://github.com/marhano/lazyly --tag v1.2.0 --publish true --token <a GitHub PAT with repo scope>
+vpk upload github --repoUrl https://github.com/marhano/lazyly --tag v1.2.1 --publish true --token <a GitHub PAT with repo scope>
 ```
 
 Notes:

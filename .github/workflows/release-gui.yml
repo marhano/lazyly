@@ -1,7 +1,10 @@
 name: Release GUI
 
-# Cutting a release: bump <Version> in src/PublishTool.Gui/PublishTool.Gui.csproj, commit, then
-#   git tag v1.2.0 && git push --tags
+# Cutting a release:
+#   1. Bump <Version> in src/PublishTool.Gui/PublishTool.Gui.csproj
+#   2. Add release-notes/v<version>.md (markdown -- shown in the installed app's "what's new"
+#      dialog once it downloads the update, and as the GitHub Release body)
+#   3. Commit, then git tag v<version> && git push --tags
 # This workflow does the rest -- see src/PublishTool.Gui/README.md for the full process and a
 # manual local fallback.
 on:
@@ -33,6 +36,15 @@ jobs:
       - name: Install vpk
         run: dotnet tool install -g vpk
 
+      - name: Check release notes exist
+        shell: pwsh
+        run: |
+          $notesPath = "release-notes/v${{ steps.version.outputs.version }}.md"
+          if (-not (Test-Path $notesPath)) {
+            Write-Error "Missing $notesPath -- add release notes for this version before tagging (see src/PublishTool.Gui/README.md)."
+            exit 1
+          }
+
       - name: Publish
         run: >
           dotnet publish src/PublishTool.Gui/PublishTool.Gui.csproj
@@ -45,6 +57,7 @@ jobs:
         run: >
           vpk pack -u PublishTool.Gui -v ${{ steps.version.outputs.version }}
           -p publish/PublishTool.Gui -e PublishTool.Gui.exe
+          --releaseNotes release-notes/v${{ steps.version.outputs.version }}.md
 
       - name: Upload release to GitHub
         run: >
