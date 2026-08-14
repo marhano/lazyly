@@ -627,13 +627,30 @@ public partial class MainWindow : Wpf.Ui.Controls.FluentWindow
         }
         else
         {
-            OutputColumnDefinition.MinWidth = 260;
-            OutputColumnDefinition.Width = _savedOutputColumnWidth;
+            ShowOutputPanel();
+            return;
         }
 
-        OutputPanel.Visibility = isCurrentlyVisible ? Visibility.Collapsed : Visibility.Visible;
-        OutputSplitter.Visibility = isCurrentlyVisible ? Visibility.Collapsed : Visibility.Visible;
-        ToggleOutputButton.Content = isCurrentlyVisible ? "Show output" : "Hide output";
+        OutputPanel.Visibility = Visibility.Collapsed;
+        OutputSplitter.Visibility = Visibility.Collapsed;
+        ToggleOutputButton.Content = "Show output";
+    }
+
+    /// <summary>Expands the Output panel if it's currently collapsed -- a no-op otherwise. Used by
+    /// the toggle button itself and, separately, to make sure a Projects-tab deploy's progress is
+    /// actually visible without the user having to remember they hid it earlier.</summary>
+    private void ShowOutputPanel()
+    {
+        if (OutputPanel.Visibility == Visibility.Visible)
+        {
+            return;
+        }
+
+        OutputColumnDefinition.MinWidth = 260;
+        OutputColumnDefinition.Width = _savedOutputColumnWidth;
+        OutputPanel.Visibility = Visibility.Visible;
+        OutputSplitter.Visibility = Visibility.Visible;
+        ToggleOutputButton.Content = "Hide output";
     }
 
     private async void MainTabControl_SelectionChanged(object sender, SelectionChangedEventArgs e)
@@ -718,11 +735,37 @@ public partial class MainWindow : Wpf.Ui.Controls.FluentWindow
                 IisSitesDataGrid.ItemsSource = await manager.ListSitesAsync();
                 IisAppPoolsDataGrid.ItemsSource = await manager.ListAppPoolsAsync();
             }
+
+            ApplyIisSiteStateFilter();
         }
         catch (Exception ex)
         {
             MessageBox.Show(ex.Message, "PublishTool", MessageBoxButton.OK, MessageBoxImage.Warning);
         }
+    }
+
+    private void IisSiteStateFilterComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e) => ApplyIisSiteStateFilter();
+
+    /// <summary>Client-side filter over whatever's currently loaded -- same pattern as the Event
+    /// Logs tab's Level/Method/Type filters, just one combo instead of three.</summary>
+    private void ApplyIisSiteStateFilter()
+    {
+        // IisSiteStateFilterComboBox's SelectedIndex="0" (set in XAML) fires SelectionChanged
+        // during InitializeComponent() itself, before IisSitesDataGrid -- declared later in the
+        // same XAML tree -- has been assigned yet, so this can run with either field still null.
+        if (IisSitesDataGrid is null || IisSitesDataGrid.ItemsSource is null)
+        {
+            return;
+        }
+
+        var view = System.Windows.Data.CollectionViewSource.GetDefaultView(IisSitesDataGrid.ItemsSource);
+        var selection = (IisSiteStateFilterComboBox.SelectedItem as ComboBoxItem)?.Content as string;
+        view.Filter = selection switch
+        {
+            "Started" => item => item is IisSiteStatus site && string.Equals(site.State, "Started", StringComparison.OrdinalIgnoreCase),
+            "Stopped" => item => item is IisSiteStatus site && string.Equals(site.State, "Stopped", StringComparison.OrdinalIgnoreCase),
+            _ => null,
+        };
     }
 
     private async void StartSiteButton_Click(object sender, RoutedEventArgs e)
@@ -773,7 +816,15 @@ public partial class MainWindow : Wpf.Ui.Controls.FluentWindow
             return;
         }
 
-        var url = BuildBrowseUrl(site.Bindings);
+        // A wildcard/no-hostname binding is ambiguous -- "localhost" is right for this machine's
+        // own IIS, but wrong when the site being browsed lives on the *remote* dev server instead.
+        // Use the dev server's own hostname (its Remote Build Hosting URL, minus the port -- the
+        // site has its own port from its own binding) in that case.
+        var fallbackHost = IsRemoteModeActive(out var settings) && Uri.TryCreate(settings.RemoteHostingUrl, UriKind.Absolute, out var hostingUri)
+            ? hostingUri.Host
+            : "localhost";
+
+        var url = BuildBrowseUrl(site.Bindings, fallbackHost);
         if (url is null)
         {
             MessageBox.Show(
@@ -787,8 +838,8 @@ public partial class MainWindow : Wpf.Ui.Controls.FluentWindow
 
     // Bindings come from appcmd as comma-separated "protocol/ip:port:hostname" segments (see
     // IisSiteManager.FormatBinding). Picks the first one -- good enough for "open this site" --
-    // and falls back to localhost when the binding's IP is "*" (all unassigned) with no hostname.
-    private static string? BuildBrowseUrl(string bindingsRaw)
+    // and falls back to fallbackHost when the binding's IP is "*" (all unassigned) with no hostname.
+    private static string? BuildBrowseUrl(string bindingsRaw, string fallbackHost)
     {
         var firstBinding = bindingsRaw.Split(',', StringSplitOptions.RemoveEmptyEntries).FirstOrDefault();
         if (firstBinding is null)
@@ -812,10 +863,43 @@ public partial class MainWindow : Wpf.Ui.Controls.FluentWindow
         var port = addressParts[1];
         var hostname = addressParts.Length > 2 && !string.IsNullOrWhiteSpace(addressParts[2])
             ? addressParts[2]
-            : "localhost";
+            : fallbackHost;
 
         var isDefaultPort = (protocol == "http" && port == "80") || (protocol == "https" && port == "443");
         return isDefaultPort ? $"{protocol}://{hostname}/" : $"{protocol}://{hostname}:{port}/";
+    }
+
+    private async void SiteHistoryButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (IisSitesDataGrid.SelectedItem is not IisSiteStatus site)
+        {
+            MessageBox.Show("Select a site first.", "PublishTool", MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
+        }
+
+        try
+        {
+            IReadOnlyList<SiteDeploymentRecord> history;
+            if (IsRemoteModeActive(out var settings))
+            {
+                history = await new RemoteHostingClient().GetRemoteSiteDeploymentHistoryAsync(
+                    settings.RemoteHostingUrl!, DecryptRemoteHostingApiKey(settings), site.Name);
+            }
+            else
+            {
+                history = await new IisSiteManager(_output).GetDeploymentHistoryAsync(site.Name);
+            }
+
+            new DeploymentHistoryDialog(site.Name, history) { Owner = this }.ShowDialog();
+        }
+        catch (RemoteFeatureNotAvailableException ex)
+        {
+            MessageBox.Show(ex.Message, "PublishTool", MessageBoxButton.OK, MessageBoxImage.Information);
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show($"Couldn't load deployment history: {ex.Message}", "PublishTool", MessageBoxButton.OK, MessageBoxImage.Error);
+        }
     }
 
     private async void StartAppPoolButton_Click(object sender, RoutedEventArgs e)
@@ -878,9 +962,18 @@ public partial class MainWindow : Wpf.Ui.Controls.FluentWindow
         await RefreshIisStatusAsync();
     }
 
-    private async void RefreshProjectsButton_Click(object sender, RoutedEventArgs e) => await RefreshProjectsAsync();
+    private async void RefreshProjectsButton_Click(object sender, RoutedEventArgs e) => await RefreshProjectsAsync(forceReloadSelectedProject: true);
 
-    private async Task RefreshProjectsAsync()
+    private async void RefreshRegisteredProjectsButton_Click(object sender, RoutedEventArgs e) => await RefreshProjectsAsync(forceReloadSelectedProject: true);
+
+    /// <param name="forceReloadSelectedProject">Every call site reloads the project name/list
+    /// controls themselves, but by default leaves the Publish tab's App Config grid and deploy
+    /// target options alone if the same project is still selected afterward -- otherwise the
+    /// silent re-selection this causes after every command (see below) would wipe out App Config
+    /// edits or release notes someone's still typing. Explicit user-clicked refresh buttons pass
+    /// true instead, since the whole point of clicking one is to pick up a teammate's changes to
+    /// the currently-selected project too, not just notice a project that's new or gone.</param>
+    private async Task RefreshProjectsAsync(bool forceReloadSelectedProject = false)
     {
         var registry = ProjectRegistryFactory.Create();
         var projects = await registry.GetProjectsAsync();
@@ -892,7 +985,12 @@ public partial class MainWindow : Wpf.Ui.Controls.FluentWindow
             ProjectComboBox.SelectedItem = selectedInCombo;
         }
 
+        var selectedInList = (RegisteredProjectsListBox.SelectedItem as ProjectConfig)?.Name;
         RegisteredProjectsListBox.ItemsSource = projects;
+        if (selectedInList is not null)
+        {
+            RegisteredProjectsListBox.SelectedItem = projects.FirstOrDefault(p => string.Equals(p.Name, selectedInList, StringComparison.OrdinalIgnoreCase));
+        }
 
         // All projects, not just ones with Event Logs already enabled -- filtering the list down
         // used to leave this combo silently empty with no explanation for anyone who hadn't yet
@@ -903,6 +1001,12 @@ public partial class MainWindow : Wpf.Ui.Controls.FluentWindow
         if (selectedInEventLogCombo is not null)
         {
             EventLogProjectComboBox.SelectedItem = selectedInEventLogCombo;
+        }
+
+        if (forceReloadSelectedProject && selectedInCombo is not null)
+        {
+            await LoadAppConfigForSelectedProjectAsync();
+            await LoadDeployTargetOptionsForSelectedProjectAsync();
         }
     }
 
@@ -968,6 +1072,28 @@ public partial class MainWindow : Wpf.Ui.Controls.FluentWindow
 
     private async void DeployTargetComboBox_SelectionChanged(object sender, System.Windows.Controls.SelectionChangedEventArgs e) =>
         await PopulateDeployEnvironmentComboBoxAsync();
+
+    /// <summary>Synchronous counterpart to <see cref="LoadDeployTargetOptionsForSelectedProjectAsync"/>
+    /// for the Projects tab, which already has the full <see cref="ProjectConfig"/> in hand (no
+    /// need to reload it). Applies the identical two gating conditions -- Local always available
+    /// when enabled, Remote only when enabled *and* remote mode is on -- so a project's "Deploy
+    /// this version" button (gated on this being non-empty) never offers a target the Publish tab
+    /// itself wouldn't.</summary>
+    private static IReadOnlyDictionary<string, IReadOnlyList<string>> GetAvailableDeployTargets(ProjectConfig project)
+    {
+        var targets = new Dictionary<string, IReadOnlyList<string>>();
+        if (project.LocalIisEnabled)
+        {
+            targets["Local"] = project.LocalEnvironments.Select(env => env.Name).ToList();
+        }
+
+        if (project.RemoteIisEnabled && AppSettings.Load(AppSettings.DefaultPath).UseRemoteMode)
+        {
+            targets["Remote"] = project.RemoteEnvironments.Select(env => env.Name).ToList();
+        }
+
+        return targets;
+    }
 
     /// <summary>Populates the "Deploy to" select with the environment names configured on whichever
     /// side "Deploy target" currently has selected, defaulting to the Settings-tab default
@@ -1516,6 +1642,14 @@ public partial class MainWindow : Wpf.Ui.Controls.FluentWindow
 
         if (AppConfigExpander.Visibility == Visibility.Visible)
         {
+            // A cell/row still mid-edit (user typed a new value and clicked Publish directly,
+            // without tabbing or clicking elsewhere first) hasn't been pushed into the bound
+            // AppConfigSettingRow yet at this point -- CommitEdit needs calling twice (cell, then
+            // row) to flush both levels before _appConfigSettings is read below, or the edit is
+            // silently lost and the build publishes with the previous value.
+            AppConfigDataGrid.CommitEdit(DataGridEditingUnit.Cell, true);
+            AppConfigDataGrid.CommitEdit(DataGridEditingUnit.Row, true);
+
             foreach (var row in _appConfigSettings)
             {
                 if (string.IsNullOrWhiteSpace(row.Key))
@@ -1605,6 +1739,7 @@ public partial class MainWindow : Wpf.Ui.Controls.FluentWindow
         try
         {
             List<BuildHistoryRow> rows;
+            var canDeploy = GetAvailableDeployTargets(project).Count > 0;
 
             if (IsRemoteModeActive(out var settings))
             {
@@ -1618,6 +1753,8 @@ public partial class MainWindow : Wpf.Ui.Controls.FluentWindow
                     IsLatest = b.IsLatest,
                     ListInHosting = b.ListInHosting,
                     RemoteManifestPath = b.ManifestPath,
+                    RemoteZipPath = b.ZipPath,
+                    CanDeploy = canDeploy,
                 }).ToList();
             }
             else
@@ -1633,6 +1770,7 @@ public partial class MainWindow : Wpf.Ui.Controls.FluentWindow
                     ListInHosting = b.Manifest.ListInHosting,
                     ManifestPath = b.ManifestPath,
                     ZipPath = b.Manifest.ZipPath,
+                    CanDeploy = canDeploy,
                 }).ToList();
             }
 
@@ -1657,59 +1795,71 @@ public partial class MainWindow : Wpf.Ui.Controls.FluentWindow
             return;
         }
 
-        var iisEnabled = row.IsRemote ? project.RemoteIisEnabled : project.LocalIisEnabled;
-        if (!iisEnabled)
+        var targets = GetAvailableDeployTargets(project);
+        if (targets.Count == 0)
         {
             MessageBox.Show(
-                $"{(row.IsRemote ? "Remote" : "Local")} IIS isn't enabled for '{project.Name}' -- turn it on in the project's Edit dialog first.",
+                $"Neither Local nor Remote IIS is enabled for '{project.Name}' -- turn one on in the project's Edit dialog first.",
                 "PublishTool", MessageBoxButton.OK, MessageBoxImage.Warning);
             return;
         }
 
-        var environments = row.IsRemote ? project.RemoteEnvironments : project.LocalEnvironments;
-        if (environments.Count == 0)
+        string target;
+        string environmentName;
+        if (targets.Count == 1 && targets.Values.First().Count == 1)
         {
-            MessageBox.Show(
-                $"'{project.Name}' has no {(row.IsRemote ? "dev-server" : "local")} environments configured -- add one in the project's Edit dialog first.",
-                "PublishTool", MessageBoxButton.OK, MessageBoxImage.Warning);
-            return;
-        }
-
-        DeploymentEnvironment environment;
-        if (environments.Count == 1)
-        {
-            environment = environments[0];
+            target = targets.Keys.First();
+            environmentName = targets.Values.First()[0];
         }
         else
         {
-            var picker = new EnvironmentPickerDialog(project.Name, row.Version, environments.Select(env => env.Name).ToList()) { Owner = this };
-            if (picker.ShowDialog() != true || picker.SelectedEnvironment is not { } chosenName)
+            var picker = new EnvironmentPickerDialog(project.Name, row.Version, targets) { Owner = this };
+            if (picker.ShowDialog() != true || picker.SelectedTarget is not { } chosenTarget || picker.SelectedEnvironment is not { } chosenEnvironment)
             {
                 return;
             }
 
-            environment = environments.First(env => env.Name == chosenName);
+            target = chosenTarget;
+            environmentName = chosenEnvironment;
+        }
+
+        var environments = target == "Local" ? project.LocalEnvironments : project.RemoteEnvironments;
+        var environment = environments.FirstOrDefault(env => string.Equals(env.Name, environmentName, StringComparison.OrdinalIgnoreCase));
+        if (environment is null)
+        {
+            MessageBox.Show(
+                $"'{project.Name}' has no {(target == "Local" ? "local" : "dev-server")} environment named '{environmentName}' -- " +
+                "add it in the project's Edit dialog first.",
+                "PublishTool", MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
         }
 
         var confirm = MessageBox.Show(
-            $"Deploy {project.Name} v{row.Version} to '{environment.Name}' now? This overwrites whatever is currently live there.",
+            $"Deploy {project.Name} v{row.Version} to {target} '{environment.Name}' now? This overwrites whatever is currently live there.",
             "PublishTool", MessageBoxButton.YesNo, MessageBoxImage.Question);
         if (confirm != MessageBoxResult.Yes)
         {
             return;
         }
 
+        ShowOutputPanel();
+        _output.Stage($"Deploying {project.Name} v{row.Version} to {target} ({environment.Name})...");
+        SetBusy(true);
+        BuildHistoryDataGrid.IsEnabled = false;
         try
         {
-            if (row.IsRemote)
+            if (target == "Remote")
             {
-                if (!IsRemoteModeActive(out var settings))
+                if (!IsRemoteModeActive(out var settings) || row.RemoteManifestPath is null)
                 {
+                    MessageBox.Show(
+                        "Remote deploy needs remote mode configured in Settings and an already-uploaded build.",
+                        "PublishTool", MessageBoxButton.OK, MessageBoxImage.Warning);
                     return;
                 }
 
                 await new RemoteHostingClient().DeployAsync(
-                    settings.RemoteHostingUrl!, DecryptRemoteHostingApiKey(settings), row.RemoteManifestPath!, environment.Name);
+                    settings.RemoteHostingUrl!, DecryptRemoteHostingApiKey(settings), row.RemoteManifestPath, environment.Name, Environment.UserName);
                 _output.Info($"Deployed {project.Name} v{row.Version} to the dev server ({environment.Name}).");
             }
             else
@@ -1725,11 +1875,46 @@ public partial class MainWindow : Wpf.Ui.Controls.FluentWindow
 
                 var tempDir = Path.Combine(Path.GetTempPath(), "PublishTool", Guid.NewGuid().ToString("N"));
                 Directory.CreateDirectory(tempDir);
+                string? downloadedZipPath = null;
                 try
                 {
-                    await Task.Run(() => System.IO.Compression.ZipFile.ExtractToDirectory(row.ZipPath!, tempDir));
+                    // This row's build only exists as an archive on the dev server (loaded while
+                    // remote mode was on) -- download it first so it can be deployed to THIS
+                    // machine's Local IIS. The reverse (local artifact, remote target) can't happen:
+                    // Remote never appears as a target unless remote mode is already on, in which
+                    // case every row is a remote one -- see GetAvailableDeployTargets.
+                    var zipPathToExtract = row.ZipPath;
+                    if (zipPathToExtract is null)
+                    {
+                        if (row.RemoteZipPath is null || !IsRemoteModeActive(out var remoteSettings))
+                        {
+                            MessageBox.Show(
+                                "Couldn't determine where to download this build's zip from.",
+                                "PublishTool", MessageBoxButton.OK, MessageBoxImage.Error);
+                            return;
+                        }
+
+                        downloadedZipPath = Path.Combine(Path.GetTempPath(), "PublishTool", $"{Guid.NewGuid():N}.zip");
+                        _output.Stage("Downloading build from dev server...");
+                        await new RemoteHostingClient().DownloadAsync(
+                            remoteSettings.RemoteHostingUrl!, DecryptRemoteHostingApiKey(remoteSettings), row.RemoteZipPath, downloadedZipPath);
+                        zipPathToExtract = downloadedZipPath;
+                    }
+
+                    await Task.Run(() => System.IO.Compression.ZipFile.ExtractToDirectory(zipPathToExtract, tempDir));
+
+                    var siteName = environment.ResolveSiteName(project.Name);
                     await new BuildDeployer(_output).DeployAsync(
-                        environment.ResolveSiteName(project.Name), hostPath, environment.Bindings, environment.AutoCreateSite, tempDir);
+                        siteName, hostPath, environment.Bindings, environment.AutoCreateSite, tempDir,
+                        new SiteDeploymentRecord
+                        {
+                            SiteName = siteName,
+                            ProjectName = project.Name,
+                            Version = row.Version,
+                            EnvironmentName = environment.Name,
+                            DeployedAtUtc = DateTimeOffset.UtcNow,
+                            DeployedBy = Environment.UserName,
+                        });
                     _output.Info($"Deployed {project.Name} v{row.Version} to local IIS ({environment.Name}).");
                 }
                 finally
@@ -1738,12 +1923,22 @@ public partial class MainWindow : Wpf.Ui.Controls.FluentWindow
                     {
                         Directory.Delete(tempDir, recursive: true);
                     }
+
+                    if (downloadedZipPath is not null && File.Exists(downloadedZipPath))
+                    {
+                        File.Delete(downloadedZipPath);
+                    }
                 }
             }
         }
         catch (Exception ex)
         {
             MessageBox.Show($"Deploy failed: {ex.Message}", "PublishTool", MessageBoxButton.OK, MessageBoxImage.Error);
+        }
+        finally
+        {
+            SetBusy(false);
+            BuildHistoryDataGrid.IsEnabled = true;
         }
     }
 

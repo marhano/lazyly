@@ -28,5 +28,15 @@ public sealed class BuildHistoryRow
     /// Build Hosting API. Set only in remote mode.</summary>
     public string? RemoteManifestPath { get; init; }
 
+    /// <summary>Zip path relative to the dev server's BuildsRoot. Set only in remote mode -- used
+    /// to download this build's zip when redeploying it to Local IIS instead of the dev server's
+    /// own (the one cross-side case that can happen; see <see cref="MainWindow.DeployBuildButton_Click"/>).</summary>
+    public string? RemoteZipPath { get; init; }
+
     public bool IsRemote => RemoteManifestPath is not null;
+
+    /// <summary>Whether the "Deploy this version" action should even be offered for this row's
+    /// project -- false (and the button hidden entirely) when the project has neither Local nor
+    /// Remote IIS deployment available, so there's nowhere it could possibly deploy to.</summary>
+    public bool CanDeploy { get; init; }
 }

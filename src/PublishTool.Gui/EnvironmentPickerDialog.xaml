@@ -5,11 +5,13 @@
         xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
         xmlns:ui="http://schemas.lepo.co/wpfui/2022/xaml"
         mc:Ignorable="d"
-        Title="Choose Environment" Height="200" Width="380"
+        Title="Deploy" Height="260" Width="380"
         WindowStartupLocation="CenterOwner"
         ResizeMode="NoResize">
     <Grid Margin="20">
         <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="*"/>
@@ -18,9 +20,15 @@
 
         <TextBlock Grid.Row="0" x:Name="MessageTextBlock" TextWrapping="Wrap" Margin="0,0,0,14"/>
 
-        <ComboBox Grid.Row="1" x:Name="EnvironmentComboBox" SelectedIndex="0"/>
+        <StackPanel Grid.Row="1" x:Name="DeployTargetPanel" Margin="0,0,0,12">
+            <TextBlock Text="Deploy target" Margin="0,0,0,6"/>
+            <ComboBox x:Name="DeployTargetComboBox" SelectionChanged="DeployTargetComboBox_SelectionChanged"/>
+        </StackPanel>
 
-        <StackPanel Grid.Row="3" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,16,0,0">
+        <TextBlock Grid.Row="2" Text="Deploy to" Margin="0,0,0,6"/>
+        <ComboBox Grid.Row="3" x:Name="EnvironmentComboBox" SelectedIndex="0"/>
+
+        <StackPanel Grid.Row="5" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,16,0,0">
             <ui:Button Content="Cancel" Click="CancelButton_Click" Margin="0,0,8,0"/>
             <ui:Button Content="Deploy" Appearance="Primary" Icon="{ui:SymbolIcon Rocket24}" Click="DeployButton_Click"/>
         </StackPanel>

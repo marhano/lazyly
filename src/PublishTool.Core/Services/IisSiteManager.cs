@@ -16,10 +16,14 @@ namespace PublishTool.Core.Services;
 public sealed partial class IisSiteManager
 {
     private readonly IOutputSink _output;
+    private readonly SiteDeploymentStore _deploymentStore;
+    private readonly string _deploymentsRoot;
 
-    public IisSiteManager(IOutputSink output)
+    public IisSiteManager(IOutputSink output, string? deploymentsRoot = null)
     {
         _output = output;
+        _deploymentStore = new SiteDeploymentStore();
+        _deploymentsRoot = deploymentsRoot ?? SiteDeploymentStore.DefaultRoot;
     }
 
     private static string AppCmdPath => Path.Combine(
@@ -143,16 +147,48 @@ public sealed partial class IisSiteManager
                 continue;
             }
 
-            results.Add(new IisSiteStatus
+            var status = new IisSiteStatus
             {
                 Name = match.Groups["name"].Value,
                 Bindings = match.Groups["bindings"].Value,
                 State = match.Groups["state"].Value,
-            });
+            };
+            await TryEnrichWithDeploymentInfoAsync(status, ct);
+            results.Add(status);
         }
 
         return results;
     }
+
+    /// <summary>Best-effort -- a site PublishTool never deployed to (e.g. Default Web Site) simply
+    /// has no history, and any read failure here shouldn't break the whole site listing.</summary>
+    private async Task TryEnrichWithDeploymentInfoAsync(IisSiteStatus status, CancellationToken ct)
+    {
+        try
+        {
+            var history = await _deploymentStore.GetHistoryAsync(_deploymentsRoot, status.Name, ct);
+            var latest = history.FirstOrDefault();
+            if (latest is null)
+            {
+                return;
+            }
+
+            status.DeployedVersion = latest.Version;
+            status.DeployedAtUtc = latest.DeployedAtUtc;
+            status.DeployedBy = latest.DeployedBy;
+            status.DeployedEnvironment = latest.EnvironmentName;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _output.Warn($"Couldn't read deployment history for '{status.Name}': {ex.Message}");
+        }
+    }
+
+    /// <summary>Full deployment history for one site, newest-first -- for the IIS tab's History
+    /// dialog. Not enriched onto <see cref="IisSiteStatus"/> itself since that's only ever the
+    /// latest deploy; this is the separate, on-demand full list.</summary>
+    public Task<IReadOnlyList<SiteDeploymentRecord>> GetDeploymentHistoryAsync(string siteName, CancellationToken ct = default) =>
+        _deploymentStore.GetHistoryAsync(_deploymentsRoot, siteName, ct);
 
     public async Task<IReadOnlyList<IisAppPoolStatus>> ListAppPoolsAsync(CancellationToken ct = default)
     {

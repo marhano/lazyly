@@ -202,7 +202,8 @@ public sealed class Publisher
                 if (remoteEnvironment is not null)
                 {
                     _output.Stage($"Deploying to dev server IIS ({remoteEnvironment.Name})...");
-                    await _remoteHostingClient.DeployAsync(options.RemoteHostingUrl!, options.RemoteHostingApiKey, remoteManifestPath, remoteEnvironment.Name, ct);
+                    await _remoteHostingClient.DeployAsync(
+                        options.RemoteHostingUrl!, options.RemoteHostingApiKey, remoteManifestPath, remoteEnvironment.Name, Environment.UserName, ct);
                     _output.Info($"Deployed to dev server IIS ({remoteEnvironment.Name}).");
                 }
                 else if (options.DeployTarget == DeployTarget.Remote && options.DeployEnvironmentName is not null)
@@ -230,8 +231,19 @@ public sealed class Publisher
                 var localHostPath = localEnvironment.ResolveHostPath(project.Name);
                 if (localHostPath is not null)
                 {
+                    var siteName = localEnvironment.ResolveSiteName(project.Name);
                     await _buildDeployer.DeployAsync(
-                        localEnvironment.ResolveSiteName(project.Name), localHostPath, localEnvironment.Bindings, localEnvironment.AutoCreateSite, stagingDir, ct);
+                        siteName, localHostPath, localEnvironment.Bindings, localEnvironment.AutoCreateSite, stagingDir,
+                        new SiteDeploymentRecord
+                        {
+                            SiteName = siteName,
+                            ProjectName = project.Name,
+                            Version = options.Version,
+                            EnvironmentName = localEnvironment.Name,
+                            DeployedAtUtc = DateTimeOffset.UtcNow,
+                            DeployedBy = Environment.UserName,
+                        },
+                        ct);
                     _output.Info($"Deployed {project.Name} v{options.Version} to local IIS ({localEnvironment.Name}).");
                 }
                 else

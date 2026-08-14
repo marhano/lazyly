@@ -167,8 +167,14 @@
                                 <RowDefinition Height="Auto"/>
                             </Grid.RowDefinitions>
 
-                            <TextBlock Grid.Row="0" Text="Registered projects"
-                                       Margin="0,0,0,6" Foreground="{DynamicResource TextFillColorSecondaryBrush}"/>
+                            <DockPanel Grid.Row="0" Margin="0,0,0,6">
+                                <ui:Button DockPanel.Dock="Right" x:Name="RefreshRegisteredProjectsButton" Content="Refresh"
+                                           Icon="{ui:SymbolIcon ArrowSync24}" Padding="10,4"
+                                           ToolTip="Reload the project list -- picks up projects another teammate added, or config they changed on an existing one."
+                                           Click="RefreshRegisteredProjectsButton_Click"/>
+                                <TextBlock Text="Registered projects" VerticalAlignment="Center"
+                                           Foreground="{DynamicResource TextFillColorSecondaryBrush}"/>
+                            </DockPanel>
                             <ListBox Grid.Row="1" x:Name="RegisteredProjectsListBox"
                                      DisplayMemberPath="Name" SelectionChanged="RegisteredProjectsListBox_SelectionChanged"/>
 
@@ -210,7 +216,17 @@
                                             <DataTemplate>
                                                 <StackPanel Orientation="Horizontal">
                                                     <ui:Button Content="Deploy this version" Icon="{ui:SymbolIcon Rocket24}"
-                                                               Width="150" Margin="0,2,6,2" Click="DeployBuildButton_Click"/>
+                                                               Width="150" Margin="0,2,6,2" Click="DeployBuildButton_Click">
+                                                        <ui:Button.Style>
+                                                            <Style TargetType="ui:Button">
+                                                                <Style.Triggers>
+                                                                    <DataTrigger Binding="{Binding CanDeploy}" Value="False">
+                                                                        <Setter Property="Visibility" Value="Collapsed"/>
+                                                                    </DataTrigger>
+                                                                </Style.Triggers>
+                                                            </Style>
+                                                        </ui:Button.Style>
+                                                    </ui:Button>
                                                     <ui:Button Content="Mark latest" Icon="{ui:SymbolIcon Star24}"
                                                                Width="110" Margin="0,2,6,2" Click="MarkBuildLatestButton_Click"/>
                                                     <ui:Button Content="Delete" Icon="{ui:SymbolIcon Delete24}"
@@ -241,22 +257,37 @@
                             <TabItem Header="Sites">
                                 <Grid Margin="12">
                                     <Grid.RowDefinitions>
+                                        <RowDefinition Height="Auto"/>
                                         <RowDefinition Height="*"/>
                                         <RowDefinition Height="Auto"/>
                                     </Grid.RowDefinitions>
 
-                                    <DataGrid Grid.Row="0" x:Name="IisSitesDataGrid" AutoGenerateColumns="False" IsReadOnly="True" MinHeight="120">
+                                    <StackPanel Grid.Row="0" Orientation="Horizontal" Margin="0,0,0,10">
+                                        <TextBlock Text="Show" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                                        <ComboBox x:Name="IisSiteStateFilterComboBox" Width="150" SelectedIndex="0"
+                                                  SelectionChanged="IisSiteStateFilterComboBox_SelectionChanged">
+                                            <ComboBoxItem Content="All sites"/>
+                                            <ComboBoxItem Content="Started"/>
+                                            <ComboBoxItem Content="Stopped"/>
+                                        </ComboBox>
+                                    </StackPanel>
+
+                                    <DataGrid Grid.Row="1" x:Name="IisSitesDataGrid" AutoGenerateColumns="False" IsReadOnly="True" MinHeight="120">
                                         <DataGrid.Columns>
                                             <DataGridTextColumn Header="Name" Binding="{Binding Name}" Width="*"/>
-                                            <DataGridTextColumn Header="State" Binding="{Binding State}" Width="100"/>
-                                            <DataGridTextColumn Header="Bindings" Binding="{Binding Bindings}" Width="2*"/>
+                                            <DataGridTextColumn Header="State" Binding="{Binding State}" Width="80"/>
+                                            <DataGridTextColumn Header="Bindings" Binding="{Binding Bindings}" Width="1.5*"/>
+                                            <DataGridTextColumn Header="Deployed Version" Binding="{Binding DeployedVersion}" Width="120"/>
+                                            <DataGridTextColumn Header="Deployed At" Binding="{Binding DeployedAtUtc}" Width="160"/>
+                                            <DataGridTextColumn Header="Deployed By" Binding="{Binding DeployedBy}" Width="120"/>
                                         </DataGrid.Columns>
                                     </DataGrid>
 
-                                    <StackPanel Grid.Row="1" Orientation="Horizontal" Margin="0,10,0,0">
+                                    <StackPanel Grid.Row="2" Orientation="Horizontal" Margin="0,10,0,0">
                                         <ui:Button Content="Start site" Icon="{ui:SymbolIcon Play24}" Width="120" Click="StartSiteButton_Click"/>
                                         <ui:Button Content="Stop site" Icon="{ui:SymbolIcon Stop24}" Width="120" Margin="10,0,0,0" Click="StopSiteButton_Click"/>
                                         <ui:Button Content="Browse site" Icon="{ui:SymbolIcon Globe24}" Width="130" Margin="10,0,0,0" Click="BrowseSiteButton_Click"/>
+                                        <ui:Button Content="History" Icon="{ui:SymbolIcon History24}" Width="110" Margin="10,0,0,0" Click="SiteHistoryButton_Click"/>
                                     </StackPanel>
                                 </Grid>
                             </TabItem>

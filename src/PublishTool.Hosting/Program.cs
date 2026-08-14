@@ -402,7 +402,7 @@ app.MapPut("/api/environments", async (HttpRequest request, IConfiguration confi
 // escalation from the read/write-BuildsRoot-only surface above.
 // ---------------------------------------------------------------------------------------------
 
-app.MapPost("/api/deploy", async (HttpRequest request, IConfiguration configuration, ILoggerFactory loggerFactory, string path, string environment) =>
+app.MapPost("/api/deploy", async (HttpRequest request, IConfiguration configuration, ILoggerFactory loggerFactory, string path, string environment, string? deployedBy) =>
 {
     if (!ApiKeyAuth.Validate(request, configuration))
     {
@@ -446,10 +446,21 @@ app.MapPost("/api/deploy", async (HttpRequest request, IConfiguration configurat
         Directory.CreateDirectory(stagingDir);
         ZipFile.ExtractToDirectory(manifest.ZipPath, stagingDir);
 
-        var deployer = new BuildDeployer(new LoggerOutputSink(loggerFactory.CreateLogger("Deploy")));
+        var siteName = deployEnvironment.ResolveSiteName(manifest.ProjectName);
+        var deployer = new BuildDeployer(
+            new LoggerOutputSink(loggerFactory.CreateLogger("Deploy")), Path.Combine(buildsRoot, "_deployments"));
         await deployer.DeployAsync(
-            deployEnvironment.ResolveSiteName(manifest.ProjectName), hostPath, deployEnvironment.Bindings, deployEnvironment.AutoCreateSite,
-            stagingDir, request.HttpContext.RequestAborted);
+            siteName, hostPath, deployEnvironment.Bindings, deployEnvironment.AutoCreateSite, stagingDir,
+            new SiteDeploymentRecord
+            {
+                SiteName = siteName,
+                ProjectName = manifest.ProjectName,
+                Version = manifest.Version,
+                EnvironmentName = deployEnvironment.Name,
+                DeployedAtUtc = DateTimeOffset.UtcNow,
+                DeployedBy = string.IsNullOrWhiteSpace(deployedBy) ? "unknown" : deployedBy,
+            },
+            request.HttpContext.RequestAborted);
 
         return Results.Ok(new { deployed = true, project = manifest.ProjectName, environment = deployEnvironment.Name, hostPath });
     }
@@ -472,6 +483,12 @@ app.MapPost("/api/deploy", async (HttpRequest request, IConfiguration configurat
 // run directly. Same operational requirement as /api/deploy above.
 // ---------------------------------------------------------------------------------------------
 
+// Deployment history lives under BuildsRoot (already configured, no new setting needed) rather
+// than IisSiteManager's own machine-wide default -- this server may run other things too, and
+// deployment records are specific to what PublishTool itself put into IIS here.
+static string? DeploymentsRoot(IConfiguration configuration) =>
+    configuration["BuildsRoot"] is { Length: > 0 } buildsRoot ? Path.Combine(buildsRoot, "_deployments") : null;
+
 app.MapGet("/api/iis/sites", async (HttpRequest request, IConfiguration configuration) =>
 {
     if (!ApiKeyAuth.Validate(request, configuration))
@@ -481,7 +498,26 @@ app.MapGet("/api/iis/sites", async (HttpRequest request, IConfiguration configur
 
     try
     {
-        return Results.Ok(await new IisSiteManager(NullOutputSink.Instance).ListSitesAsync(request.HttpContext.RequestAborted));
+        return Results.Ok(await new IisSiteManager(NullOutputSink.Instance, DeploymentsRoot(configuration)).ListSitesAsync(request.HttpContext.RequestAborted));
+    }
+    catch (Exception ex)
+    {
+        return Results.Problem(ex.Message, statusCode: StatusCodes.Status500InternalServerError);
+    }
+});
+
+app.MapGet("/api/iis/sites/{name}/history", async (HttpRequest request, IConfiguration configuration, string name) =>
+{
+    if (!ApiKeyAuth.Validate(request, configuration))
+    {
+        return Results.Unauthorized();
+    }
+
+    try
+    {
+        var history = await new IisSiteManager(NullOutputSink.Instance, DeploymentsRoot(configuration))
+            .GetDeploymentHistoryAsync(name, request.HttpContext.RequestAborted);
+        return Results.Ok(history);
     }
     catch (Exception ex)
     {
