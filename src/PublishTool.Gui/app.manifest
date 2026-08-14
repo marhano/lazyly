@@ -5,10 +5,16 @@
   <!--
     PublishTool needs IIS/appcmd management rights for most of what it does (auto-creating sites,
     starting/stopping/recycling sites and app pools), so it requires Administrator outright rather
-    than degrading gracefully -- this forces Windows to elevate it (via UAC) on every launch, no
+    than degrading gracefully; this forces Windows to elevate it (via UAC) on every launch, no
     matter how it's started (desktop shortcut, Start menu, a pinned taskbar icon, or a Velopack
     relaunch after an update). If the user declines the UAC prompt, the process simply doesn't
-    start -- there is no unelevated fallback anymore.
+    start; there is no unelevated fallback anymore.
+
+    Note: a comment in this file must never contain two consecutive hyphen characters anywhere in
+    its body, only at the very start and end. The general .NET/MSBuild XML parser tolerates that,
+    but the strict legacy SxS manifest parser CreateProcess uses to generate the activation
+    context does not, and silently fails the entire process launch with "side by side
+    configuration is incorrect" if it is ever there. Use a semicolon or parentheses instead.
   -->
   <trustInfo xmlns="urn:schemas-microsoft-com:asm.v2">
     <security>
