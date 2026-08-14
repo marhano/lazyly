@@ -222,7 +222,24 @@ public partial class MainWindow : Wpf.Ui.Controls.FluentWindow
         }
     }
 
-    private async Task CheckForUpdatesAsync()
+    private async void CheckForUpdatesButton_Click(object sender, RoutedEventArgs e)
+    {
+        CheckForUpdatesButton.IsEnabled = false;
+        try
+        {
+            await CheckForUpdatesAsync(interactive: true);
+        }
+        finally
+        {
+            CheckForUpdatesButton.IsEnabled = true;
+        }
+    }
+
+    /// <param name="interactive">True from the Help tab's "Check for updates" button -- always
+    /// actually checks (skips the throttle/jitter below, both meant only to keep the automatic
+    /// background check from hammering GitHub) and reports the outcome via a message box even when
+    /// there's nothing new, instead of staying silent the way the automatic per-launch check does.</param>
+    private async Task CheckForUpdatesAsync(bool interactive = false)
     {
         try
         {
@@ -231,10 +248,17 @@ public partial class MainWindow : Wpf.Ui.Controls.FluentWindow
             {
                 // Running from `dotnet run`/a loose build rather than a Velopack-installed copy --
                 // there's no installed app for an update to apply to.
+                if (interactive)
+                {
+                    MessageBox.Show(
+                        "This copy of PublishTool wasn't installed via the updater (e.g. a dev build) -- there's nothing to check.",
+                        "PublishTool", MessageBoxButton.OK, MessageBoxImage.Information);
+                }
+
                 return;
             }
 
-            if (!ShouldCheckForUpdates())
+            if (!interactive && !ShouldCheckForUpdates())
             {
                 return;
             }
@@ -243,11 +267,19 @@ public partial class MainWindow : Wpf.Ui.Controls.FluentWindow
             // otherwise failed check still backs off for the full interval instead of being retried
             // on the very next launch.
             RecordUpdateCheckNow();
-            await Task.Delay(TimeSpan.FromSeconds(Random.Shared.Next(0, 180)));
+            if (!interactive)
+            {
+                await Task.Delay(TimeSpan.FromSeconds(Random.Shared.Next(0, 180)));
+            }
 
             var newVersion = await mgr.CheckForUpdatesAsync();
             if (newVersion is null)
             {
+                if (interactive)
+                {
+                    MessageBox.Show("You're on the latest version.", "PublishTool", MessageBoxButton.OK, MessageBoxImage.Information);
+                }
+
                 return;
             }
 
@@ -277,9 +309,16 @@ public partial class MainWindow : Wpf.Ui.Controls.FluentWindow
         }
         catch (Exception ex)
         {
-            // Update checks are best-effort background work -- a network hiccup or an
-            // unreachable/still-private repo shouldn't interrupt anything the user is doing.
-            _output.Info($"Update check failed: {ex.Message}");
+            if (interactive)
+            {
+                MessageBox.Show($"Couldn't check for updates: {ex.Message}", "PublishTool", MessageBoxButton.OK, MessageBoxImage.Warning);
+            }
+            else
+            {
+                // The automatic background check is best-effort -- a network hiccup or an
+                // unreachable/still-private repo shouldn't interrupt anything the user is doing.
+                _output.Info($"Update check failed: {ex.Message}");
+            }
         }
     }
 

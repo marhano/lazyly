@@ -572,7 +572,11 @@
                             <RowDefinition Height="*"/>
                         </Grid.RowDefinitions>
 
-                        <TextBlock Grid.Row="0" x:Name="AppVersionTextBlock" FontWeight="SemiBold" Margin="0,0,0,16"/>
+                        <DockPanel Grid.Row="0" Margin="0,0,0,16">
+                            <ui:Button DockPanel.Dock="Right" x:Name="CheckForUpdatesButton" Content="Check for updates"
+                                       Icon="{ui:SymbolIcon ArrowSync24}" Width="160" Click="CheckForUpdatesButton_Click"/>
+                            <TextBlock x:Name="AppVersionTextBlock" FontWeight="SemiBold" VerticalAlignment="Center"/>
+                        </DockPanel>
 
                         <DockPanel Grid.Row="1" Margin="0,0,0,10">
                             <ui:Button DockPanel.Dock="Right" x:Name="RecheckDependenciesButton" Content="Recheck"
