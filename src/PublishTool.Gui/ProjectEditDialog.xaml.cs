@@ -1,5 +1,6 @@
 using System.Collections.ObjectModel;
 using System.Windows;
+using System.Windows.Controls;
 using Microsoft.Win32;
 using PublishTool.Core;
 using PublishTool.Core.Models;
@@ -10,31 +11,33 @@ namespace PublishTool.Gui;
 
 /// <summary>
 /// Add/edit a project -- replaces the old always-visible Add Project tab form. Local fields (this
-/// machine's paths, per-user local/remote deploy toggles) are always editable; shared fields
-/// (everything that syncs to the dev server in remote mode) start disabled when editing an existing
-/// project with remote mode on, requiring an explicit "Edit shared settings" confirmation first,
-/// since changing them affects every PublishTool user on the team.
+/// machine's paths, per-user local environments) are always editable; shared fields (everything
+/// that syncs to the dev server in remote mode, including dev-server environments) start disabled
+/// when editing an existing project with remote mode on, requiring an explicit "Edit shared
+/// settings" confirmation first, since changing them affects every PublishTool user on the team.
 /// </summary>
 public partial class ProjectEditDialog : Wpf.Ui.Controls.FluentWindow
 {
     private readonly ProjectConfig? _existing;
-    private readonly ObservableCollection<IisBinding> _localBindings = new();
-    private readonly ObservableCollection<IisBinding> _remoteBindings = new();
+    private readonly ObservableCollection<DeploymentEnvironment> _localEnvironments = new();
+    private readonly ObservableCollection<DeploymentEnvironment> _remoteEnvironments = new();
+    private List<string> _environmentNames = new();
+    private string? _defaultEnvironmentName;
 
     /// <summary>Every control that maps to a shared (team-wide) field -- locked together behind
     /// "Edit shared settings" when editing an existing project in remote mode. Deliberately a list
-    /// of individual controls rather than one wrapping panel's IsEnabled: a couple of shared
-    /// controls (AppConfigTypeComboBox, RemoteIisDeployPanel's toggle) sit visually next to local
-    /// controls that must stay editable regardless (AppConfigPathTextBox, AutoDeployOnPublishToggle),
-    /// and WPF's IsEnabled cascades to every descendant, so a coarse parent-level disable would have
-    /// locked those local controls too.</summary>
+    /// of individual controls rather than one wrapping panel's IsEnabled: a shared control
+    /// (AppConfigTypeComboBox) sits visually next to a local one that must stay editable regardless
+    /// (AppConfigPathTextBox), and WPF's IsEnabled cascades to every descendant, so a coarse
+    /// parent-level disable would have locked that local control too. RemoteEnvironmentsPanel is
+    /// safe to lock as a whole -- everything inside it is shared, nothing local is nested there.</summary>
     private IEnumerable<UIElement> SharedControls => new UIElement[]
     {
         ProjectIdTextBox, PubxmlTextBox, ExtraTargetsTextBox,
         SdkStyleProjectToggle, ListInHostingToggle,
         UseAppConfigToggle, AppConfigTypeComboBox,
         UseEventLogToggle, EventLogPanel,
-        RemoteIisDeployPanel,
+        RemoteEnvironmentsPanel,
     };
 
     public ProjectEditDialog(ProjectConfig? existing, bool remoteMode)
@@ -42,8 +45,8 @@ public partial class ProjectEditDialog : Wpf.Ui.Controls.FluentWindow
         InitializeComponent();
         _existing = existing;
 
-        LocalIisBindingsDataGrid.ItemsSource = _localBindings;
-        RemoteIisBindingsDataGrid.ItemsSource = _remoteBindings;
+        LocalEnvironmentsDataGrid.ItemsSource = _localEnvironments;
+        RemoteEnvironmentsDataGrid.ItemsSource = _remoteEnvironments;
         AppConfigTypeComboBox.ItemsSource = AppConfigProviderRegistry.All;
 
         TitleTextBlock.Text = existing is null ? "Add project" : $"Edit {existing.Name}";
@@ -65,6 +68,28 @@ public partial class ProjectEditDialog : Wpf.Ui.Controls.FluentWindow
 
             EditSharedSettingsButton.Visibility = Visibility.Visible;
         }
+
+        // Loading the environment name list can mean an HTTP call (remote mode) -- defer to Loaded
+        // instead of blocking the constructor.
+        Loaded += async (_, _) => await LoadEnvironmentNamesAsync();
+    }
+
+    private async Task LoadEnvironmentNamesAsync()
+    {
+        try
+        {
+            var settings = await EnvironmentRegistryFactory.Create().GetAsync();
+            _environmentNames = settings.Names;
+            _defaultEnvironmentName = settings.DefaultName;
+            LocalEnvironmentNameColumn.ItemsSource = _environmentNames;
+            RemoteEnvironmentNameColumn.ItemsSource = _environmentNames;
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(
+                $"Couldn't load the deployment environment list: {ex.Message}",
+                "PublishTool", MessageBoxButton.OK, MessageBoxImage.Warning);
+        }
     }
 
     private void PopulateFrom(ProjectConfig p)
@@ -73,14 +98,17 @@ public partial class ProjectEditDialog : Wpf.Ui.Controls.FluentWindow
         CsprojTextBox.Text = p.CsprojPath;
         AssemblyInfoTextBox.Text = p.AssemblyInfoPath ?? string.Empty;
 
-        LocalIisDeploymentToggle.IsChecked = p.LocalIisDeploymentEnabled;
-        LocalIisDeploymentPanel.Visibility = p.LocalIisDeploymentEnabled ? Visibility.Visible : Visibility.Collapsed;
-        IisHostTextBox.Text = p.IisHostPath ?? string.Empty;
-        AutoCreateIisSiteToggle.IsChecked = p.AutoCreateIisSite;
-        foreach (var binding in p.IisBindings)
+        foreach (var env in p.LocalEnvironments)
         {
-            _localBindings.Add(binding);
+            _localEnvironments.Add(env);
         }
+
+        // One shared root for every local environment -- they should all already agree (SaveButton_Click
+        // enforces it going forward), so the first non-empty value stands in for "the" root.
+        LocalHostRootPathTextBox.Text = p.LocalEnvironments.FirstOrDefault(env => !string.IsNullOrWhiteSpace(env.HostRootPath))?.HostRootPath ?? string.Empty;
+
+        LocalIisToggle.IsChecked = p.LocalIisEnabled;
+        LocalEnvironmentsSectionPanel.Visibility = p.LocalIisEnabled ? Visibility.Visible : Visibility.Collapsed;
 
         ProjectIdTextBox.Text = p.ProjectId ?? string.Empty;
         PubxmlTextBox.Text = p.PubxmlName;
@@ -102,14 +130,16 @@ public partial class ProjectEditDialog : Wpf.Ui.Controls.FluentWindow
         EventLogMachineTextBox.Text = p.EventLogMachineName ?? string.Empty;
         EventLogUsernameTextBox.Text = p.EventLogUsername ?? string.Empty;
 
-        AutoDeployOnPublishToggle.IsChecked = p.AutoDeployOnPublish;
-        RemoteIisDeployPanel.Visibility = p.AutoDeployOnPublish ? Visibility.Visible : Visibility.Collapsed;
-        RemoteIisHostTextBox.Text = p.RemoteIisHostPath ?? string.Empty;
-        RemoteAutoCreateIisSiteToggle.IsChecked = p.RemoteAutoCreateIisSite;
-        foreach (var binding in p.RemoteIisBindings)
+        RemoteIisToggle.IsChecked = p.RemoteIisEnabled;
+        RemoteEnvironmentsSectionPanel.Visibility = p.RemoteIisEnabled ? Visibility.Visible : Visibility.Collapsed;
+
+        foreach (var env in p.RemoteEnvironments)
         {
-            _remoteBindings.Add(binding);
+            _remoteEnvironments.Add(env);
         }
+
+        // One shared root for every dev-server environment, same reasoning as LocalHostRootPathTextBox.
+        RemoteHostRootPathTextBox.Text = p.RemoteEnvironments.FirstOrDefault(env => !string.IsNullOrWhiteSpace(env.HostRootPath))?.HostRootPath ?? string.Empty;
     }
 
     private void BrowseCsproj_Click(object sender, RoutedEventArgs e)
@@ -130,15 +160,6 @@ public partial class ProjectEditDialog : Wpf.Ui.Controls.FluentWindow
         }
     }
 
-    private void BrowseIisHost_Click(object sender, RoutedEventArgs e)
-    {
-        using var dialog = new System.Windows.Forms.FolderBrowserDialog();
-        if (dialog.ShowDialog() == System.Windows.Forms.DialogResult.OK)
-        {
-            IisHostTextBox.Text = dialog.SelectedPath;
-        }
-    }
-
     private void BrowseAppConfigPath_Click(object sender, RoutedEventArgs e)
     {
         var dialog = new OpenFileDialog { Filter = "Config files (*.config)|*.config|All files (*.*)|*.*" };
@@ -148,36 +169,106 @@ public partial class ProjectEditDialog : Wpf.Ui.Controls.FluentWindow
         }
     }
 
-    private void AddLocalBindingButton_Click(object sender, RoutedEventArgs e) =>
-        _localBindings.Add(new IisBinding { Protocol = "http", IpAddress = "*", Port = 80, HostName = null });
+    private void BrowseLocalHostRootPath_Click(object sender, RoutedEventArgs e)
+    {
+        using var dialog = new System.Windows.Forms.FolderBrowserDialog();
+        if (dialog.ShowDialog() == System.Windows.Forms.DialogResult.OK)
+        {
+            LocalHostRootPathTextBox.Text = dialog.SelectedPath;
+        }
+    }
+
+    private void LocalIisToggle_Toggled(object sender, RoutedEventArgs e) =>
+        LocalEnvironmentsSectionPanel.Visibility = LocalIisToggle.IsChecked == true ? Visibility.Visible : Visibility.Collapsed;
+
+    private void RemoteIisToggle_Toggled(object sender, RoutedEventArgs e) =>
+        RemoteEnvironmentsSectionPanel.Visibility = RemoteIisToggle.IsChecked == true ? Visibility.Visible : Visibility.Collapsed;
+
+    private DeploymentEnvironment NewEnvironment() =>
+        new() { Name = _defaultEnvironmentName ?? _environmentNames.FirstOrDefault() ?? "Environment" };
+
+    private void AddLocalEnvironmentButton_Click(object sender, RoutedEventArgs e) => _localEnvironments.Add(NewEnvironment());
+
+    private void RemoveLocalEnvironmentButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (LocalEnvironmentsDataGrid.SelectedItem is DeploymentEnvironment env)
+        {
+            _localEnvironments.Remove(env);
+            LocalEnvironmentBindingsDataGrid.ItemsSource = null;
+        }
+    }
+
+    private void LocalEnvironmentsDataGrid_SelectionChanged(object sender, SelectionChangedEventArgs e) =>
+        LocalEnvironmentBindingsDataGrid.ItemsSource = LocalEnvironmentsDataGrid.SelectedItem is DeploymentEnvironment env ? env.Bindings : null;
+
+    private void AddLocalBindingButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (LocalEnvironmentsDataGrid.SelectedItem is not DeploymentEnvironment env)
+        {
+            MessageBox.Show("Select a local environment first.", "PublishTool", MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
+        }
+
+        env.Bindings.Add(new IisBinding { Protocol = "http", IpAddress = "*", Port = 80, HostName = null });
+        LocalEnvironmentBindingsDataGrid.ItemsSource = null;
+        LocalEnvironmentBindingsDataGrid.ItemsSource = env.Bindings;
+    }
 
     private void RemoveLocalBindingButton_Click(object sender, RoutedEventArgs e)
     {
-        if (LocalIisBindingsDataGrid.SelectedItem is IisBinding binding)
+        if (LocalEnvironmentsDataGrid.SelectedItem is not DeploymentEnvironment env)
         {
-            _localBindings.Remove(binding);
+            return;
+        }
+
+        if (LocalEnvironmentBindingsDataGrid.SelectedItem is IisBinding binding)
+        {
+            env.Bindings.Remove(binding);
+            LocalEnvironmentBindingsDataGrid.ItemsSource = null;
+            LocalEnvironmentBindingsDataGrid.ItemsSource = env.Bindings;
         }
     }
 
-    private void AddRemoteBindingButton_Click(object sender, RoutedEventArgs e) =>
-        _remoteBindings.Add(new IisBinding { Protocol = "http", IpAddress = "*", Port = 80, HostName = null });
+    private void AddRemoteEnvironmentButton_Click(object sender, RoutedEventArgs e) => _remoteEnvironments.Add(NewEnvironment());
+
+    private void RemoveRemoteEnvironmentButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (RemoteEnvironmentsDataGrid.SelectedItem is DeploymentEnvironment env)
+        {
+            _remoteEnvironments.Remove(env);
+            RemoteEnvironmentBindingsDataGrid.ItemsSource = null;
+        }
+    }
+
+    private void RemoteEnvironmentsDataGrid_SelectionChanged(object sender, SelectionChangedEventArgs e) =>
+        RemoteEnvironmentBindingsDataGrid.ItemsSource = RemoteEnvironmentsDataGrid.SelectedItem is DeploymentEnvironment env ? env.Bindings : null;
+
+    private void AddRemoteBindingButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (RemoteEnvironmentsDataGrid.SelectedItem is not DeploymentEnvironment env)
+        {
+            MessageBox.Show("Select a dev-server environment first.", "PublishTool", MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
+        }
+
+        env.Bindings.Add(new IisBinding { Protocol = "http", IpAddress = "*", Port = 80, HostName = null });
+        RemoteEnvironmentBindingsDataGrid.ItemsSource = null;
+        RemoteEnvironmentBindingsDataGrid.ItemsSource = env.Bindings;
+    }
 
     private void RemoveRemoteBindingButton_Click(object sender, RoutedEventArgs e)
     {
-        if (RemoteIisBindingsDataGrid.SelectedItem is IisBinding binding)
+        if (RemoteEnvironmentsDataGrid.SelectedItem is not DeploymentEnvironment env)
         {
-            _remoteBindings.Remove(binding);
+            return;
         }
-    }
 
-    private void LocalIisDeploymentToggle_Toggled(object sender, RoutedEventArgs e)
-    {
-        LocalIisDeploymentPanel.Visibility = LocalIisDeploymentToggle.IsChecked == true ? Visibility.Visible : Visibility.Collapsed;
-    }
-
-    private void AutoDeployOnPublishToggle_Toggled(object sender, RoutedEventArgs e)
-    {
-        RemoteIisDeployPanel.Visibility = AutoDeployOnPublishToggle.IsChecked == true ? Visibility.Visible : Visibility.Collapsed;
+        if (RemoteEnvironmentBindingsDataGrid.SelectedItem is IisBinding binding)
+        {
+            env.Bindings.Remove(binding);
+            RemoteEnvironmentBindingsDataGrid.ItemsSource = null;
+            RemoteEnvironmentBindingsDataGrid.ItemsSource = env.Bindings;
+        }
     }
 
     private void UseAppConfigToggle_Toggled(object sender, RoutedEventArgs e)
@@ -231,31 +322,16 @@ public partial class ProjectEditDialog : Wpf.Ui.Controls.FluentWindow
             return;
         }
 
-        var localIisDeployment = LocalIisDeploymentToggle.IsChecked == true;
-        if (localIisDeployment && string.IsNullOrWhiteSpace(IisHostTextBox.Text))
+        var localIisEnabled = LocalIisToggle.IsChecked == true;
+        var remoteIisEnabled = RemoteIisToggle.IsChecked == true;
+
+        if (localIisEnabled && !ValidateEnvironments(_localEnvironments, "local"))
         {
-            MessageBox.Show(
-                "Local IIS Deployment is on but no host folder was entered. Fill it in, or turn the toggle off.",
-                "PublishTool", MessageBoxButton.OK, MessageBoxImage.Warning);
             return;
         }
 
-        var autoCreateIisSite = AutoCreateIisSiteToggle.IsChecked == true;
-        if (localIisDeployment && autoCreateIisSite && _localBindings.Count == 0)
+        if (remoteIisEnabled && !ValidateEnvironments(_remoteEnvironments, "dev-server"))
         {
-            MessageBox.Show(
-                "Auto-create local IIS site is on but no bindings were added. Add at least one, or turn the toggle off.",
-                "PublishTool", MessageBoxButton.OK, MessageBoxImage.Warning);
-            return;
-        }
-
-        var autoDeployOnPublish = AutoDeployOnPublishToggle.IsChecked == true;
-        var remoteAutoCreateIisSite = RemoteAutoCreateIisSiteToggle.IsChecked == true;
-        if (autoDeployOnPublish && remoteAutoCreateIisSite && _remoteBindings.Count == 0)
-        {
-            MessageBox.Show(
-                "Auto-create dev-server IIS site is on but no bindings were added. Add at least one, or turn the toggle off.",
-                "PublishTool", MessageBoxButton.OK, MessageBoxImage.Warning);
             return;
         }
 
@@ -280,6 +356,20 @@ public partial class ProjectEditDialog : Wpf.Ui.Controls.FluentWindow
         var filterType = (EventLogFilterTypeComboBox.SelectedItem as System.Windows.Controls.ComboBoxItem)?.Tag as string ?? EventLogFilterTypes.Source;
         var appConfigProvider = AppConfigTypeComboBox.SelectedItem as IAppConfigProvider;
 
+        // One shared root for every local (resp. dev-server) environment, not a per-row setting --
+        // see LocalHostRootPathTextBox/RemoteHostRootPathTextBox.
+        var localHostRootPath = string.IsNullOrWhiteSpace(LocalHostRootPathTextBox.Text) ? null : LocalHostRootPathTextBox.Text.Trim();
+        foreach (var env in _localEnvironments)
+        {
+            env.HostRootPath = localHostRootPath;
+        }
+
+        var remoteHostRootPath = string.IsNullOrWhiteSpace(RemoteHostRootPathTextBox.Text) ? null : RemoteHostRootPathTextBox.Text.Trim();
+        foreach (var env in _remoteEnvironments)
+        {
+            env.HostRootPath = remoteHostRootPath;
+        }
+
         var config = new ProjectConfig
         {
             Name = NameTextBox.Text.Trim(),
@@ -288,11 +378,9 @@ public partial class ProjectEditDialog : Wpf.Ui.Controls.FluentWindow
             CsprojPath = CsprojTextBox.Text.Trim(),
             PubxmlName = PubxmlTextBox.Text.Trim(),
             AssemblyInfoPath = string.IsNullOrWhiteSpace(AssemblyInfoTextBox.Text) ? null : AssemblyInfoTextBox.Text.Trim(),
-            LocalIisDeploymentEnabled = localIisDeployment,
-            IisHostPath = string.IsNullOrWhiteSpace(IisHostTextBox.Text) ? null : IisHostTextBox.Text.Trim(),
             ExtraPublishTargets = string.IsNullOrWhiteSpace(ExtraTargetsTextBox.Text) ? null : ExtraTargetsTextBox.Text.Trim(),
-            AutoCreateIisSite = autoCreateIisSite,
-            IisBindings = _localBindings.ToList(),
+            LocalIisEnabled = localIisEnabled,
+            LocalEnvironments = _localEnvironments.ToList(),
             SdkStyleProject = SdkStyleProjectToggle.IsChecked == true,
             ListInHosting = ListInHostingToggle.IsChecked == true,
             UseAppConfig = useAppConfig,
@@ -305,10 +393,8 @@ public partial class ProjectEditDialog : Wpf.Ui.Controls.FluentWindow
             EventLogMachineName = useEventLog && !string.IsNullOrWhiteSpace(EventLogMachineTextBox.Text) ? EventLogMachineTextBox.Text.Trim() : null,
             EventLogUsername = useEventLog && !string.IsNullOrWhiteSpace(EventLogUsernameTextBox.Text) ? EventLogUsernameTextBox.Text.Trim() : null,
             EventLogProtectedPassword = _existing?.EventLogProtectedPassword,
-            RemoteIisHostPath = string.IsNullOrWhiteSpace(RemoteIisHostTextBox.Text) ? null : RemoteIisHostTextBox.Text.Trim(),
-            RemoteIisBindings = _remoteBindings.ToList(),
-            RemoteAutoCreateIisSite = remoteAutoCreateIisSite,
-            AutoDeployOnPublish = autoDeployOnPublish,
+            RemoteIisEnabled = remoteIisEnabled,
+            RemoteEnvironments = _remoteEnvironments.ToList(),
         };
 
         try
@@ -322,6 +408,34 @@ public partial class ProjectEditDialog : Wpf.Ui.Controls.FluentWindow
         }
 
         DialogResult = true;
+    }
+
+    /// <summary>Duplicate names are ambiguous (which one would a publish deploy to?) and an
+    /// auto-create site with no bindings can't actually create anything -- both block save with a
+    /// message naming the offending environment.</summary>
+    private bool ValidateEnvironments(IEnumerable<DeploymentEnvironment> environments, string kind)
+    {
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var env in environments)
+        {
+            if (!seen.Add(env.Name))
+            {
+                MessageBox.Show(
+                    $"'{env.Name}' is configured more than once under {kind} environments. Each environment can only appear once.",
+                    "PublishTool", MessageBoxButton.OK, MessageBoxImage.Warning);
+                return false;
+            }
+
+            if (env.AutoCreateSite && env.Bindings.Count == 0)
+            {
+                MessageBox.Show(
+                    $"'{env.Name}' ({kind}) has auto-create site on but no bindings were added. Add at least one, or turn it off.",
+                    "PublishTool", MessageBoxButton.OK, MessageBoxImage.Warning);
+                return false;
+            }
+        }
+
+        return true;
     }
 
     private void CancelButton_Click(object sender, RoutedEventArgs e) => DialogResult = false;

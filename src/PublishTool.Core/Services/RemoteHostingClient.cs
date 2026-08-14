@@ -183,16 +183,40 @@ public sealed class RemoteHostingClient
     // ---------------------------------------------------------------------------------------
 
     /// <summary>Extracts an already-uploaded build (identified by the relative manifest path a
-    /// list/upload call returned) and deploys it to the dev server's own IIS, using that project's
-    /// <see cref="SharedProjectConfig.RemoteIisHostPath"/>/<see cref="SharedProjectConfig.RemoteIisBindings"/>.
-    /// Called automatically by <see cref="Publisher"/> when a project has
-    /// <see cref="ProjectConfig.AutoDeployOnPublish"/> on, or manually from the Projects tab for a
-    /// specific (possibly older) version.</summary>
-    public async Task DeployAsync(string baseUrl, string? apiKey, string manifestRelativePath, CancellationToken ct = default)
+    /// list/upload call returned) and deploys it to the dev server's own IIS, using the named entry
+    /// from that project's <see cref="SharedProjectConfig.RemoteEnvironments"/>. Called automatically
+    /// by <see cref="Publisher"/> when a publish selects a matching environment, or manually from
+    /// the Projects tab for a specific (possibly older) version.</summary>
+    public async Task DeployAsync(string baseUrl, string? apiKey, string manifestRelativePath, string environmentName, CancellationToken ct = default)
     {
-        using var request = CreateRequest(HttpMethod.Post, baseUrl, $"/api/deploy?path={Uri.EscapeDataString(manifestRelativePath)}", apiKey);
+        using var request = CreateRequest(
+            HttpMethod.Post, baseUrl,
+            $"/api/deploy?path={Uri.EscapeDataString(manifestRelativePath)}&environment={Uri.EscapeDataString(environmentName)}", apiKey);
         using var response = await Http.SendAsync(request, ct);
         await EnsureSuccessAsync(response, "deploy build", ct);
+    }
+
+    // ---------------------------------------------------------------------------------------
+    // Deployment environments (/api/environments) -- the shared counterpart to
+    // LocalEnvironmentRegistry, used by RemoteEnvironmentRegistry when remote mode is on.
+    // ---------------------------------------------------------------------------------------
+
+    public async Task<EnvironmentSettings> GetEnvironmentsAsync(string baseUrl, string? apiKey, CancellationToken ct = default)
+    {
+        using var request = CreateRequest(HttpMethod.Get, baseUrl, "/api/environments", apiKey);
+        using var response = await Http.SendAsync(request, ct);
+        await EnsureSuccessAsync(response, "list deployment environments", ct);
+
+        return await response.Content.ReadFromJsonAsync<EnvironmentSettings>(JsonOptions, ct) ?? new EnvironmentSettings();
+    }
+
+    public async Task SaveEnvironmentsAsync(string baseUrl, string? apiKey, EnvironmentSettings settings, CancellationToken ct = default)
+    {
+        using var request = CreateRequest(HttpMethod.Put, baseUrl, "/api/environments", apiKey);
+        request.Content = JsonContent.Create(settings, options: JsonOptions);
+
+        using var response = await Http.SendAsync(request, ct);
+        await EnsureSuccessAsync(response, "save deployment environments", ct);
     }
 
     // ---------------------------------------------------------------------------------------

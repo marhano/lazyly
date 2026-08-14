@@ -1,5 +1,16 @@
 namespace PublishTool.Core.Models;
 
+/// <summary>Which side of a project's deploy targets a publish (or manual redeploy) goes to --
+/// exactly one, never both at once, since local and remote are fundamentally different mechanisms
+/// (an instant local file copy vs. an HTTP call to the dev server) that a user picks between
+/// explicitly rather than having inferred from environment-name overlap.</summary>
+public enum DeployTarget
+{
+    None,
+    Local,
+    Remote,
+}
+
 public sealed class PublishOptions
 {
     public required string ProjectName { get; set; }
@@ -28,9 +39,19 @@ public sealed class PublishOptions
     /// build is never archived to <see cref="BuildsRoot"/> at all -- it's built straight into a
     /// throwaway staging location and uploaded to <see cref="RemoteHostingUrl"/> instead, so every
     /// dev's local machine doesn't accumulate its own redundant copy of every team build. Local IIS
-    /// deployment (see <see cref="ProjectConfig.LocalIisDeploymentEnabled"/>) is independent of this
-    /// -- a dev can still deploy to their own local IIS for testing while in remote mode.</summary>
+    /// deployment (see <see cref="DeployEnvironmentName"/>) is independent of this -- a dev can
+    /// still deploy to their own local IIS for testing while in remote mode.</summary>
     public bool UseRemoteMode { get; set; }
+
+    /// <summary>Which side (local IIS or the dev server) this publish deploys to, if either. Gates
+    /// <see cref="DeployEnvironmentName"/> -- <see cref="DeployTarget.None"/> means archive/upload
+    /// only, no deploy at all.</summary>
+    public DeployTarget DeployTarget { get; set; } = DeployTarget.None;
+
+    /// <summary>Which named environment, within whichever list <see cref="DeployTarget"/> selects
+    /// (<see cref="ProjectConfig.LocalEnvironments"/> or <see cref="ProjectConfig.RemoteEnvironments"/>),
+    /// this publish deploys to. Ignored when <see cref="DeployTarget"/> is <see cref="DeployTarget.None"/>.</summary>
+    public string? DeployEnvironmentName { get; set; }
 
     public string? MsBuildPath { get; set; }
 

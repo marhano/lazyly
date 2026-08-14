@@ -47,40 +47,51 @@
                     <ui:Button Grid.Row="2" Grid.Column="2" Content="Browse..." Icon="{ui:SymbolIcon FolderOpen24}" Width="100" Click="BrowseAssemblyInfo_Click"/>
                 </Grid>
 
-                <ui:ToggleSwitch x:Name="LocalIisDeploymentToggle" Content="Local IIS Deployment" Margin="0,16,0,0"
-                                 Checked="LocalIisDeploymentToggle_Toggled" Unchecked="LocalIisDeploymentToggle_Toggled"
-                                 ToolTip="Per-user: when on, every publish you do of this project also deploys straight to your own local IIS. Teammates decide this independently for their own machines."/>
-                <StackPanel x:Name="LocalIisDeploymentPanel" Visibility="Collapsed" Margin="0,10,0,0">
-                    <Grid>
-                        <Grid.RowDefinitions>
-                            <RowDefinition Height="Auto"/>
-                        </Grid.RowDefinitions>
+                <ui:ToggleSwitch x:Name="LocalIisToggle" Content="Local IIS" Margin="0,16,0,0"
+                                 Checked="LocalIisToggle_Toggled" Unchecked="LocalIisToggle_Toggled"
+                                 ToolTip="Per-user: when on, every publish you do of this project can deploy straight to your own local IIS. Teammates decide this independently for their own machines."/>
+                <StackPanel x:Name="LocalEnvironmentsSectionPanel" Visibility="Collapsed" Margin="0,10,0,0">
+                    <TextBlock Text="Local environments" FontWeight="SemiBold" Margin="0,0,0,4"/>
+                    <TextBlock TextWrapping="Wrap" Margin="0,0,0,10" FontSize="12"
+                               Foreground="{DynamicResource TextFillColorSecondaryBrush}"
+                               Text="Your own deploy targets for quick local testing (e.g. a personal Staging site). Per-user -- teammates configure their own independently. The folder used is always {root}\{project name}\{environment}."/>
+
+                    <Grid Margin="0,0,0,10">
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="150"/>
                             <ColumnDefinition Width="*"/>
                             <ColumnDefinition Width="Auto"/>
                         </Grid.ColumnDefinitions>
-                        <TextBlock Grid.Row="0" Grid.Column="0" Text="IIS host folder" VerticalAlignment="Center"/>
-                        <ui:TextBox Grid.Row="0" Grid.Column="1" x:Name="IisHostTextBox" Margin="0,6,6,6" PlaceholderText="C:\inetpub\wwwroot\MyProject"/>
-                        <ui:Button Grid.Row="0" Grid.Column="2" Content="Browse..." Icon="{ui:SymbolIcon FolderOpen24}" Width="100" Click="BrowseIisHost_Click"/>
+                        <TextBlock Grid.Column="0" Text="Host root path" VerticalAlignment="Center"/>
+                        <ui:TextBox Grid.Column="1" x:Name="LocalHostRootPathTextBox" Margin="0,0,6,0" PlaceholderText="C:\PublishToolServerTest"/>
+                        <ui:Button Grid.Column="2" Content="Browse..." Icon="{ui:SymbolIcon FolderOpen24}" Width="100" Click="BrowseLocalHostRootPath_Click"/>
                     </Grid>
 
-                    <ui:ToggleSwitch x:Name="AutoCreateIisSiteToggle" Content="Auto-create local IIS site if missing" Margin="0,10,0,0"/>
+                    <DataGrid x:Name="LocalEnvironmentsDataGrid" Height="120" AutoGenerateColumns="False" CanUserAddRows="False"
+                              SelectionChanged="LocalEnvironmentsDataGrid_SelectionChanged">
+                        <DataGrid.Columns>
+                            <DataGridComboBoxColumn x:Name="LocalEnvironmentNameColumn" Header="Environment" SelectedItemBinding="{Binding Name}" Width="*"/>
+                            <DataGridCheckBoxColumn Header="Auto-create site" Binding="{Binding AutoCreateSite}" Width="110"/>
+                        </DataGrid.Columns>
+                    </DataGrid>
+                    <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
+                        <ui:Button Content="Add environment" Icon="{ui:SymbolIcon Add24}" Width="150" Click="AddLocalEnvironmentButton_Click"/>
+                        <ui:Button Content="Remove environment" Icon="{ui:SymbolIcon Delete24}" Width="160" Margin="10,0,0,0" Click="RemoveLocalEnvironmentButton_Click"/>
+                    </StackPanel>
 
-                    <StackPanel x:Name="LocalIisBindingsPanel" Margin="0,10,0,0">
-                        <TextBlock Text="Local site bindings" Margin="0,0,0,6" Foreground="{DynamicResource TextFillColorSecondaryBrush}"/>
-                        <DataGrid x:Name="LocalIisBindingsDataGrid" Height="110" AutoGenerateColumns="False" CanUserAddRows="False">
-                            <DataGrid.Columns>
-                                <DataGridTextColumn Header="Type" Binding="{Binding Protocol}" Width="80"/>
-                                <DataGridTextColumn Header="IP Address" Binding="{Binding IpAddress}" Width="130"/>
-                                <DataGridTextColumn Header="Port" Binding="{Binding Port}" Width="70"/>
-                                <DataGridTextColumn Header="Host name" Binding="{Binding HostName}" Width="*"/>
-                            </DataGrid.Columns>
-                        </DataGrid>
-                        <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
-                            <ui:Button Content="Add binding" Icon="{ui:SymbolIcon Add24}" Width="130" Click="AddLocalBindingButton_Click"/>
-                            <ui:Button Content="Remove binding" Icon="{ui:SymbolIcon Delete24}" Width="140" Margin="10,0,0,0" Click="RemoveLocalBindingButton_Click"/>
-                        </StackPanel>
+                    <TextBlock x:Name="LocalEnvironmentBindingsLabel" Text="Site bindings for the selected environment" Margin="0,14,0,6"
+                               Foreground="{DynamicResource TextFillColorSecondaryBrush}"/>
+                    <DataGrid x:Name="LocalEnvironmentBindingsDataGrid" Height="100" AutoGenerateColumns="False" CanUserAddRows="False">
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="Type" Binding="{Binding Protocol}" Width="80"/>
+                            <DataGridTextColumn Header="IP Address" Binding="{Binding IpAddress}" Width="130"/>
+                            <DataGridTextColumn Header="Port" Binding="{Binding Port}" Width="70"/>
+                            <DataGridTextColumn Header="Host name" Binding="{Binding HostName}" Width="*"/>
+                        </DataGrid.Columns>
+                    </DataGrid>
+                    <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
+                        <ui:Button Content="Add binding" Icon="{ui:SymbolIcon Add24}" Width="130" Click="AddLocalBindingButton_Click"/>
+                        <ui:Button Content="Remove binding" Icon="{ui:SymbolIcon Delete24}" Width="140" Margin="10,0,0,0" Click="RemoveLocalBindingButton_Click"/>
                     </StackPanel>
                 </StackPanel>
 
@@ -174,32 +185,39 @@
                     </Grid>
                 </StackPanel>
 
-                <ui:ToggleSwitch x:Name="AutoDeployOnPublishToggle" Content="Auto-deploy to the dev server's IIS after publish" Margin="0,16,0,0"
-                                 Checked="AutoDeployOnPublishToggle_Toggled" Unchecked="AutoDeployOnPublishToggle_Toggled"
-                                 ToolTip="Per-user: only takes effect while &quot;Use dev server for projects&quot; is on in Settings. When on, every upload you make of this project also deploys to the dev-server target below."/>
-                <StackPanel x:Name="RemoteIisDeployPanel" Visibility="Collapsed" Margin="0,10,0,0">
-                    <TextBlock Text="Dev-server IIS deploy target" FontWeight="SemiBold" Margin="0,0,0,4"/>
+                <ui:ToggleSwitch x:Name="RemoteIisToggle" Content="Remote IIS" Margin="0,16,0,0"
+                                 Checked="RemoteIisToggle_Toggled" Unchecked="RemoteIisToggle_Toggled"
+                                 ToolTip="Per-user: only takes effect while &quot;Use dev server for projects&quot; is on in Settings. When on, shows this project's dev-server deploy target and offers it as a Publish tab option."/>
+                <StackPanel x:Name="RemoteEnvironmentsSectionPanel" Visibility="Collapsed" Margin="0,10,0,0">
+                    <TextBlock Text="Dev-server environments" FontWeight="SemiBold" Margin="0,0,0,4"/>
                     <TextBlock TextWrapping="Wrap" Margin="0,0,0,10" FontSize="12"
                                Foreground="{DynamicResource TextFillColorSecondaryBrush}"
-                               Text="Where this project's builds get deployed on the dev server. Shared -- the same target applies no matter who deploys."/>
-                    <Grid>
-                        <Grid.RowDefinitions>
-                            <RowDefinition Height="Auto"/>
-                        </Grid.RowDefinitions>
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="150"/>
-                            <ColumnDefinition Width="*"/>
-                        </Grid.ColumnDefinitions>
-                        <TextBlock Grid.Row="0" Grid.Column="0" Text="IIS host folder" VerticalAlignment="Center"/>
-                        <ui:TextBox Grid.Row="0" Grid.Column="1" x:Name="RemoteIisHostTextBox" Margin="0,6"
-                                    PlaceholderText="C:\inetpub\wwwroot\MyProject (on the dev server)"/>
-                    </Grid>
+                               Text="Where this project's builds get deployed on the dev server -- e.g. Staging and Production. Shared: the same targets apply no matter who deploys. The folder used is always {root}\{project name}\{environment}."/>
+                    <StackPanel x:Name="RemoteEnvironmentsPanel">
+                        <Grid Margin="0,0,0,10">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="150"/>
+                                <ColumnDefinition Width="*"/>
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Grid.Column="0" Text="Host root path" VerticalAlignment="Center"/>
+                            <ui:TextBox Grid.Column="1" x:Name="RemoteHostRootPathTextBox" PlaceholderText="C:\PublishToolServerTest (on the dev server)"/>
+                        </Grid>
 
-                    <ui:ToggleSwitch x:Name="RemoteAutoCreateIisSiteToggle" Content="Auto-create dev-server IIS site if missing" Margin="0,10,0,0"/>
+                        <DataGrid x:Name="RemoteEnvironmentsDataGrid" Height="120" AutoGenerateColumns="False" CanUserAddRows="False"
+                                  SelectionChanged="RemoteEnvironmentsDataGrid_SelectionChanged">
+                            <DataGrid.Columns>
+                                <DataGridComboBoxColumn x:Name="RemoteEnvironmentNameColumn" Header="Environment" SelectedItemBinding="{Binding Name}" Width="*"/>
+                                <DataGridCheckBoxColumn Header="Auto-create site" Binding="{Binding AutoCreateSite}" Width="110"/>
+                            </DataGrid.Columns>
+                        </DataGrid>
+                        <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
+                            <ui:Button Content="Add environment" Icon="{ui:SymbolIcon Add24}" Width="150" Click="AddRemoteEnvironmentButton_Click"/>
+                            <ui:Button Content="Remove environment" Icon="{ui:SymbolIcon Delete24}" Width="160" Margin="10,0,0,0" Click="RemoveRemoteEnvironmentButton_Click"/>
+                        </StackPanel>
 
-                    <StackPanel Margin="0,10,0,0">
-                        <TextBlock Text="Dev-server site bindings" Margin="0,0,0,6" Foreground="{DynamicResource TextFillColorSecondaryBrush}"/>
-                        <DataGrid x:Name="RemoteIisBindingsDataGrid" Height="110" AutoGenerateColumns="False" CanUserAddRows="False">
+                        <TextBlock Text="Site bindings for the selected environment" Margin="0,14,0,6"
+                                   Foreground="{DynamicResource TextFillColorSecondaryBrush}"/>
+                        <DataGrid x:Name="RemoteEnvironmentBindingsDataGrid" Height="100" AutoGenerateColumns="False" CanUserAddRows="False">
                             <DataGrid.Columns>
                                 <DataGridTextColumn Header="Type" Binding="{Binding Protocol}" Width="80"/>
                                 <DataGridTextColumn Header="IP Address" Binding="{Binding IpAddress}" Width="130"/>

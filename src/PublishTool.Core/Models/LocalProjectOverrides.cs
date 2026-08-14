@@ -14,19 +14,16 @@ public sealed class LocalProjectOverrides
 
     public string? AssemblyInfoPath { get; set; }
 
-    public bool LocalIisDeploymentEnabled { get; set; }
+    public bool LocalIisEnabled { get; set; }
 
-    public string? IisHostPath { get; set; }
+    /// <summary>This dev's own named deploy targets -- see <see cref="ProjectConfig.LocalEnvironments"/>.</summary>
+    public List<DeploymentEnvironment> LocalEnvironments { get; set; } = new();
 
-    public List<IisBinding> IisBindings { get; set; } = new();
-
-    public bool AutoCreateIisSite { get; set; }
+    public bool RemoteIisEnabled { get; set; }
 
     public string? AppConfigPath { get; set; }
 
     /// <summary>DPAPI-bound to this Windows user -- can never be shared, even though
     /// <see cref="SharedProjectConfig.EventLogName"/>'s machine/username fields are shared.</summary>
     public string? EventLogProtectedPassword { get; set; }
-
-    public bool AutoDeployOnPublish { get; set; }
 }

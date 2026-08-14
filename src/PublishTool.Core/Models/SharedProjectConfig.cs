@@ -38,20 +38,13 @@ public sealed class SharedProjectConfig
 
     public string? EventLogUsername { get; set; }
 
-    /// <summary>IIS host path on the dev server itself -- see <see cref="ProjectConfig.RemoteIisHostPath"/>.</summary>
-    public string? RemoteIisHostPath { get; set; }
-
-    public List<IisBinding> RemoteIisBindings { get; set; } = new();
-
-    public bool RemoteAutoCreateIisSite { get; set; }
+    /// <summary>The dev server's named deploy targets for this project -- see
+    /// <see cref="ProjectConfig.RemoteEnvironments"/>.</summary>
+    public List<DeploymentEnvironment> RemoteEnvironments { get; set; } = new();
 
     /// <summary>Extracts the shared half of a full <see cref="ProjectConfig"/> -- the only place
-    /// that mapping should happen, since it needs to stay in sync from two call sites:
-    /// <see cref="Services.RemoteProjectRegistry.AddOrUpdateAsync"/> (editing a project while in
-    /// remote registry mode) and <see cref="Services.Publisher.PublishAsync"/> (which must push
-    /// this project's shared config -- specifically its dev-server deploy target -- to the Hosting
-    /// server before asking it to deploy, even when the publishing dev is in local registry mode;
-    /// otherwise the server has never heard of a project it's being asked to deploy for).</summary>
+    /// that mapping should happen, since <see cref="Services.RemoteProjectRegistry.AddOrUpdateAsync"/>
+    /// needs it kept in sync with every new shared field this model gains.</summary>
     public static SharedProjectConfig FromProjectConfig(ProjectConfig config) => new()
     {
         Name = config.Name,
@@ -69,8 +62,6 @@ public sealed class SharedProjectConfig
         EventLogFilterValue = config.EventLogFilterValue,
         EventLogMachineName = config.EventLogMachineName,
         EventLogUsername = config.EventLogUsername,
-        RemoteIisHostPath = config.RemoteIisHostPath,
-        RemoteIisBindings = config.RemoteIisBindings,
-        RemoteAutoCreateIisSite = config.RemoteAutoCreateIisSite,
+        RemoteEnvironments = config.RemoteEnvironments,
     };
 }

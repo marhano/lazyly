@@ -352,13 +352,57 @@ app.MapPost("/api/projects/{name}/reserve-release-sequence", (HttpRequest reques
 });
 
 // ---------------------------------------------------------------------------------------------
+// /api/environments -- the shared deployment environment name list (Staging/Production/etc.) every
+// PublishTool user picks from when configuring or deploying to a project's environments.
+// ---------------------------------------------------------------------------------------------
+
+app.MapGet("/api/environments", (HttpRequest request, IConfiguration configuration) =>
+{
+    if (!ApiKeyAuth.Validate(request, configuration))
+    {
+        return Results.Unauthorized();
+    }
+
+    var buildsRoot = configuration["BuildsRoot"];
+    if (string.IsNullOrWhiteSpace(buildsRoot) || !Directory.Exists(buildsRoot))
+    {
+        return Results.Problem("BuildsRoot isn't configured or accessible on this server.", statusCode: StatusCodes.Status503ServiceUnavailable);
+    }
+
+    return Results.Ok(new EnvironmentStore().Get(buildsRoot));
+});
+
+app.MapPut("/api/environments", async (HttpRequest request, IConfiguration configuration) =>
+{
+    if (!ApiKeyAuth.Validate(request, configuration))
+    {
+        return Results.Unauthorized();
+    }
+
+    var buildsRoot = configuration["BuildsRoot"];
+    if (string.IsNullOrWhiteSpace(buildsRoot) || !Directory.Exists(buildsRoot))
+    {
+        return Results.Problem("BuildsRoot isn't configured or accessible on this server.", statusCode: StatusCodes.Status503ServiceUnavailable);
+    }
+
+    var body = await request.ReadFromJsonAsync<EnvironmentSettings>(request.HttpContext.RequestAborted);
+    if (body is null)
+    {
+        return Results.BadRequest(new { error = "Expected a JSON body." });
+    }
+
+    new EnvironmentStore().Save(buildsRoot, body);
+    return Results.Ok(body);
+});
+
+// ---------------------------------------------------------------------------------------------
 // /api/deploy -- extracts an already-uploaded build and makes it live on THIS server's own IIS,
 // using the project's shared Remote* deploy target. Requires the app pool identity to have IIS
 // management rights on this machine (see the plan's operational-requirement note) -- a real
 // escalation from the read/write-BuildsRoot-only surface above.
 // ---------------------------------------------------------------------------------------------
 
-app.MapPost("/api/deploy", async (HttpRequest request, IConfiguration configuration, ILoggerFactory loggerFactory, string path) =>
+app.MapPost("/api/deploy", async (HttpRequest request, IConfiguration configuration, ILoggerFactory loggerFactory, string path, string environment) =>
 {
     if (!ApiKeyAuth.Validate(request, configuration))
     {
@@ -389,9 +433,11 @@ app.MapPost("/api/deploy", async (HttpRequest request, IConfiguration configurat
     }
 
     var project = new SharedProjectStore().GetProject(buildsRoot, manifest.ProjectName);
-    if (project is null || string.IsNullOrWhiteSpace(project.RemoteIisHostPath))
+    var deployEnvironment = project?.RemoteEnvironments.FirstOrDefault(e => string.Equals(e.Name, environment, StringComparison.OrdinalIgnoreCase));
+    var hostPath = deployEnvironment?.ResolveHostPath(manifest.ProjectName);
+    if (deployEnvironment is null || hostPath is null)
     {
-        return Results.BadRequest(new { error = $"'{manifest.ProjectName}' has no dev-server IIS deploy target configured." });
+        return Results.BadRequest(new { error = $"'{manifest.ProjectName}' has no '{environment}' dev-server deploy target configured." });
     }
 
     var stagingDir = Path.Combine(Path.GetTempPath(), "PublishTool.Hosting", Guid.NewGuid().ToString("N"));
@@ -402,10 +448,10 @@ app.MapPost("/api/deploy", async (HttpRequest request, IConfiguration configurat
 
         var deployer = new BuildDeployer(new LoggerOutputSink(loggerFactory.CreateLogger("Deploy")));
         await deployer.DeployAsync(
-            project.Name, project.RemoteIisHostPath!, project.RemoteIisBindings, project.RemoteAutoCreateIisSite,
+            deployEnvironment.ResolveSiteName(manifest.ProjectName), hostPath, deployEnvironment.Bindings, deployEnvironment.AutoCreateSite,
             stagingDir, request.HttpContext.RequestAborted);
 
-        return Results.Ok(new { deployed = true, project = project.Name, hostPath = project.RemoteIisHostPath });
+        return Results.Ok(new { deployed = true, project = manifest.ProjectName, environment = deployEnvironment.Name, hostPath });
     }
     catch (Exception ex)
     {

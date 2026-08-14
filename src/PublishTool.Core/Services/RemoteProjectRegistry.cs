@@ -113,11 +113,9 @@ public sealed class RemoteProjectRegistry : IProjectRegistry
             CsprojPath = local.CsprojPath ?? string.Empty,
             PubxmlName = shared.PubxmlName,
             AssemblyInfoPath = local.AssemblyInfoPath,
-            IisHostPath = local.IisHostPath,
             ExtraPublishTargets = shared.ExtraPublishTargets,
-            LocalIisDeploymentEnabled = local.LocalIisDeploymentEnabled,
-            AutoCreateIisSite = local.AutoCreateIisSite,
-            IisBindings = local.IisBindings,
+            LocalIisEnabled = local.LocalIisEnabled,
+            LocalEnvironments = local.LocalEnvironments,
             SdkStyleProject = shared.SdkStyleProject,
             ListInHosting = shared.ListInHosting,
             UseAppConfig = shared.UseAppConfig,
@@ -130,10 +128,8 @@ public sealed class RemoteProjectRegistry : IProjectRegistry
             EventLogMachineName = shared.EventLogMachineName,
             EventLogUsername = shared.EventLogUsername,
             EventLogProtectedPassword = local.EventLogProtectedPassword,
-            RemoteIisHostPath = shared.RemoteIisHostPath,
-            RemoteIisBindings = shared.RemoteIisBindings,
-            RemoteAutoCreateIisSite = shared.RemoteAutoCreateIisSite,
-            AutoDeployOnPublish = local.AutoDeployOnPublish,
+            RemoteIisEnabled = local.RemoteIisEnabled,
+            RemoteEnvironments = shared.RemoteEnvironments,
         };
     }
 
@@ -141,12 +137,10 @@ public sealed class RemoteProjectRegistry : IProjectRegistry
     {
         CsprojPath = config.CsprojPath,
         AssemblyInfoPath = config.AssemblyInfoPath,
-        LocalIisDeploymentEnabled = config.LocalIisDeploymentEnabled,
-        IisHostPath = config.IisHostPath,
-        IisBindings = config.IisBindings,
-        AutoCreateIisSite = config.AutoCreateIisSite,
+        LocalIisEnabled = config.LocalIisEnabled,
+        LocalEnvironments = config.LocalEnvironments,
+        RemoteIisEnabled = config.RemoteIisEnabled,
         AppConfigPath = config.AppConfigPath,
         EventLogProtectedPassword = config.EventLogProtectedPassword,
-        AutoDeployOnPublish = config.AutoDeployOnPublish,
     };
 }

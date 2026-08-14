@@ -24,10 +24,6 @@ public sealed class ProjectConfig
 
     public string? AssemblyInfoPath { get; set; }
 
-    /// <summary>Local IIS deploy target's host folder. Null/empty means this project has no local
-    /// deploy target -- only meaningful when <see cref="LocalIisDeploymentEnabled"/> is true.</summary>
-    public string? IisHostPath { get; set; }
-
     /// <summary>
     /// Extra MSBuild targets (semicolon-separated) to force alongside the default build/publish
     /// target, for projects whose package .targets files don't hook into this MSBuild toolset's
@@ -35,22 +31,19 @@ public sealed class ProjectConfig
     /// </summary>
     public string? ExtraPublishTargets { get; set; }
 
-    /// <summary>Whether this dev's publishes of this project should also deploy straight to
-    /// <see cref="IisHostPath"/> on this machine. Local/per-user -- one dev may want every publish
-    /// to land on their own local IIS for quick testing while a teammate on the same project
-    /// never deploys locally at all. When false, <see cref="IisHostPath"/>/<see cref="IisBindings"/>/
-    /// <see cref="AutoCreateIisSite"/> are unused (and can be left unset).</summary>
-    public bool LocalIisDeploymentEnabled { get; set; }
+    /// <summary>Whether this dev has local IIS deployment turned on for this project at all.
+    /// Local/per-user -- one dev may enable it while a teammate on the same project never deploys
+    /// locally. Purely gates visibility/availability: when false, <see cref="LocalEnvironments"/>
+    /// never appears as a deploy option on the Publish tab or Projects tab, regardless of what's
+    /// configured in it.</summary>
+    public bool LocalIisEnabled { get; set; }
 
-    /// <summary>
-    /// When true, publish ensures an IIS site named after this project exists before mirroring
-    /// files into <see cref="IisHostPath"/> -- creating one with <see cref="IisBindings"/> if
-    /// it's not already there. Never modifies an existing site. Only takes effect when
-    /// <see cref="LocalIisDeploymentEnabled"/> is also true.
-    /// </summary>
-    public bool AutoCreateIisSite { get; set; }
-
-    public List<IisBinding> IisBindings { get; set; } = new();
+    /// <summary>This dev's own deploy targets (e.g. a personal Staging site) for quick local
+    /// testing -- named entries matching <see cref="EnvironmentSettings"/>. Local/per-user: one dev
+    /// may configure a "Staging" environment here while a teammate on the same project never
+    /// deploys locally at all. Only offered as a deploy option while <see cref="LocalIisEnabled"/>
+    /// is true.</summary>
+    public List<DeploymentEnvironment> LocalEnvironments { get; set; } = new();
 
     /// <summary>
     /// True for modern SDK-style projects (e.g. ASP.NET Core), which publish via an explicit
@@ -113,26 +106,17 @@ public sealed class ProjectConfig
     /// a username is set, the GUI prompts for the password each time instead.</summary>
     public string? EventLogProtectedPassword { get; set; }
 
-    /// <summary>IIS host path on the dev server this project should be deployed to when uploaded to
-    /// Remote Build Hosting -- distinct from <see cref="IisHostPath"/>, which is this dev's own
-    /// local IIS target. Shared team-wide (see <see cref="Services.RemoteProjectRegistry"/>). Null
-    /// means no dev-server deploy target is configured, so remote deploy is skipped.</summary>
-    public string? RemoteIisHostPath { get; set; }
+    /// <summary>Whether this dev has dev-server IIS deployment turned on for this project.
+    /// Local/per-user, same reasoning as <see cref="LocalIisEnabled"/> -- each dev decides
+    /// independently whether they want the dev-server deploy option available to them, even though
+    /// <see cref="RemoteEnvironments"/> itself is shared team-wide. Purely gates visibility: when
+    /// false, remote deploy never appears as an option regardless of what's configured.</summary>
+    public bool RemoteIisEnabled { get; set; }
 
-    /// <summary>Bindings for the dev-server IIS site, only used if <see cref="RemoteAutoCreateIisSite"/>
-    /// is true. Shared team-wide -- distinct from <see cref="IisBindings"/> (this dev's local site).</summary>
-    public List<IisBinding> RemoteIisBindings { get; set; } = new();
-
-    /// <summary>Whether a remote deploy should create the dev-server IIS site if it doesn't already
-    /// exist, mirroring <see cref="AutoCreateIisSite"/> for the local case. Shared team-wide.</summary>
-    public bool RemoteAutoCreateIisSite { get; set; }
-
-    /// <summary>Whether a successful upload to the dev server (which happens for every publish
-    /// while <see cref="AppSettings.UseRemoteMode"/> is on -- see <see cref="Services.Publisher"/>)
-    /// should also auto-deploy to the dev server's IIS via <see cref="RemoteIisHostPath"/>.
-    /// Deliberately local/per-user, not shared -- each dev decides independently whether their own
-    /// publishes of a shared project should also go live on the dev server, versus just archiving
-    /// there for someone else to deploy manually from the Projects tab. Only takes effect when
-    /// <see cref="RemoteIisHostPath"/> is also configured.</summary>
-    public bool AutoDeployOnPublish { get; set; }
+    /// <summary>The dev server's deploy targets for this project -- named entries matching
+    /// <see cref="EnvironmentSettings"/>, e.g. "Staging" and "Production" each with their own root
+    /// path and bindings. Shared team-wide (see <see cref="Services.RemoteProjectRegistry"/>) --
+    /// the same targets apply no matter which teammate deploys. Only offered as a deploy option
+    /// while <see cref="RemoteIisEnabled"/> is true (this dev's own choice) and remote mode is on.</summary>
+    public List<DeploymentEnvironment> RemoteEnvironments { get; set; } = new();
 }

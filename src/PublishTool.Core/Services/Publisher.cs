@@ -195,15 +195,19 @@ public sealed class Publisher
                 // applies its own SetLatest from that when it accepts the upload, same as marking
                 // latest locally does below, just server-side (see BuildUploadHandler).
 
-                if (project.AutoDeployOnPublish && !string.IsNullOrWhiteSpace(project.RemoteIisHostPath))
+                var remoteEnvironment = options.DeployTarget == DeployTarget.Remote && project.RemoteIisEnabled && options.DeployEnvironmentName is not null
+                    ? project.RemoteEnvironments.FirstOrDefault(e => string.Equals(e.Name, options.DeployEnvironmentName, StringComparison.OrdinalIgnoreCase))
+                    : null;
+
+                if (remoteEnvironment is not null)
                 {
-                    _output.Stage("Deploying to dev server IIS...");
-                    await _remoteHostingClient.DeployAsync(options.RemoteHostingUrl!, options.RemoteHostingApiKey, remoteManifestPath, ct);
-                    _output.Info("Deployed to dev server IIS.");
+                    _output.Stage($"Deploying to dev server IIS ({remoteEnvironment.Name})...");
+                    await _remoteHostingClient.DeployAsync(options.RemoteHostingUrl!, options.RemoteHostingApiKey, remoteManifestPath, remoteEnvironment.Name, ct);
+                    _output.Info($"Deployed to dev server IIS ({remoteEnvironment.Name}).");
                 }
-                else if (project.AutoDeployOnPublish)
+                else if (options.DeployTarget == DeployTarget.Remote && options.DeployEnvironmentName is not null)
                 {
-                    _output.Info($"'{project.Name}' has auto-deploy on, but no dev-server IIS host path is configured -- skipping deploy.");
+                    _output.Info($"'{project.Name}' has no dev-server deploy target named '{options.DeployEnvironmentName}' -- skipping deploy.");
                 }
             }
             else
@@ -217,16 +221,27 @@ public sealed class Publisher
                 _output.Info($"Archived to {zipPath}");
             }
 
-            if (project.LocalIisDeploymentEnabled)
+            var localEnvironment = options.DeployTarget == DeployTarget.Local && project.LocalIisEnabled && options.DeployEnvironmentName is not null
+                ? project.LocalEnvironments.FirstOrDefault(e => string.Equals(e.Name, options.DeployEnvironmentName, StringComparison.OrdinalIgnoreCase))
+                : null;
+
+            if (localEnvironment is not null)
             {
-                if (!string.IsNullOrWhiteSpace(project.IisHostPath))
+                var localHostPath = localEnvironment.ResolveHostPath(project.Name);
+                if (localHostPath is not null)
                 {
-                    await _buildDeployer.DeployAsync(project.Name, project.IisHostPath, project.IisBindings, project.AutoCreateIisSite, stagingDir, ct);
+                    await _buildDeployer.DeployAsync(
+                        localEnvironment.ResolveSiteName(project.Name), localHostPath, localEnvironment.Bindings, localEnvironment.AutoCreateSite, stagingDir, ct);
+                    _output.Info($"Deployed {project.Name} v{options.Version} to local IIS ({localEnvironment.Name}).");
                 }
                 else
                 {
-                    _output.Warn($"'{project.Name}' has local IIS deployment on, but no local IIS host folder is configured -- skipping.");
+                    _output.Warn($"'{project.Name}' local environment '{localEnvironment.Name}' has no host root path configured -- skipping.");
                 }
+            }
+            else if (options.DeployTarget == DeployTarget.Local && options.DeployEnvironmentName is not null)
+            {
+                _output.Info($"'{project.Name}' has no local deploy target named '{options.DeployEnvironmentName}' -- skipping local deploy.");
             }
 
             _output.Stage("Publish complete.");

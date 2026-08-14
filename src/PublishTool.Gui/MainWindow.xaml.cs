@@ -88,6 +88,7 @@ public partial class MainWindow : Wpf.Ui.Controls.FluentWindow
         Loaded += async (_, _) =>
         {
             await RefreshProjectsAsync();
+            await RefreshEnvironmentsAsync();
             await RefreshDependenciesAsync(showDialogIfMissing: true);
         };
     }
@@ -436,10 +437,87 @@ public partial class MainWindow : Wpf.Ui.Controls.FluentWindow
         settings.UseRemoteMode = UseRemoteModeToggle.IsChecked == true;
         settings.Save(AppSettings.DefaultPath);
 
-        // Projects tab and IIS tab now read from a different source -- refresh both immediately
-        // so the switch is visible right away instead of on the next unrelated action.
+        // Projects tab, IIS tab, and the environment list now read from a different source --
+        // refresh all three immediately so the switch is visible right away instead of on the
+        // next unrelated action. The Publish tab's "Remote" deploy option also depends on this.
         await RefreshProjectsAsync();
         await RefreshIisStatusAsync();
+        await RefreshEnvironmentsAsync();
+        await LoadDeployTargetOptionsForSelectedProjectAsync();
+    }
+
+    private async Task RefreshEnvironmentsAsync()
+    {
+        var settings = await EnvironmentRegistryFactory.Create().GetAsync();
+        EnvironmentsListBox.ItemsSource = settings.Names
+            .Select(name => string.Equals(name, settings.DefaultName, StringComparison.OrdinalIgnoreCase) ? $"{name} (default)" : name)
+            .ToList();
+    }
+
+    /// <summary>Strips the " (default)" suffix <see cref="RefreshEnvironmentsAsync"/> displays with,
+    /// so callers acting on the selected list item get the real environment name back.</summary>
+    private static string StripDefaultSuffix(string displayName) =>
+        displayName.EndsWith(" (default)", StringComparison.Ordinal) ? displayName[..^" (default)".Length] : displayName;
+
+    private async void AddEnvironmentButton_Click(object sender, RoutedEventArgs e)
+    {
+        var name = NewEnvironmentNameTextBox.Text?.Trim();
+        if (string.IsNullOrWhiteSpace(name))
+        {
+            MessageBox.Show("Enter an environment name first.", "PublishTool", MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
+        }
+
+        var registry = EnvironmentRegistryFactory.Create();
+        var settings = await registry.GetAsync();
+        if (settings.Names.Any(n => string.Equals(n, name, StringComparison.OrdinalIgnoreCase)))
+        {
+            MessageBox.Show($"'{name}' already exists.", "PublishTool", MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
+        }
+
+        settings.Names.Add(name);
+        settings.DefaultName ??= name;
+        await registry.SaveAsync(settings);
+
+        NewEnvironmentNameTextBox.Clear();
+        await RefreshEnvironmentsAsync();
+    }
+
+    private async void RemoveEnvironmentButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (EnvironmentsListBox.SelectedItem is not string selected)
+        {
+            MessageBox.Show("Select an environment in the list first.", "PublishTool", MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
+        }
+
+        var name = StripDefaultSuffix(selected);
+        var registry = EnvironmentRegistryFactory.Create();
+        var settings = await registry.GetAsync();
+        settings.Names.RemoveAll(n => string.Equals(n, name, StringComparison.OrdinalIgnoreCase));
+        if (string.Equals(settings.DefaultName, name, StringComparison.OrdinalIgnoreCase))
+        {
+            settings.DefaultName = settings.Names.FirstOrDefault();
+        }
+
+        await registry.SaveAsync(settings);
+        await RefreshEnvironmentsAsync();
+    }
+
+    private async void MakeDefaultEnvironmentButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (EnvironmentsListBox.SelectedItem is not string selected)
+        {
+            MessageBox.Show("Select an environment in the list first.", "PublishTool", MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
+        }
+
+        var registry = EnvironmentRegistryFactory.Create();
+        var settings = await registry.GetAsync();
+        settings.DefaultName = StripDefaultSuffix(selected);
+        await registry.SaveAsync(settings);
+        await RefreshEnvironmentsAsync();
     }
 
     private void ToggleOutputButton_Click(object sender, RoutedEventArgs e)
@@ -756,9 +834,82 @@ public partial class MainWindow : Wpf.Ui.Controls.FluentWindow
             OtherUpdatesEditor.Clear();
             BacklogItemsEditor.Clear();
             await LoadAppConfigForSelectedProjectAsync();
+            await LoadDeployTargetOptionsForSelectedProjectAsync();
         }
 
         await LoadGitBranchesForSelectedProjectAsync();
+    }
+
+    /// <summary>Populates the Publish tab's "Deploy target" select with "Local"/"Remote" -- only
+    /// the sides this project actually has IIS deployment enabled for (and, for Remote, only while
+    /// remote mode is on). Hides the whole deploy-selection panel entirely when neither side is
+    /// available, so publishing then just archives/uploads with no deploy step.</summary>
+    private async Task LoadDeployTargetOptionsForSelectedProjectAsync()
+    {
+        var projectName = ProjectComboBox.SelectedItem as string;
+        var project = string.IsNullOrWhiteSpace(projectName) ? null : await ProjectRegistryFactory.Create().GetAsync(projectName);
+
+        var targets = new List<string>();
+        if (project?.LocalIisEnabled == true)
+        {
+            targets.Add("Local");
+        }
+
+        if (project?.RemoteIisEnabled == true && AppSettings.Load(AppSettings.DefaultPath).UseRemoteMode)
+        {
+            targets.Add("Remote");
+        }
+
+        if (targets.Count == 0)
+        {
+            DeploySelectionPanel.Visibility = Visibility.Collapsed;
+            DeployTargetComboBox.ItemsSource = null;
+            DeployEnvironmentComboBox.ItemsSource = null;
+            return;
+        }
+
+        DeploySelectionPanel.Visibility = Visibility.Visible;
+        DeployTargetComboBox.ItemsSource = targets;
+        DeployTargetComboBox.SelectedIndex = 0;
+        await PopulateDeployEnvironmentComboBoxAsync();
+    }
+
+    private async void DeployTargetComboBox_SelectionChanged(object sender, System.Windows.Controls.SelectionChangedEventArgs e) =>
+        await PopulateDeployEnvironmentComboBoxAsync();
+
+    /// <summary>Populates the "Deploy to" select with the environment names configured on whichever
+    /// side "Deploy target" currently has selected, defaulting to the Settings-tab default
+    /// environment when it's among them.</summary>
+    private async Task PopulateDeployEnvironmentComboBoxAsync()
+    {
+        var target = DeployTargetComboBox.SelectedItem as string;
+        if (target is null)
+        {
+            return;
+        }
+
+        var projectName = ProjectComboBox.SelectedItem as string;
+        var project = string.IsNullOrWhiteSpace(projectName) ? null : await ProjectRegistryFactory.Create().GetAsync(projectName);
+
+        var names = target == "Local"
+            ? project?.LocalEnvironments.Select(env => env.Name).ToList() ?? new List<string>()
+            : project?.RemoteEnvironments.Select(env => env.Name).ToList() ?? new List<string>();
+
+        DeployEnvironmentComboBox.ItemsSource = names;
+
+        string? defaultName = null;
+        try
+        {
+            defaultName = (await EnvironmentRegistryFactory.Create().GetAsync()).DefaultName;
+        }
+        catch (Exception ex)
+        {
+            _output.Warn($"Couldn't load the default deployment environment: {ex.Message}");
+        }
+
+        DeployEnvironmentComboBox.SelectedItem = defaultName is not null && names.Contains(defaultName, StringComparer.OrdinalIgnoreCase)
+            ? names.First(n => string.Equals(n, defaultName, StringComparison.OrdinalIgnoreCase))
+            : names.FirstOrDefault();
     }
 
     /// <summary>Shows/hides the App Config accordion for the selected project and, if it uses
@@ -1251,6 +1402,16 @@ public partial class MainWindow : Wpf.Ui.Controls.FluentWindow
             args.Add(branch);
         }
 
+        if (DeploySelectionPanel.Visibility == Visibility.Visible &&
+            DeployTargetComboBox.SelectedItem is string deployTarget &&
+            DeployEnvironmentComboBox.SelectedItem is string deployEnvironment)
+        {
+            args.Add("--deploy-target");
+            args.Add(deployTarget.ToLowerInvariant());
+            args.Add("--environment");
+            args.Add(deployEnvironment);
+        }
+
         foreach (var item in FeaturesEditor.Items) { args.Add("--feature"); args.Add(item); }
         foreach (var item in FixesEditor.Items) { args.Add("--fix"); args.Add(item); }
         foreach (var item in OtherUpdatesEditor.Items) { args.Add("--other-update"); args.Add(item); }
@@ -1404,8 +1565,42 @@ public partial class MainWindow : Wpf.Ui.Controls.FluentWindow
             return;
         }
 
+        var iisEnabled = row.IsRemote ? project.RemoteIisEnabled : project.LocalIisEnabled;
+        if (!iisEnabled)
+        {
+            MessageBox.Show(
+                $"{(row.IsRemote ? "Remote" : "Local")} IIS isn't enabled for '{project.Name}' -- turn it on in the project's Edit dialog first.",
+                "PublishTool", MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
+        }
+
+        var environments = row.IsRemote ? project.RemoteEnvironments : project.LocalEnvironments;
+        if (environments.Count == 0)
+        {
+            MessageBox.Show(
+                $"'{project.Name}' has no {(row.IsRemote ? "dev-server" : "local")} environments configured -- add one in the project's Edit dialog first.",
+                "PublishTool", MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
+        }
+
+        DeploymentEnvironment environment;
+        if (environments.Count == 1)
+        {
+            environment = environments[0];
+        }
+        else
+        {
+            var picker = new EnvironmentPickerDialog(project.Name, row.Version, environments.Select(env => env.Name).ToList()) { Owner = this };
+            if (picker.ShowDialog() != true || picker.SelectedEnvironment is not { } chosenName)
+            {
+                return;
+            }
+
+            environment = environments.First(env => env.Name == chosenName);
+        }
+
         var confirm = MessageBox.Show(
-            $"Deploy {project.Name} v{row.Version} now? This overwrites whatever is currently live.",
+            $"Deploy {project.Name} v{row.Version} to '{environment.Name}' now? This overwrites whatever is currently live there.",
             "PublishTool", MessageBoxButton.YesNo, MessageBoxImage.Question);
         if (confirm != MessageBoxResult.Yes)
         {
@@ -1421,15 +1616,17 @@ public partial class MainWindow : Wpf.Ui.Controls.FluentWindow
                     return;
                 }
 
-                await new RemoteHostingClient().DeployAsync(settings.RemoteHostingUrl!, DecryptRemoteHostingApiKey(settings), row.RemoteManifestPath!);
-                _output.Info($"Deployed {project.Name} v{row.Version} to the dev server.");
+                await new RemoteHostingClient().DeployAsync(
+                    settings.RemoteHostingUrl!, DecryptRemoteHostingApiKey(settings), row.RemoteManifestPath!, environment.Name);
+                _output.Info($"Deployed {project.Name} v{row.Version} to the dev server ({environment.Name}).");
             }
             else
             {
-                if (string.IsNullOrWhiteSpace(project.IisHostPath))
+                var hostPath = environment.ResolveHostPath(project.Name);
+                if (hostPath is null)
                 {
                     MessageBox.Show(
-                        $"'{project.Name}' has no local IIS host folder configured -- turn on Local IIS Deployment for it first.",
+                        $"'{environment.Name}' has no host root path configured -- fill it in on the project's Edit dialog first.",
                         "PublishTool", MessageBoxButton.OK, MessageBoxImage.Warning);
                     return;
                 }
@@ -1440,8 +1637,8 @@ public partial class MainWindow : Wpf.Ui.Controls.FluentWindow
                 {
                     await Task.Run(() => System.IO.Compression.ZipFile.ExtractToDirectory(row.ZipPath!, tempDir));
                     await new BuildDeployer(_output).DeployAsync(
-                        project.Name, project.IisHostPath, project.IisBindings, project.AutoCreateIisSite, tempDir);
-                    _output.Info($"Deployed {project.Name} v{row.Version} to local IIS.");
+                        environment.ResolveSiteName(project.Name), hostPath, environment.Bindings, environment.AutoCreateSite, tempDir);
+                    _output.Info($"Deployed {project.Name} v{row.Version} to local IIS ({environment.Name}).");
                 }
                 finally
                 {

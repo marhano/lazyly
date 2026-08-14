@@ -46,6 +46,8 @@
                             <RowDefinition Height="Auto"/>
                             <RowDefinition Height="Auto"/>
                             <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/>
                             <RowDefinition Height="*"/>
                         </Grid.RowDefinitions>
                         <Grid.ColumnDefinitions>
@@ -79,11 +81,34 @@
                                        Foreground="{DynamicResource TextFillColorSecondaryBrush}"
                                        Text="This version already exists -- publishing will overwrite its build and release notes."
                                        Visibility="Collapsed" TextWrapping="Wrap"/>
-                            <ui:ToggleSwitch x:Name="MarkAsLatestToggle" Content="Mark as latest release" Margin="0,10,0,0"
-                                             ToolTip="Shown as &quot;(latest)&quot; next to this build on the hosting site. Only one build per project can be latest -- marking this one un-flags whichever build had it before."/>
                         </StackPanel>
 
-                        <StackPanel Grid.Row="3" Grid.Column="1" Orientation="Horizontal" Margin="0,14,0,0">
+                        <StackPanel Grid.Row="3" Grid.Column="0" Grid.ColumnSpan="2" x:Name="DeploySelectionPanel" Margin="0,6,0,0">
+                            <Grid>
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto"/>
+                                    <RowDefinition Height="Auto"/>
+                                </Grid.RowDefinitions>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="120"/>
+                                    <ColumnDefinition Width="*"/>
+                                </Grid.ColumnDefinitions>
+
+                                <TextBlock Grid.Row="0" Grid.Column="0" Text="Deploy target" VerticalAlignment="Center"/>
+                                <ComboBox Grid.Row="0" Grid.Column="1" x:Name="DeployTargetComboBox" Margin="0,6"
+                                          SelectionChanged="DeployTargetComboBox_SelectionChanged"
+                                          ToolTip="Which side to deploy this publish to -- your own local IIS, or the dev server's. Only shows sides this project has IIS deployment enabled for."/>
+
+                                <TextBlock Grid.Row="1" Grid.Column="0" x:Name="DeployEnvironmentLabel" Text="Deploy to" VerticalAlignment="Center"/>
+                                <ComboBox Grid.Row="1" Grid.Column="1" x:Name="DeployEnvironmentComboBox" Margin="0,6"
+                                          ToolTip="Which named environment (e.g. Staging, Production) within the selected deploy target to deploy to."/>
+                            </Grid>
+                        </StackPanel>
+
+                        <ui:ToggleSwitch Grid.Row="4" Grid.Column="1" x:Name="MarkAsLatestToggle" Content="Mark as latest release" Margin="0,10,0,0"
+                                         ToolTip="Shown as &quot;(latest)&quot; next to this build on the hosting site. Only one build per project can be latest -- marking this one un-flags whichever build had it before."/>
+
+                        <StackPanel Grid.Row="5" Grid.Column="1" Orientation="Horizontal" Margin="0,14,0,0">
                             <ui:Button x:Name="PublishButton" Content="Publish"
                                        Appearance="Primary" Icon="{ui:SymbolIcon Rocket24}"
                                        Width="140" Click="PublishButton_Click"/>
@@ -92,7 +117,7 @@
                                        Width="140" Margin="10,0,0,0" Click="RefreshProjectsButton_Click"/>
                         </StackPanel>
 
-                        <ScrollViewer Grid.Row="4" Grid.Column="0" Grid.ColumnSpan="2" VerticalScrollBarVisibility="Auto" Margin="0,20,0,0">
+                        <ScrollViewer Grid.Row="6" Grid.Column="0" Grid.ColumnSpan="2" VerticalScrollBarVisibility="Auto" Margin="0,20,0,0">
                             <StackPanel>
                                 <ui:CardExpander x:Name="AppConfigExpander" Header="App Config" IsExpanded="False"
                                                   Margin="0,0,0,12" Visibility="Collapsed">
@@ -380,6 +405,7 @@
                 </TabItem>
 
                 <TabItem Header="Settings">
+                    <ScrollViewer VerticalScrollBarVisibility="Auto">
                     <Grid Margin="12">
                         <Grid.RowDefinitions>
                             <RowDefinition Height="Auto"/>
@@ -389,7 +415,8 @@
                             <RowDefinition Height="Auto"/>
                             <RowDefinition Height="Auto"/>
                             <RowDefinition Height="Auto"/>
-                            <RowDefinition Height="*"/>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/>
                         </Grid.RowDefinitions>
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="120"/>
@@ -475,7 +502,34 @@
                                              Margin="0,14,0,0" Checked="UseRemoteModeToggle_Toggled" Unchecked="UseRemoteModeToggle_Toggled"
                                              ToolTip="When on, the Projects tab and IIS tab read from/manage the dev server above instead of this machine. Independent of whether any individual project uploads/deploys its builds there (set per-project in the Projects tab)."/>
                         </StackPanel>
+
+                        <StackPanel Grid.Row="7" Grid.Column="0" Grid.ColumnSpan="2" Margin="0,24,0,0">
+                            <TextBlock Text="Deployment Environments" FontWeight="SemiBold" Margin="0,0,0,6"/>
+                            <TextBlock TextWrapping="Wrap" Margin="0,0,0,10"
+                                       Foreground="{DynamicResource TextFillColorSecondaryBrush}"
+                                       Text="Named deploy targets (e.g. Staging, Production) offered when configuring a project's local/dev-server deploy targets, or picking one to publish to. Local to this machine, unless &quot;Use dev server for projects&quot; above is on -- then shared with your whole team."/>
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+                                <ListBox Grid.Column="0" x:Name="EnvironmentsListBox" Height="120"/>
+                                <StackPanel Grid.Column="1" Margin="10,0,0,0" Width="150">
+                                    <ui:Button Content="Make default" Icon="{ui:SymbolIcon Star24}" HorizontalAlignment="Stretch" Click="MakeDefaultEnvironmentButton_Click"/>
+                                    <ui:Button Content="Remove" Icon="{ui:SymbolIcon Delete24}" Margin="0,8,0,0" HorizontalAlignment="Stretch" Click="RemoveEnvironmentButton_Click"/>
+                                </StackPanel>
+                            </Grid>
+                            <Grid Margin="0,10,0,0">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+                                <ui:TextBox Grid.Column="0" x:Name="NewEnvironmentNameTextBox" PlaceholderText="e.g. Staging" Margin="0,0,6,0"/>
+                                <ui:Button Grid.Column="1" Content="Add" Icon="{ui:SymbolIcon Add24}" Width="100" Click="AddEnvironmentButton_Click"/>
+                            </Grid>
+                        </StackPanel>
                     </Grid>
+                    </ScrollViewer>
                 </TabItem>
 
                 <TabItem Header="Help">

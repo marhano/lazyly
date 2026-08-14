@@ -71,6 +71,16 @@ public static class CommandLineFactory
             Description = "Flag this build as the project's \"latest release\" on the hosting site, " +
                            "un-flagging whichever build previously held that. At most one build per project can be latest.",
         };
+        var deployTargetOption = new Option<string?>("--deploy-target")
+        {
+            Description = "Which side to deploy this publish to: \"local\" (this machine's IIS) or \"remote\" " +
+                           "(the dev server's IIS). Requires --environment. Omit either to archive/upload only.",
+        };
+        var environmentOption = new Option<string?>("--environment", "-e")
+        {
+            Description = "Named deploy target (e.g. Staging, Production) within whichever side --deploy-target " +
+                           "selects, matching an entry in the project's local or dev-server environments.",
+        };
 
         var command = new Command("publish", "Publish a registered project: build, archive, and deploy to IIS.");
         command.Add(projectOption);
@@ -82,9 +92,45 @@ public static class CommandLineFactory
         command.Add(backlogItemOption);
         command.Add(appConfigSettingOption);
         command.Add(markLatestOption);
+        command.Add(deployTargetOption);
+        command.Add(environmentOption);
 
         command.SetAction(async (parseResult, ct) =>
         {
+            var deployTargetRaw = parseResult.GetValue(deployTargetOption);
+            var environmentName = parseResult.GetValue(environmentOption);
+
+            DeployTarget deployTarget;
+            if (string.IsNullOrWhiteSpace(deployTargetRaw))
+            {
+                deployTarget = DeployTarget.None;
+            }
+            else if (string.Equals(deployTargetRaw, "local", StringComparison.OrdinalIgnoreCase))
+            {
+                deployTarget = DeployTarget.Local;
+            }
+            else if (string.Equals(deployTargetRaw, "remote", StringComparison.OrdinalIgnoreCase))
+            {
+                deployTarget = DeployTarget.Remote;
+            }
+            else
+            {
+                output.Error($"Unknown --deploy-target '{deployTargetRaw}'. Valid values: local, remote.");
+                return 1;
+            }
+
+            if (deployTarget != DeployTarget.None && string.IsNullOrWhiteSpace(environmentName))
+            {
+                output.Error("--environment is required when --deploy-target is set.");
+                return 1;
+            }
+
+            if (deployTarget == DeployTarget.None && !string.IsNullOrWhiteSpace(environmentName))
+            {
+                output.Error("--deploy-target is required when --environment is set.");
+                return 1;
+            }
+
             var registry = ProjectRegistryFactory.Create();
             var settings = AppSettings.Load(AppSettings.DefaultPath);
 
@@ -101,6 +147,8 @@ public static class CommandLineFactory
                 ReleaseNotesOtherUpdates = (parseResult.GetValue(otherUpdateOption) ?? Array.Empty<string>()).ToList(),
                 ReleaseNotesBacklogItems = (parseResult.GetValue(backlogItemOption) ?? Array.Empty<string>()).ToList(),
                 MarkAsLatest = parseResult.GetValue(markLatestOption),
+                DeployTarget = deployTarget,
+                DeployEnvironmentName = environmentName,
                 // Whether this uploads to the dev server instead of archiving locally is decided
                 // purely by the global "Use dev server for projects" setting -- see
                 // PublishOptions.UseRemoteMode and Publisher itself.
@@ -203,29 +251,10 @@ public static class CommandLineFactory
         var csprojOption = new Option<string>("--csproj") { Description = "Path to the .csproj file.", Required = true };
         var pubxmlOption = new Option<string>("--pubxml") { Description = "Publish profile name (e.g. FolderProfile).", Required = true };
         var assemblyInfoOption = new Option<string?>("--assembly-info") { Description = "Path to AssemblyInfo.cs, for version stamping (optional)." };
-        var localIisDeploymentOption = new Option<bool>("--local-iis-deployment")
-        {
-            Description = "Deploy every publish of this project straight to --iis-host on this machine. " +
-                           "Off by default -- a project can be registered with no local IIS target at all.",
-        };
-        var iisHostOption = new Option<string?>("--iis-host")
-        {
-            Description = "Directory the latest build is mirrored to for local IIS hosting. Required if --local-iis-deployment is set.",
-        };
         var extraTargetsOption = new Option<string?>("--extra-publish-targets")
         {
             Description = "Semicolon-separated MSBuild targets to force during publish, for packages whose " +
                            "own .targets don't hook into this toolset (e.g. CollectSQLiteInteropFiles). Optional.",
-        };
-        var autoCreateIisSiteOption = new Option<bool>("--auto-create-iis-site")
-        {
-            Description = "Create an IIS site named after this project on publish, if one doesn't already exist " +
-                           "(requires at least one --iis-binding). Never modifies an existing site.",
-        };
-        var iisBindingOption = new Option<string[]>("--iis-binding")
-        {
-            Description = "A site binding as protocol:ip:port:hostname, e.g. http:*:80: or https:*:443:example.com " +
-                           "(hostname may be empty). Repeatable.",
         };
         var sdkStyleOption = new Option<bool>("--sdk-style-project")
         {
@@ -282,11 +311,7 @@ public static class CommandLineFactory
         command.Add(csprojOption);
         command.Add(pubxmlOption);
         command.Add(assemblyInfoOption);
-        command.Add(localIisDeploymentOption);
-        command.Add(iisHostOption);
         command.Add(extraTargetsOption);
-        command.Add(autoCreateIisSiteOption);
-        command.Add(iisBindingOption);
         command.Add(sdkStyleOption);
         command.Add(listInHostingOption);
         command.Add(appConfigTypeOption);
@@ -302,10 +327,6 @@ public static class CommandLineFactory
         {
             try
             {
-                var bindings = (parseResult.GetValue(iisBindingOption) ?? Array.Empty<string>())
-                    .Select(ParseIisBinding)
-                    .ToList();
-
                 var appConfigType = parseResult.GetValue(appConfigTypeOption);
                 var appConfigPath = parseResult.GetValue(appConfigPathOption);
                 if (appConfigType is not null)
@@ -321,13 +342,6 @@ public static class CommandLineFactory
                         output.Error("--app-config-path is required when --app-config-type is set.");
                         return 1;
                     }
-                }
-
-                var localIisDeployment = parseResult.GetValue(localIisDeploymentOption);
-                if (localIisDeployment && string.IsNullOrWhiteSpace(parseResult.GetValue(iisHostOption)))
-                {
-                    output.Error("--iis-host is required when --local-iis-deployment is set.");
-                    return 1;
                 }
 
                 var enableEventLog = parseResult.GetValue(enableEventLogOption);
@@ -356,11 +370,12 @@ public static class CommandLineFactory
                     CsprojPath = parseResult.GetValue(csprojOption)!,
                     PubxmlName = parseResult.GetValue(pubxmlOption)!,
                     AssemblyInfoPath = parseResult.GetValue(assemblyInfoOption),
-                    LocalIisDeploymentEnabled = localIisDeployment,
-                    IisHostPath = parseResult.GetValue(iisHostOption),
                     ExtraPublishTargets = parseResult.GetValue(extraTargetsOption),
-                    AutoCreateIisSite = parseResult.GetValue(autoCreateIisSiteOption),
-                    IisBindings = bindings,
+                    // Environments (local and dev-server deploy targets) have no CLI surface -- an
+                    // add-project update must preserve whatever's already configured via the GUI
+                    // dialog instead of wiping it out just because this command can't express it.
+                    LocalEnvironments = existing?.LocalEnvironments ?? new(),
+                    RemoteEnvironments = existing?.RemoteEnvironments ?? new(),
                     SdkStyleProject = parseResult.GetValue(sdkStyleOption),
                     ListInHosting = parseResult.GetValue(listInHostingOption),
                     UseAppConfig = appConfigType is not null,
@@ -386,25 +401,6 @@ public static class CommandLineFactory
         });
 
         return command;
-    }
-
-    private static IisBinding ParseIisBinding(string raw)
-    {
-        var parts = raw.Split(':', 4);
-        if (parts.Length < 3 || string.IsNullOrWhiteSpace(parts[0]) || !int.TryParse(parts[2], out var port))
-        {
-            throw new ArgumentException(
-                $"Invalid --iis-binding value '{raw}'. Expected protocol:ip:port:hostname, " +
-                "e.g. http:*:80: or https:*:443:example.com.");
-        }
-
-        return new IisBinding
-        {
-            Protocol = parts[0],
-            IpAddress = string.IsNullOrWhiteSpace(parts[1]) ? "*" : parts[1],
-            Port = port,
-            HostName = parts.Length > 3 && !string.IsNullOrWhiteSpace(parts[3]) ? parts[3] : null,
-        };
     }
 
     private static Command BuildRemoveProjectCommand(IOutputSink output)
@@ -448,8 +444,13 @@ public static class CommandLineFactory
 
             foreach (var project in projects)
             {
-                var host = string.IsNullOrWhiteSpace(project.IisHostPath) ? "(no local IIS deployment)" : project.IisHostPath;
-                output.Info($"{project.Name}  ->  {project.CsprojPath}  [{project.PubxmlName}]  host: {host}");
+                var localEnvs = project.LocalEnvironments.Count == 0
+                    ? "(none)"
+                    : string.Join(", ", project.LocalEnvironments.Select(e => e.Name));
+                var remoteEnvs = project.RemoteEnvironments.Count == 0
+                    ? "(none)"
+                    : string.Join(", ", project.RemoteEnvironments.Select(e => e.Name));
+                output.Info($"{project.Name}  ->  {project.CsprojPath}  [{project.PubxmlName}]  local envs: {localEnvs}  dev-server envs: {remoteEnvs}");
             }
 
             return 0;
