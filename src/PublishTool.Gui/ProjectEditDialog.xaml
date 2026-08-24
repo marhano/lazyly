@@ -38,8 +38,9 @@
                     <TextBlock Grid.Row="0" Grid.Column="0" Text="Name" VerticalAlignment="Center"/>
                     <ui:TextBox Grid.Row="0" Grid.Column="1" Grid.ColumnSpan="2" x:Name="NameTextBox" Margin="0,6" PlaceholderText="MyProject"/>
 
-                    <TextBlock Grid.Row="1" Grid.Column="0" Text=".csproj path" VerticalAlignment="Center"/>
-                    <ui:TextBox Grid.Row="1" Grid.Column="1" x:Name="CsprojTextBox" Margin="0,6,6,6" PlaceholderText="C:\src\MyProject\MyProject.csproj"/>
+                    <TextBlock Grid.Row="1" Grid.Column="0" Text=".csproj path (optional)" VerticalAlignment="Center"/>
+                    <ui:TextBox Grid.Row="1" Grid.Column="1" x:Name="CsprojTextBox" Margin="0,6,6,6" PlaceholderText="C:\src\MyProject\MyProject.csproj"
+                                ToolTip="Only needed to Publish this project. Leave blank if you're only registering it to redeploy an existing build, or manage its Event Logs/IIS/firewall rules."/>
                     <ui:Button Grid.Row="1" Grid.Column="2" Content="Browse..." Icon="{ui:SymbolIcon FolderOpen24}" Width="100" Click="BrowseCsproj_Click"/>
 
                     <TextBlock Grid.Row="2" Grid.Column="0" Text="AssemblyInfo.cs&#10;(optional)" VerticalAlignment="Center"/>

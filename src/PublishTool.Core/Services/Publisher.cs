@@ -30,6 +30,12 @@ public sealed class Publisher
             ?? throw new InvalidOperationException(
                 $"Project '{options.ProjectName}' is not registered. Add it first with 'add-project'.");
 
+        if (string.IsNullOrWhiteSpace(project.CsprojPath))
+        {
+            throw new InvalidOperationException(
+                $"'{project.Name}' has no .csproj path configured -- set one in the project's Edit dialog before publishing.");
+        }
+
         if (options.UseRemoteMode && string.IsNullOrWhiteSpace(options.RemoteHostingUrl))
         {
             throw new InvalidOperationException(

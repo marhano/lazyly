@@ -110,7 +110,7 @@ public sealed class RemoteProjectRegistry : IProjectRegistry
             Name = shared.Name,
             ProjectId = shared.ProjectId,
             LastReleaseNotesSequence = shared.LastReleaseNotesSequence,
-            CsprojPath = local.CsprojPath ?? string.Empty,
+            CsprojPath = local.CsprojPath,
             PubxmlName = shared.PubxmlName,
             AssemblyInfoPath = local.AssemblyInfoPath,
             ExtraPublishTargets = shared.ExtraPublishTargets,

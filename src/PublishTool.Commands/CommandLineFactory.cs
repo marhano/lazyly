@@ -207,6 +207,12 @@ public static class CommandLineFactory
                 return 1;
             }
 
+            if (string.IsNullOrWhiteSpace(project.CsprojPath))
+            {
+                output.Error($"'{project.Name}' has no .csproj path configured.");
+                return 1;
+            }
+
             try
             {
                 await new GitService(output).CheckoutAsync(project.CsprojPath, parseResult.GetValue(branchOption)!, ct);
@@ -248,7 +254,12 @@ public static class CommandLineFactory
                            "produces references like BPS-2026-0007. Optional -- release notes are only " +
                            "generated at publish time when this is set.",
         };
-        var csprojOption = new Option<string>("--csproj") { Description = "Path to the .csproj file.", Required = true };
+        var csprojOption = new Option<string?>("--csproj")
+        {
+            Description = "Path to the .csproj file. Optional -- omit for a project registered purely to " +
+                           "deploy/monitor/manage (redeploy an existing build, Event Logs, IIS, firewall rules); " +
+                           "publishing requires this to be set first.",
+        };
         var pubxmlOption = new Option<string>("--pubxml") { Description = "Publish profile name (e.g. FolderProfile).", Required = true };
         var assemblyInfoOption = new Option<string?>("--assembly-info") { Description = "Path to AssemblyInfo.cs, for version stamping (optional)." };
         var extraTargetsOption = new Option<string?>("--extra-publish-targets")
@@ -367,7 +378,7 @@ public static class CommandLineFactory
                     Name = name,
                     ProjectId = parseResult.GetValue(projectIdOption),
                     LastReleaseNotesSequence = existing?.LastReleaseNotesSequence ?? 0,
-                    CsprojPath = parseResult.GetValue(csprojOption)!,
+                    CsprojPath = parseResult.GetValue(csprojOption),
                     PubxmlName = parseResult.GetValue(pubxmlOption)!,
                     AssemblyInfoPath = parseResult.GetValue(assemblyInfoOption),
                     ExtraPublishTargets = parseResult.GetValue(extraTargetsOption),
@@ -450,7 +461,8 @@ public static class CommandLineFactory
                 var remoteEnvs = project.RemoteEnvironments.Count == 0
                     ? "(none)"
                     : string.Join(", ", project.RemoteEnvironments.Select(e => e.Name));
-                output.Info($"{project.Name}  ->  {project.CsprojPath}  [{project.PubxmlName}]  local envs: {localEnvs}  dev-server envs: {remoteEnvs}");
+                var csprojPath = string.IsNullOrWhiteSpace(project.CsprojPath) ? "(no csproj)" : project.CsprojPath;
+                output.Info($"{project.Name}  ->  {csprojPath}  [{project.PubxmlName}]  local envs: {localEnvs}  dev-server envs: {remoteEnvs}");
             }
 
             return 0;

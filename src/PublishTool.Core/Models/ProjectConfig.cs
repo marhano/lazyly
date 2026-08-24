@@ -18,7 +18,13 @@ public sealed class ProjectConfig
     /// </summary>
     public int LastReleaseNotesSequence { get; set; }
 
-    public required string CsprojPath { get; set; }
+    /// <summary>
+    /// Local to this machine, even for a shared project in remote mode -- each dev's checkout
+    /// lives at their own path. Optional: a project registered purely to deploy/monitor/manage
+    /// (redeploy an existing build, read its Event Log, manage its IIS site or firewall rules)
+    /// doesn't need one, since <see cref="Services.Publisher"/> is the only thing that requires it.
+    /// </summary>
+    public string? CsprojPath { get; set; }
 
     public required string PubxmlName { get; set; }
 

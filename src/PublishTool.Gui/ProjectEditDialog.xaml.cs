@@ -29,15 +29,19 @@ public partial class ProjectEditDialog : Wpf.Ui.Controls.FluentWindow
     /// of individual controls rather than one wrapping panel's IsEnabled: a shared control
     /// (AppConfigTypeComboBox) sits visually next to a local one that must stay editable regardless
     /// (AppConfigPathTextBox), and WPF's IsEnabled cascades to every descendant, so a coarse
-    /// parent-level disable would have locked that local control too. RemoteEnvironmentsPanel is
-    /// safe to lock as a whole -- everything inside it is shared, nothing local is nested there.</summary>
+    /// parent-level disable would have locked that local control too. RemoteEnvironmentsSectionPanel
+    /// is safe to lock as a whole -- everything inside it (the host root path box included) is
+    /// shared, nothing local is nested there. Note this locks the section's *contents*, not the
+    /// RemoteIisToggle above it that reveals the section -- that toggle is deliberately per-user
+    /// (each dev decides independently whether they use Remote IIS for this project at all), even
+    /// though the section it reveals is shared team data once you're looking at it.</summary>
     private IEnumerable<UIElement> SharedControls => new UIElement[]
     {
         ProjectIdTextBox, PubxmlTextBox, ExtraTargetsTextBox,
         SdkStyleProjectToggle, ListInHostingToggle,
         UseAppConfigToggle, AppConfigTypeComboBox,
         UseEventLogToggle, EventLogPanel,
-        RemoteEnvironmentsPanel,
+        RemoteEnvironmentsSectionPanel,
     };
 
     public ProjectEditDialog(ProjectConfig? existing, bool remoteMode)
@@ -95,7 +99,7 @@ public partial class ProjectEditDialog : Wpf.Ui.Controls.FluentWindow
     private void PopulateFrom(ProjectConfig p)
     {
         NameTextBox.Text = p.Name;
-        CsprojTextBox.Text = p.CsprojPath;
+        CsprojTextBox.Text = p.CsprojPath ?? string.Empty;
         AssemblyInfoTextBox.Text = p.AssemblyInfoPath ?? string.Empty;
 
         foreach (var env in p.LocalEnvironments)
@@ -312,12 +316,10 @@ public partial class ProjectEditDialog : Wpf.Ui.Controls.FluentWindow
 
     private async void SaveButton_Click(object sender, RoutedEventArgs e)
     {
-        if (string.IsNullOrWhiteSpace(NameTextBox.Text) ||
-            string.IsNullOrWhiteSpace(CsprojTextBox.Text) ||
-            string.IsNullOrWhiteSpace(PubxmlTextBox.Text))
+        if (string.IsNullOrWhiteSpace(NameTextBox.Text) || string.IsNullOrWhiteSpace(PubxmlTextBox.Text))
         {
             MessageBox.Show(
-                "Name, .csproj path, and publish profile are required.",
+                "Name and publish profile are required.",
                 "PublishTool", MessageBoxButton.OK, MessageBoxImage.Warning);
             return;
         }
@@ -375,7 +377,7 @@ public partial class ProjectEditDialog : Wpf.Ui.Controls.FluentWindow
             Name = NameTextBox.Text.Trim(),
             ProjectId = string.IsNullOrWhiteSpace(ProjectIdTextBox.Text) ? null : ProjectIdTextBox.Text.Trim(),
             LastReleaseNotesSequence = _existing?.LastReleaseNotesSequence ?? 0,
-            CsprojPath = CsprojTextBox.Text.Trim(),
+            CsprojPath = string.IsNullOrWhiteSpace(CsprojTextBox.Text) ? null : CsprojTextBox.Text.Trim(),
             PubxmlName = PubxmlTextBox.Text.Trim(),
             AssemblyInfoPath = string.IsNullOrWhiteSpace(AssemblyInfoTextBox.Text) ? null : AssemblyInfoTextBox.Text.Trim(),
             ExtraPublishTargets = string.IsNullOrWhiteSpace(ExtraTargetsTextBox.Text) ? null : ExtraTargetsTextBox.Text.Trim(),
