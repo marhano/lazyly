@@ -319,6 +319,63 @@
                     </Grid>
                 </TabItem>
 
+                <TabItem Header="Firewall">
+                    <Grid Margin="12">
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="*"/>
+                            <RowDefinition Height="Auto"/>
+                        </Grid.RowDefinitions>
+
+                        <DockPanel Grid.Row="0" Margin="0,0,0,10">
+                            <ui:Button DockPanel.Dock="Right" x:Name="RefreshFirewallButton" Content="Refresh"
+                                       Icon="{ui:SymbolIcon ArrowSync24}" Width="110" Click="RefreshFirewallButton_Click"/>
+                            <ui:Button DockPanel.Dock="Right" x:Name="FirewallHistoryButton" Content="History"
+                                       Icon="{ui:SymbolIcon History24}" Width="110" Margin="0,0,10,0" Click="FirewallHistoryButton_Click"/>
+                            <ui:ToggleSwitch DockPanel.Dock="Right" x:Name="ShowAllFirewallRulesToggle" Content="Show all rules"
+                                             Margin="0,0,16,0" Checked="ShowAllFirewallRulesToggle_Toggled" Unchecked="ShowAllFirewallRulesToggle_Toggled"
+                                             ToolTip="Shows every rule on the system, not just PublishTool's own -- useful for checking if a port's already taken. Edit/Remove still only work on PublishTool's own [IIS] rules."/>
+                            <TextBlock Text="Inbound rules PublishTool has created (not a general firewall console)"
+                                       VerticalAlignment="Center" Foreground="{DynamicResource TextFillColorSecondaryBrush}"/>
+                        </DockPanel>
+
+                        <DataGrid Grid.Row="1" x:Name="FirewallRulesDataGrid" AutoGenerateColumns="False" IsReadOnly="True" MinHeight="120">
+                            <DataGrid.Columns>
+                                <DataGridTextColumn Header="Name" Binding="{Binding Name}" Width="*"/>
+                                <DataGridTextColumn Header="Protocol" Binding="{Binding Protocol}" Width="90"/>
+                                <DataGridTextColumn Header="Port" Binding="{Binding Port}" Width="140"/>
+                                <DataGridTextColumn Header="Enabled" Binding="{Binding Enabled}" Width="80"/>
+                            </DataGrid.Columns>
+                        </DataGrid>
+
+                        <StackPanel Grid.Row="2" Margin="0,10,0,0">
+                            <StackPanel Orientation="Horizontal">
+                                <ui:Button Content="Edit selected rule" Icon="{ui:SymbolIcon Edit24}" Width="150"
+                                           Click="EditFirewallRuleButton_Click"/>
+                                <ui:Button Content="Remove selected rule" Icon="{ui:SymbolIcon Delete24}" Width="160" Margin="10,0,0,0"
+                                           Click="RemoveFirewallRuleButton_Click"/>
+                            </StackPanel>
+
+                            <TextBlock Text="Add inbound rule" FontWeight="SemiBold" Margin="0,16,0,8"/>
+                            <StackPanel Orientation="Horizontal">
+                                <TextBlock Text="Label" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                                <ui:TextBox x:Name="FirewallRuleLabelTextBox" Width="180" Margin="0,0,16,0"
+                                            PlaceholderText="e.g. Staging site"/>
+                                <TextBlock Text="Ports" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                                <ui:TextBox x:Name="FirewallRulePortTextBox" Width="150" Margin="0,0,16,0"
+                                            PlaceholderText="8080 or 9001,9005-9008"/>
+                                <TextBlock Text="Protocol" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                                <ComboBox x:Name="FirewallRuleProtocolComboBox" Width="90" SelectedIndex="0" Margin="0,0,16,0">
+                                    <ComboBoxItem Content="TCP"/>
+                                    <ComboBoxItem Content="UDP"/>
+                                </ComboBox>
+                                <ui:Button Content="Add rule" Appearance="Primary" Icon="{ui:SymbolIcon Add24}" Width="120"
+                                           Click="AddFirewallRuleButton_Click"/>
+                            </StackPanel>
+                        </StackPanel>
+                    </Grid>
+                </TabItem>
+
                 <TabItem Header="Event Logs">
                     <Grid Margin="12">
                         <Grid.RowDefinitions>

@@ -483,11 +483,14 @@ app.MapPost("/api/deploy", async (HttpRequest request, IConfiguration configurat
 // run directly. Same operational requirement as /api/deploy above.
 // ---------------------------------------------------------------------------------------------
 
-// Deployment history lives under BuildsRoot (already configured, no new setting needed) rather
-// than IisSiteManager's own machine-wide default -- this server may run other things too, and
-// deployment records are specific to what PublishTool itself put into IIS here.
+// Deployment/audit history live under BuildsRoot (already configured, no new setting needed)
+// rather than each manager's own machine-wide default -- this server may run other things too,
+// and these records are specific to what PublishTool itself put into IIS/the firewall here.
 static string? DeploymentsRoot(IConfiguration configuration) =>
     configuration["BuildsRoot"] is { Length: > 0 } buildsRoot ? Path.Combine(buildsRoot, "_deployments") : null;
+
+static string? FirewallAuditRoot(IConfiguration configuration) =>
+    configuration["BuildsRoot"] is { Length: > 0 } buildsRoot ? Path.Combine(buildsRoot, "_firewall-audit") : null;
 
 app.MapGet("/api/iis/sites", async (HttpRequest request, IConfiguration configuration) =>
 {
@@ -633,6 +636,117 @@ app.MapPost("/api/iis/apppools/{name}/recycle", async (HttpRequest request, ICon
 });
 
 // ---------------------------------------------------------------------------------------------
+// /api/firewall/* -- Hosting manages its OWN machine's inbound Windows Firewall rules for ports
+// IIS sites use here, same operational requirement (elevated app pool identity) as /api/iis/*.
+// Only ever lists/manages rules PublishTool itself created -- see FirewallManager.
+// ---------------------------------------------------------------------------------------------
+
+app.MapGet("/api/firewall/rules", async (HttpRequest request, IConfiguration configuration, bool? all) =>
+{
+    if (!ApiKeyAuth.Validate(request, configuration))
+    {
+        return Results.Unauthorized();
+    }
+
+    try
+    {
+        var manager = new FirewallManager(NullOutputSink.Instance, FirewallAuditRoot(configuration));
+        return Results.Ok(await manager.ListRulesAsync(all ?? false, request.HttpContext.RequestAborted));
+    }
+    catch (Exception ex)
+    {
+        return Results.Problem(ex.Message, statusCode: StatusCodes.Status500InternalServerError);
+    }
+});
+
+app.MapPost("/api/firewall/rules", async (HttpRequest request, IConfiguration configuration) =>
+{
+    if (!ApiKeyAuth.Validate(request, configuration))
+    {
+        return Results.Unauthorized();
+    }
+
+    var body = await request.ReadFromJsonAsync<AddFirewallRuleRequest>(request.HttpContext.RequestAborted);
+    if (body is null || string.IsNullOrWhiteSpace(body.Label) || string.IsNullOrWhiteSpace(body.Ports))
+    {
+        return Results.BadRequest(new { error = "Expected a JSON body with Label, Ports, Protocol, and PerformedBy." });
+    }
+
+    try
+    {
+        var manager = new FirewallManager(NullOutputSink.Instance, FirewallAuditRoot(configuration));
+        await manager.AddInboundRuleAsync(body.Label, body.Ports, body.Protocol, body.PerformedBy, request.HttpContext.RequestAborted);
+        return Results.Ok();
+    }
+    catch (Exception ex)
+    {
+        return Results.Problem(ex.Message, statusCode: StatusCodes.Status500InternalServerError);
+    }
+});
+
+app.MapPut("/api/firewall/rules", async (HttpRequest request, IConfiguration configuration) =>
+{
+    if (!ApiKeyAuth.Validate(request, configuration))
+    {
+        return Results.Unauthorized();
+    }
+
+    var body = await request.ReadFromJsonAsync<EditFirewallRuleRequest>(request.HttpContext.RequestAborted);
+    if (body is null || string.IsNullOrWhiteSpace(body.CurrentName) || string.IsNullOrWhiteSpace(body.NewLabel) || string.IsNullOrWhiteSpace(body.Ports))
+    {
+        return Results.BadRequest(new { error = "Expected a JSON body with CurrentName, NewLabel, Ports, Protocol, and PerformedBy." });
+    }
+
+    try
+    {
+        var manager = new FirewallManager(NullOutputSink.Instance, FirewallAuditRoot(configuration));
+        await manager.EditRuleAsync(body.CurrentName, body.NewLabel, body.Ports, body.Protocol, body.PerformedBy, request.HttpContext.RequestAborted);
+        return Results.Ok();
+    }
+    catch (Exception ex)
+    {
+        return Results.Problem(ex.Message, statusCode: StatusCodes.Status500InternalServerError);
+    }
+});
+
+app.MapDelete("/api/firewall/rules", async (HttpRequest request, IConfiguration configuration, string name, string? performedBy) =>
+{
+    if (!ApiKeyAuth.Validate(request, configuration))
+    {
+        return Results.Unauthorized();
+    }
+
+    try
+    {
+        var manager = new FirewallManager(NullOutputSink.Instance, FirewallAuditRoot(configuration));
+        await manager.DeleteRuleAsync(name, string.IsNullOrWhiteSpace(performedBy) ? "unknown" : performedBy, request.HttpContext.RequestAborted);
+        return Results.Ok();
+    }
+    catch (Exception ex)
+    {
+        return Results.Problem(ex.Message, statusCode: StatusCodes.Status500InternalServerError);
+    }
+});
+
+app.MapGet("/api/firewall/audit", async (HttpRequest request, IConfiguration configuration) =>
+{
+    if (!ApiKeyAuth.Validate(request, configuration))
+    {
+        return Results.Unauthorized();
+    }
+
+    try
+    {
+        var manager = new FirewallManager(NullOutputSink.Instance, FirewallAuditRoot(configuration));
+        return Results.Ok(await manager.GetAuditHistoryAsync(request.HttpContext.RequestAborted));
+    }
+    catch (Exception ex)
+    {
+        return Results.Problem(ex.Message, statusCode: StatusCodes.Status500InternalServerError);
+    }
+});
+
+// ---------------------------------------------------------------------------------------------
 // /api/eventlog -- Hosting reads its OWN local Windows Event Log using the project's shared
 // EventLog* settings, so the GUI never needs direct EventLogSession access to this server (which
 // would need Windows Remote Event Log Management firewall access, not just plain HTTPS).
@@ -680,3 +794,7 @@ app.MapGet("/api/eventlog", (HttpRequest request, IConfiguration configuration, 
 });
 
 app.Run();
+
+internal sealed record AddFirewallRuleRequest(string Label, string Ports, string Protocol, string PerformedBy);
+
+internal sealed record EditFirewallRuleRequest(string CurrentName, string NewLabel, string Ports, string Protocol, string PerformedBy);

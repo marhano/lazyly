@@ -25,8 +25,9 @@ src/
   PublishTool.Commands/  System.CommandLine command tree, shared by the CLI and the GUI's
                           Command tab so both surfaces run identical parsing/handlers.
   PublishTool.Cli/       Console entry point.
-  PublishTool.Gui/       WPF app: Publish / Projects / IIS / Event Logs / Command / Settings / Help
-                          tabs. Self-updates via Velopack + GitHub Releases -- see its own README.md.
+  PublishTool.Gui/       WPF app: Publish / Projects / IIS / Firewall / Event Logs / Command /
+                          Settings / Help tabs. Self-updates via Velopack + GitHub Releases --
+                          see its own README.md.
   PublishTool.Hosting/   ASP.NET Core dev server: build archive site + key-protected /api/*
                           surface (upload, shared project registry, remote deploy, remote IIS).
                           See its own README.md for deployment steps.
@@ -85,7 +86,8 @@ Project registrations live in `%APPDATA%\PublishTool\projects.json`.
 
 ## Using the GUI
 
-The GUI is a 7-tab window (Publish / Projects / IIS / Event Logs / Command / Settings / Help) built
+The GUI is an 8-tab window (Publish / Projects / IIS / Firewall / Event Logs / Command / Settings /
+Help) built
 around the same registry and commands the CLI uses — anything the GUI does, `publishtool <command>`
 can do too (see the Command tab below).
 
@@ -153,11 +155,35 @@ Register new projects and manage each one's build history.
 View and control IIS sites and application pools — on this machine, or on the dev server if remote
 mode is on (Settings).
 
-- **Sites** sub-tab: **Start site** / **Stop site** / **Browse site** (opens it in your browser).
+- **Sites** sub-tab: filter by All/Started/Stopped, **Start site** / **Stop site** / **Browse
+  site** (opens it in your browser — uses the dev server's own address when browsing remotely,
+  not `localhost`). Deployed Version/At/By columns show the latest deploy to each site, and
+  **History** shows that site's full deploy history with search.
 - **Application Pools** sub-tab: **Start pool** / **Stop pool** / **Recycle pool**.
 
 Starting/stopping/recycling needs Administrator elevation, same as auto-creating sites during a
 deploy.
+
+### Firewall
+
+Lists inbound Windows Firewall rules PublishTool itself has created (not a general firewall
+console — use Windows' own for anything else), on this machine or the dev server depending on
+remote mode. Rules are named `[IIS] {label}` — the protocol/port aren't folded into the name
+since the grid already shows those as columns.
+
+- **Add rule** opens a port for a label you choose (e.g. "Staging site") — the port field takes a
+  single port or netsh-style ranges, e.g. `9001,9005-9008`.
+- **Edit selected rule** changes an existing rule's label/ports/protocol in place, instead of
+  removing and re-adding it.
+- **Remove selected rule** takes one back down.
+- **History** shows the full audit trail — every rule added, edited, or removed, by whom, and
+  when.
+- **Show all rules** toggles between PublishTool's own rules and every rule on the system (useful
+  for checking whether a port's already taken) — Edit/Remove still only work on PublishTool's own
+  `[IIS]` rules either way.
+
+Useful right after creating a new IIS site, so whatever's supposed to reach it on that port
+actually can. Adding/editing/removing also needs Administrator elevation.
 
 ### Event Logs
 
@@ -207,8 +233,8 @@ warning pops up automatically the first time you open the app.
 
 ### Adding or editing a project
 
-Opened from the Projects tab's **Add project** / **Edit** buttons. Required fields: **Name**,
-**.csproj path**, and **Publish profile**.
+Opened from the Projects tab's **Add project** / **Edit** buttons. Required fields: **Name** and
+**Publish profile**.
 
 Most fields here are **local to your machine** — every dev registering the same shared project sees
 their own copy. If your team is in remote mode, a handful of fields are instead **shared** (project
@@ -216,7 +242,9 @@ ID, publish profile, extra publish targets, SDK-style toggle, hosting listing, a
 Event Log settings, and the Remote IIS environments) — editing those needs an extra confirmation
 since it affects everyone on the team, not just you.
 
-- **Name**, **.csproj path**, **AssemblyInfo.cs** (optional, for version stamping).
+- **Name**, **.csproj path** (optional — only needed to Publish; leave blank for a project
+  registered just to redeploy an existing build or manage its Event Logs/IIS/firewall rules),
+  **AssemblyInfo.cs** (optional, for version stamping).
 - **Local IIS** toggle — turn on to deploy this project to IIS sites on *your own* machine. Set a
   host root path, add one or more named environments, and configure each environment's site
   bindings (protocol/IP/port/hostname).

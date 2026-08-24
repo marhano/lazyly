@@ -632,11 +632,13 @@ public partial class MainWindow : Wpf.Ui.Controls.FluentWindow
         settings.UseRemoteMode = UseRemoteModeToggle.IsChecked == true;
         settings.Save(AppSettings.DefaultPath);
 
-        // Projects tab, IIS tab, and the environment list now read from a different source --
-        // refresh all three immediately so the switch is visible right away instead of on the
-        // next unrelated action. The Publish tab's "Remote" deploy option also depends on this.
+        // Projects tab, IIS tab, Firewall tab, and the environment list now read from a
+        // different source -- refresh all of them immediately so the switch is visible right
+        // away instead of on the next unrelated action. The Publish tab's "Remote" deploy option
+        // also depends on this.
         await RefreshProjectsAsync();
         await RefreshIisStatusAsync();
+        await RefreshFirewallStatusAsync();
         await RefreshEnvironmentsAsync();
         await LoadDeployTargetOptionsForSelectedProjectAsync();
     }
@@ -771,6 +773,10 @@ public partial class MainWindow : Wpf.Ui.Controls.FluentWindow
         if (MainTabControl.SelectedItem is TabItem { Header: "IIS" })
         {
             await RefreshIisStatusAsync();
+        }
+        else if (MainTabControl.SelectedItem is TabItem { Header: "Firewall" })
+        {
+            await RefreshFirewallStatusAsync();
         }
         else if (MainTabControl.SelectedItem is TabItem { Header: "Help" })
         {
@@ -1065,6 +1071,201 @@ public partial class MainWindow : Wpf.Ui.Controls.FluentWindow
         await RefreshIisStatusAsync();
     }
 
+    private async void RefreshFirewallButton_Click(object sender, RoutedEventArgs e) => await RefreshFirewallStatusAsync();
+
+    private async void ShowAllFirewallRulesToggle_Toggled(object sender, RoutedEventArgs e) => await RefreshFirewallStatusAsync();
+
+    private async Task RefreshFirewallStatusAsync()
+    {
+        try
+        {
+            var includeAllRules = ShowAllFirewallRulesToggle.IsChecked == true;
+            if (IsRemoteModeActive(out var settings))
+            {
+                FirewallRulesDataGrid.ItemsSource = await new RemoteHostingClient().ListRemoteFirewallRulesAsync(
+                    settings.RemoteHostingUrl!, DecryptRemoteHostingApiKey(settings), includeAllRules);
+            }
+            else
+            {
+                FirewallRulesDataGrid.ItemsSource = await new FirewallManager(_output).ListRulesAsync(includeAllRules);
+            }
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(ex.Message, "PublishTool", MessageBoxButton.OK, MessageBoxImage.Warning);
+        }
+    }
+
+    private async void AddFirewallRuleButton_Click(object sender, RoutedEventArgs e)
+    {
+        var label = FirewallRuleLabelTextBox.Text?.Trim();
+        if (string.IsNullOrWhiteSpace(label))
+        {
+            MessageBox.Show("Enter a label for the rule first.", "PublishTool", MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
+        }
+
+        var ports = FirewallRulePortTextBox.Text?.Trim() ?? string.Empty;
+        try
+        {
+            FirewallManager.ValidatePortSpec(ports);
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(ex.Message, "PublishTool", MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
+        }
+
+        var protocol = (FirewallRuleProtocolComboBox.SelectedItem as ComboBoxItem)?.Content as string ?? "TCP";
+        var performedBy = Environment.UserName;
+
+        try
+        {
+            if (IsRemoteModeActive(out var settings))
+            {
+                await new RemoteHostingClient().AddRemoteFirewallRuleAsync(
+                    settings.RemoteHostingUrl!, DecryptRemoteHostingApiKey(settings), label, ports, protocol, performedBy);
+            }
+            else
+            {
+                await new FirewallManager(_output).AddInboundRuleAsync(label, ports, protocol, performedBy);
+            }
+
+            FirewallRuleLabelTextBox.Clear();
+            FirewallRulePortTextBox.Clear();
+            await RefreshFirewallStatusAsync();
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show($"Couldn't add the firewall rule: {ex.Message}", "PublishTool", MessageBoxButton.OK, MessageBoxImage.Error);
+        }
+    }
+
+    /// <summary>True (and shows the guard message) for a row that isn't one of PublishTool's own
+    /// rules -- only reachable when "Show all rules" is on, since the grid is filtered otherwise.</summary>
+    private static bool WarnIfNotOwnRule(FirewallRuleStatus rule)
+    {
+        if (rule.Name.StartsWith(FirewallManager.RuleNamePrefix, StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        MessageBox.Show(
+            "Only rules PublishTool created can be edited/removed here.",
+            "PublishTool", MessageBoxButton.OK, MessageBoxImage.Warning);
+        return true;
+    }
+
+    private async void EditFirewallRuleButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (FirewallRulesDataGrid.SelectedItem is not FirewallRuleStatus rule)
+        {
+            MessageBox.Show("Select a rule first.", "PublishTool", MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
+        }
+
+        if (WarnIfNotOwnRule(rule))
+        {
+            return;
+        }
+
+        var currentLabel = rule.Name[FirewallManager.RuleNamePrefix.Length..];
+        var dialog = new EditFirewallRuleDialog(currentLabel, rule.Port, rule.Protocol) { Owner = this };
+        if (dialog.ShowDialog() != true)
+        {
+            return;
+        }
+
+        var performedBy = Environment.UserName;
+        try
+        {
+            if (IsRemoteModeActive(out var settings))
+            {
+                await new RemoteHostingClient().EditRemoteFirewallRuleAsync(
+                    settings.RemoteHostingUrl!, DecryptRemoteHostingApiKey(settings),
+                    rule.Name, dialog.Label, dialog.Ports, dialog.Protocol, performedBy);
+            }
+            else
+            {
+                await new FirewallManager(_output).EditRuleAsync(rule.Name, dialog.Label, dialog.Ports, dialog.Protocol, performedBy);
+            }
+
+            await RefreshFirewallStatusAsync();
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show($"Couldn't update the firewall rule: {ex.Message}", "PublishTool", MessageBoxButton.OK, MessageBoxImage.Error);
+        }
+    }
+
+    private async void RemoveFirewallRuleButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (FirewallRulesDataGrid.SelectedItem is not FirewallRuleStatus rule)
+        {
+            MessageBox.Show("Select a rule first.", "PublishTool", MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
+        }
+
+        if (WarnIfNotOwnRule(rule))
+        {
+            return;
+        }
+
+        var confirm = MessageBox.Show(
+            $"Remove the firewall rule '{rule.Name}'? Anything relying on that port being open from outside will stop being reachable.",
+            "PublishTool", MessageBoxButton.YesNo, MessageBoxImage.Question);
+        if (confirm != MessageBoxResult.Yes)
+        {
+            return;
+        }
+
+        var performedBy = Environment.UserName;
+        try
+        {
+            if (IsRemoteModeActive(out var settings))
+            {
+                await new RemoteHostingClient().DeleteRemoteFirewallRuleAsync(
+                    settings.RemoteHostingUrl!, DecryptRemoteHostingApiKey(settings), rule.Name, performedBy);
+            }
+            else
+            {
+                await new FirewallManager(_output).DeleteRuleAsync(rule.Name, performedBy);
+            }
+
+            await RefreshFirewallStatusAsync();
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show($"Couldn't remove the firewall rule: {ex.Message}", "PublishTool", MessageBoxButton.OK, MessageBoxImage.Error);
+        }
+    }
+
+    private async void FirewallHistoryButton_Click(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            IReadOnlyList<FirewallAuditEntry> history;
+            if (IsRemoteModeActive(out var settings))
+            {
+                history = await new RemoteHostingClient().GetRemoteFirewallAuditAsync(settings.RemoteHostingUrl!, DecryptRemoteHostingApiKey(settings));
+            }
+            else
+            {
+                history = await new FirewallManager(_output).GetAuditHistoryAsync();
+            }
+
+            new FirewallAuditDialog(history) { Owner = this }.ShowDialog();
+        }
+        catch (RemoteFeatureNotAvailableException ex)
+        {
+            MessageBox.Show(ex.Message, "PublishTool", MessageBoxButton.OK, MessageBoxImage.Information);
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show($"Couldn't load the firewall audit trail: {ex.Message}", "PublishTool", MessageBoxButton.OK, MessageBoxImage.Error);
+        }
+    }
+
     private async void RefreshProjectsButton_Click(object sender, RoutedEventArgs e) => await RefreshProjectsAsync(forceReloadSelectedProject: true);
 
     private async void RefreshRegisteredProjectsButton_Click(object sender, RoutedEventArgs e) => await RefreshProjectsAsync(forceReloadSelectedProject: true);
@@ -1341,7 +1542,7 @@ public partial class MainWindow : Wpf.Ui.Controls.FluentWindow
 
         var registry = ProjectRegistryFactory.Create();
         var project = await registry.GetAsync(projectName);
-        if (project is null)
+        if (project is null || string.IsNullOrWhiteSpace(project.CsprojPath))
         {
             return;
         }
@@ -1432,6 +1633,14 @@ public partial class MainWindow : Wpf.Ui.Controls.FluentWindow
 
     private async Task CheckoutBranchAsync(ProjectConfig project, string branch)
     {
+        if (string.IsNullOrWhiteSpace(project.CsprojPath))
+        {
+            MessageBox.Show(
+                $"'{project.Name}' has no .csproj path configured -- set one in the project's Edit dialog first.",
+                "PublishTool", MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
+        }
+
         var git = new GitService(_output);
 
         // No-op if we're already there -- CheckoutAsync would also catch this, but checking here
@@ -1518,7 +1727,9 @@ public partial class MainWindow : Wpf.Ui.Controls.FluentWindow
 
     /// <summary>Applies a Discard/Stash/Commit resolution chosen in <see cref="GitConflictDialog"/>
     /// to exactly the given files. Returns false (having already logged the error) on failure, so
-    /// callers can bail out of whatever checkout attempt was waiting on it.</summary>
+    /// callers can bail out of whatever checkout attempt was waiting on it. Only ever called from
+    /// <see cref="CheckoutBranchAsync"/>, which has already confirmed <paramref name="project"/>
+    /// has a .csproj path configured before it does any of this.</summary>
     private async Task<bool> ApplyGitResolutionAsync(
         GitService git, ProjectConfig project, string branch, GitConflictResolution resolution, IReadOnlyList<string> files, string commitMessage)
     {
@@ -1527,13 +1738,13 @@ public partial class MainWindow : Wpf.Ui.Controls.FluentWindow
             switch (resolution)
             {
                 case GitConflictResolution.Discard:
-                    await git.DiscardChangesAsync(project.CsprojPath, files);
+                    await git.DiscardChangesAsync(project.CsprojPath!, files);
                     break;
                 case GitConflictResolution.Stash:
-                    await git.StashChangesAsync(project.CsprojPath, files, $"PublishTool: before checkout to {branch}");
+                    await git.StashChangesAsync(project.CsprojPath!, files, $"PublishTool: before checkout to {branch}");
                     break;
                 case GitConflictResolution.Commit:
-                    await git.CommitChangesAsync(project.CsprojPath, files, commitMessage);
+                    await git.CommitChangesAsync(project.CsprojPath!, files, commitMessage);
                     break;
             }
 

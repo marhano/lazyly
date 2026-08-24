@@ -301,6 +301,75 @@ public sealed class RemoteHostingClient
     }
 
     // ---------------------------------------------------------------------------------------
+    // Firewall rules (/api/firewall/*) -- Hosting manages its own machine's inbound Windows
+    // Firewall rules for ports IIS sites use, same local/remote split as /api/iis/*.
+    // ---------------------------------------------------------------------------------------
+
+    public async Task<IReadOnlyList<FirewallRuleStatus>> ListRemoteFirewallRulesAsync(
+        string baseUrl, string? apiKey, bool includeAllRules = false, CancellationToken ct = default)
+    {
+        var query = includeAllRules ? "?all=true" : string.Empty;
+        using var request = CreateRequest(HttpMethod.Get, baseUrl, $"/api/firewall/rules{query}", apiKey);
+        using var response = await Http.SendAsync(request, ct);
+        await EnsureSuccessAsync(response, "list remote firewall rules", ct);
+
+        return await response.Content.ReadFromJsonAsync<List<FirewallRuleStatus>>(JsonOptions, ct) ?? new List<FirewallRuleStatus>();
+    }
+
+    private sealed record AddFirewallRuleRequest(string Label, string Ports, string Protocol, string PerformedBy);
+
+    public async Task AddRemoteFirewallRuleAsync(
+        string baseUrl, string? apiKey, string label, string ports, string protocol, string performedBy, CancellationToken ct = default)
+    {
+        using var request = CreateRequest(HttpMethod.Post, baseUrl, "/api/firewall/rules", apiKey);
+        request.Content = JsonContent.Create(new AddFirewallRuleRequest(label, ports, protocol, performedBy), options: JsonOptions);
+
+        using var response = await Http.SendAsync(request, ct);
+        await EnsureSuccessAsync(response, "add remote firewall rule", ct);
+    }
+
+    private sealed record EditFirewallRuleRequest(string CurrentName, string NewLabel, string Ports, string Protocol, string PerformedBy);
+
+    public async Task EditRemoteFirewallRuleAsync(
+        string baseUrl, string? apiKey, string currentName, string newLabel, string ports, string protocol, string performedBy,
+        CancellationToken ct = default)
+    {
+        using var request = CreateRequest(HttpMethod.Put, baseUrl, "/api/firewall/rules", apiKey);
+        request.Content = JsonContent.Create(new EditFirewallRuleRequest(currentName, newLabel, ports, protocol, performedBy), options: JsonOptions);
+
+        using var response = await Http.SendAsync(request, ct);
+        await EnsureSuccessAsync(response, "edit remote firewall rule", ct);
+    }
+
+    public async Task DeleteRemoteFirewallRuleAsync(
+        string baseUrl, string? apiKey, string ruleName, string performedBy, CancellationToken ct = default)
+    {
+        using var request = CreateRequest(
+            HttpMethod.Delete, baseUrl,
+            $"/api/firewall/rules?name={Uri.EscapeDataString(ruleName)}&performedBy={Uri.EscapeDataString(performedBy)}", apiKey);
+        using var response = await Http.SendAsync(request, ct);
+        await EnsureSuccessAsync(response, "delete remote firewall rule", ct);
+    }
+
+    /// <summary>Full Add/Edit/Remove audit trail (newest-first) for the dev server's own
+    /// firewall rules. Throws a 404 <see cref="RemoteFeatureNotAvailableException"/> against an
+    /// older Hosting server that predates this endpoint.</summary>
+    public async Task<IReadOnlyList<FirewallAuditEntry>> GetRemoteFirewallAuditAsync(string baseUrl, string? apiKey, CancellationToken ct = default)
+    {
+        using var request = CreateRequest(HttpMethod.Get, baseUrl, "/api/firewall/audit", apiKey);
+        using var response = await Http.SendAsync(request, ct);
+        if (response.StatusCode == System.Net.HttpStatusCode.NotFound)
+        {
+            throw new RemoteFeatureNotAvailableException(
+                "Firewall audit history isn't available yet -- this dev server needs PublishTool.Hosting redeployed.");
+        }
+
+        await EnsureSuccessAsync(response, "read remote firewall audit history", ct);
+
+        return await response.Content.ReadFromJsonAsync<List<FirewallAuditEntry>>(JsonOptions, ct) ?? new List<FirewallAuditEntry>();
+    }
+
+    // ---------------------------------------------------------------------------------------
     // Event Logs (/api/eventlog) -- Hosting reads its own local Windows Event Log using the
     // project's shared EventLog* settings.
     // ---------------------------------------------------------------------------------------
