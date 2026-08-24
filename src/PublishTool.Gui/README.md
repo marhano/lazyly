@@ -16,6 +16,29 @@ Restart Now / Later).
 This only works once the repo is public (so the installed app can check GitHub Releases without an
 embedded credential) and the first release has actually been published.
 
+### Update-check rate limit
+
+GitHub caps unauthenticated API requests at 60/hour per network -- fine for one person, but a
+whole team behind the same office connection can exhaust that shared budget (surfaces as "Update
+check failed: ... 403 (rate limit exceeded)"). The app already throttles its own automatic check
+to once per 6 hours per machine, but the real fix is a **read-only** GitHub token baked into the
+build, raising the limit to 5000/hour:
+
+1. Generate a token with no write scopes -- github.com -> Settings -> Developer settings ->
+   Personal access tokens. A classic token with zero scopes checked (or a fine-grained token
+   scoped to just this repo with Contents: Read-only) is enough; it only needs to prove you're an
+   authenticated request, not actually access anything private.
+2. Add it as a **repository secret** named `GH_UPDATE_TOKEN` -- this repo's Settings -> Secrets
+   and variables -> Actions -> New repository secret. Paste the token value there; it's never
+   pasted anywhere else, including this repo's source.
+3. That's it -- [`.github/workflows/release-gui.yml`](../../.github/workflows/release-gui.yml)
+   already passes it to the build (`-p:GithubUpdateToken=...`, embedded as assembly metadata, read
+   at runtime in `MainWindow.xaml.cs`). Every release built after the secret is added picks it up
+   automatically; older installed copies get it the next time they update.
+
+Skipping this is safe -- a build with no token just checks unauthenticated, same as before this
+existed.
+
 ## Releasing an update
 
 ### Automated (normal path)
@@ -46,7 +69,7 @@ Run from the repo root, on Windows, with the .NET 8 SDK installed:
 ```
 dotnet tool install -g vpk
 
-dotnet publish src/PublishTool.Gui/PublishTool.Gui.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=false -p:Version=1.2.1 -o publish/PublishTool.Gui
+dotnet publish src/PublishTool.Gui/PublishTool.Gui.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=false -p:Version=1.2.1 -p:GithubUpdateToken=<optional read-only token, see "Update-check rate limit" above> -o publish/PublishTool.Gui
 
 vpk pack -u PublishTool.Gui -v 1.2.1 -p publish/PublishTool.Gui -e PublishTool.Gui.exe --releaseNotes release-notes/v1.2.1.md
 

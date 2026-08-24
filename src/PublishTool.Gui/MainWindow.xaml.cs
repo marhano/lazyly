@@ -3,6 +3,7 @@ using System.ComponentModel;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
+using System.Reflection;
 using System.Security.Principal;
 using System.Text;
 using System.Text.Json;
@@ -235,6 +236,17 @@ public partial class MainWindow : Wpf.Ui.Controls.FluentWindow
         }
     }
 
+    /// <summary>Read-only GitHub token baked in at build time (see the
+    /// <c>GithubUpdateToken</c>/<c>AssemblyMetadata</c> entry in PublishTool.Gui.csproj) -- raises
+    /// the update check's rate limit from 60/hour (unauthenticated) to 5000/hour. Null for a local
+    /// build with no token supplied, which just means the check stays unauthenticated, same as
+    /// before this existed.</summary>
+    private static readonly string? GithubUpdateToken = Assembly.GetExecutingAssembly()
+        .GetCustomAttributes<AssemblyMetadataAttribute>()
+        .FirstOrDefault(a => a.Key == "GithubUpdateToken") is { Value.Length: > 0 } attribute
+            ? attribute.Value
+            : null;
+
     /// <param name="interactive">True from the Help tab's "Check for updates" button -- always
     /// actually checks (skips the throttle/jitter below, both meant only to keep the automatic
     /// background check from hammering GitHub) and reports the outcome via a message box even when
@@ -243,7 +255,7 @@ public partial class MainWindow : Wpf.Ui.Controls.FluentWindow
     {
         try
         {
-            var mgr = new Velopack.UpdateManager(new Velopack.Sources.GithubSource("https://github.com/marhano/lazyly", null, false));
+            var mgr = new Velopack.UpdateManager(new Velopack.Sources.GithubSource("https://github.com/marhano/lazyly", GithubUpdateToken, false));
             if (!mgr.IsInstalled)
             {
                 // Running from `dotnet run`/a loose build rather than a Velopack-installed copy --

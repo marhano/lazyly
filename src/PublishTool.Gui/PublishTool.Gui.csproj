@@ -57,4 +57,16 @@
     <Page Include="App.xaml" />
   </ItemGroup>
 
+  <!--
+    Read-only GitHub token for the update check, raising its rate limit from 60/hour
+    (unauthenticated) to 5000/hour. Passed in at build time via -p:GithubUpdateToken=... (the
+    release workflow supplies it from a repo secret); empty for an ordinary local build, which
+    just means update checks stay unauthenticated, same as before this existed. Embedded as
+    assembly metadata rather than a literal in source, so nothing here needs a real token
+    committed to get the app to build.
+  -->
+  <ItemGroup>
+    <AssemblyMetadata Include="GithubUpdateToken" Value="$(GithubUpdateToken)" />
+  </ItemGroup>
+
 </Project>

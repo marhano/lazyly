@@ -46,11 +46,18 @@ jobs:
           }
 
       - name: Publish
+        env:
+          # Read-only token (repo secret, added via GitHub Settings -> Secrets and variables ->
+          # Actions -- never committed) that raises the installed app's update-check rate limit
+          # from 60/hour to 5000/hour. Safe to leave unset: an empty value here just means the
+          # build falls back to unauthenticated checks, same as before this existed.
+          GITHUB_UPDATE_TOKEN: ${{ secrets.GH_UPDATE_TOKEN }}
         run: >
           dotnet publish src/PublishTool.Gui/PublishTool.Gui.csproj
           -c Release -r win-x64 --self-contained true
           -p:PublishSingleFile=false
           -p:Version=${{ steps.version.outputs.version }}
+          -p:GithubUpdateToken=$env:GITHUB_UPDATE_TOKEN
           -o publish/PublishTool.Gui
 
       - name: Pack with vpk
