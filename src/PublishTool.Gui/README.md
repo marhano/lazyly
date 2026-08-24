@@ -71,9 +71,12 @@ dotnet tool install -g vpk
 
 dotnet publish src/PublishTool.Gui/PublishTool.Gui.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=false -p:Version=1.2.1 -p:GithubUpdateToken=<optional read-only token, see "Update-check rate limit" above> -o publish/PublishTool.Gui
 
-vpk pack -u PublishTool.Gui -v 1.2.1 -p publish/PublishTool.Gui -e PublishTool.Gui.exe --releaseNotes release-notes/v1.2.1.md
+vpk pack -u PublishTool.Gui -v 1.2.1 -p publish/PublishTool.Gui -e PublishTool.Gui.exe -i src/PublishTool.Gui/Assets/app.ico --releaseNotes release-notes/v1.2.1.md
 
 vpk upload github --repoUrl https://github.com/marhano/lazyly --tag v1.2.1 --publish true --token <a GitHub PAT with repo scope>
+
+copy Releases\PublishTool.Gui-win-Setup.exe Releases\PublishTool.Gui-Setup-v1.2.1.exe
+gh release upload v1.2.1 Releases\PublishTool.Gui-Setup-v1.2.1.exe --repo marhano/lazyly
 ```
 
 Notes:
@@ -82,6 +85,14 @@ Notes:
   different from the older single-file publish some builds used before auto-update existed.
 - The version passed to `dotnet publish`, `vpk pack`, and the git tag (`v` prefix aside) must all
   match, or installed copies won't recognize the new release as newer.
+- `-i`/`--icon` on `vpk pack` is what gives `Setup.exe` an actual icon instead of the generic
+  blank-page one Windows shows for an unbranded exe -- without it, `Setup.exe` looks exactly like
+  the kind of thing security-conscious people are right to be suspicious of.
+- `vpk`'s own `Setup.exe` name is deliberately unversioned (it's meant to always mean "the latest
+  installer"), which reads as ambiguous to someone grabbing it by hand from the Releases page --
+  the last two commands upload an identically-signed renamed copy alongside it purely for
+  clarity. Doesn't affect the update-check machinery, which keys off the versioned `.nupkg`
+  assets `vpk pack` already creates, not this file.
 - `vpk upload github` needs a token with permission to create releases on this repo when run
   manually. The automated workflow doesn't need this -- it uses the GitHub Actions-provided
   `GITHUB_TOKEN` instead.
