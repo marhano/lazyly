@@ -110,10 +110,24 @@ public sealed class RemoteProjectRegistry : IProjectRegistry
             Name = shared.Name,
             ProjectId = shared.ProjectId,
             LastReleaseNotesSequence = shared.LastReleaseNotesSequence,
+            ProjectType = shared.ProjectType,
             CsprojPath = local.CsprojPath,
             PubxmlName = shared.PubxmlName,
             AssemblyInfoPath = local.AssemblyInfoPath,
             ExtraPublishTargets = shared.ExtraPublishTargets,
+            Angular = shared.Angular is null ? null : new AngularProjectSettings
+            {
+                ProjectRootPath = local.AngularProjectRootPath,
+                BuildConfiguration = shared.Angular.BuildConfiguration,
+                WorkspaceProjectName = shared.Angular.WorkspaceProjectName,
+            },
+            Android = shared.Android is null ? null : new AndroidProjectSettings
+            {
+                ProjectRootPath = local.AndroidProjectRootPath,
+                BuildConfiguration = shared.Android.BuildConfiguration,
+                BuildVariant = shared.Android.BuildVariant,
+                ArtifactType = shared.Android.ArtifactType,
+            },
             LocalIisEnabled = local.LocalIisEnabled,
             LocalEnvironments = local.LocalEnvironments,
             SdkStyleProject = shared.SdkStyleProject,
@@ -137,6 +151,8 @@ public sealed class RemoteProjectRegistry : IProjectRegistry
     {
         CsprojPath = config.CsprojPath,
         AssemblyInfoPath = config.AssemblyInfoPath,
+        AngularProjectRootPath = config.Angular?.ProjectRootPath,
+        AndroidProjectRootPath = config.Android?.ProjectRootPath,
         LocalIisEnabled = config.LocalIisEnabled,
         LocalEnvironments = config.LocalEnvironments,
         RemoteIisEnabled = config.RemoteIisEnabled,

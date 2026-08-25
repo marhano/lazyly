@@ -52,11 +52,7 @@ app.MapGet("/download", (string path, IConfiguration configuration) =>
         return Results.NotFound();
     }
 
-    var contentType = Path.GetExtension(fullPath).Equals(".txt", StringComparison.OrdinalIgnoreCase)
-        ? "text/plain"
-        : "application/zip";
-
-    return Results.File(fullPath, contentType, Path.GetFileName(fullPath));
+    return Results.File(fullPath, ContentTypeForDownload(fullPath), Path.GetFileName(fullPath));
 });
 
 // ---------------------------------------------------------------------------------------------
@@ -108,11 +104,7 @@ app.MapGet("/api/builds/download", (HttpRequest request, IConfiguration configur
         return Results.NotFound();
     }
 
-    var contentType = Path.GetExtension(fullPath).Equals(".txt", StringComparison.OrdinalIgnoreCase)
-        ? "text/plain"
-        : "application/zip";
-
-    return Results.File(fullPath, contentType, Path.GetFileName(fullPath));
+    return Results.File(fullPath, ContentTypeForDownload(fullPath), Path.GetFileName(fullPath));
 });
 
 app.MapPost("/api/builds/upload", async (HttpRequest request, IConfiguration configuration) =>
@@ -449,6 +441,9 @@ app.MapPost("/api/deploy", async (HttpRequest request, IConfiguration configurat
         var siteName = deployEnvironment.ResolveSiteName(manifest.ProjectName);
         var deployer = new BuildDeployer(
             new LoggerOutputSink(loggerFactory.CreateLogger("Deploy")), Path.Combine(buildsRoot, "_deployments"));
+        var poolTemplate = project?.ProjectType == ProjectType.Angular
+            ? AppPoolRuntimeTemplate.NoManagedCode
+            : AppPoolRuntimeTemplate.DotNetFramework;
         await deployer.DeployAsync(
             siteName, hostPath, deployEnvironment.Bindings, deployEnvironment.AutoCreateSite, stagingDir,
             new SiteDeploymentRecord
@@ -460,6 +455,7 @@ app.MapPost("/api/deploy", async (HttpRequest request, IConfiguration configurat
                 DeployedAtUtc = DateTimeOffset.UtcNow,
                 DeployedBy = string.IsNullOrWhiteSpace(deployedBy) ? "unknown" : deployedBy,
             },
+            poolTemplate,
             request.HttpContext.RequestAborted);
 
         return Results.Ok(new { deployed = true, project = manifest.ProjectName, environment = deployEnvironment.Name, hostPath });
@@ -486,6 +482,17 @@ app.MapPost("/api/deploy", async (HttpRequest request, IConfiguration configurat
 // Deployment/audit history live under BuildsRoot (already configured, no new setting needed)
 // rather than each manager's own machine-wide default -- this server may run other things too,
 // and these records are specific to what PublishTool itself put into IIS/the firewall here.
+// Every archived build is a .zip except Android's, which is a raw .apk/.aab (see BuildRepository.ArchiveFile) --
+// both are also, technically, zip-format containers, so a wrong-but-plausible "application/zip" wouldn't
+// actually break a download, but this gets the MIME type right for a browser/download manager either way.
+static string ContentTypeForDownload(string filePath) => Path.GetExtension(filePath).ToLowerInvariant() switch
+{
+    ".txt" => "text/plain",
+    ".apk" => "application/vnd.android.package-archive",
+    ".aab" => "application/octet-stream",
+    _ => "application/zip",
+};
+
 static string? DeploymentsRoot(IConfiguration configuration) =>
     configuration["BuildsRoot"] is { Length: > 0 } buildsRoot ? Path.Combine(buildsRoot, "_deployments") : null;
 

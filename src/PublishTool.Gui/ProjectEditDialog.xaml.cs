@@ -1,4 +1,5 @@
 using System.Collections.ObjectModel;
+using System.IO;
 using System.Windows;
 using System.Windows.Controls;
 using Microsoft.Win32;
@@ -6,6 +7,7 @@ using PublishTool.Core;
 using PublishTool.Core.Models;
 using PublishTool.Core.Services;
 using PublishTool.Core.Services.AppConfig;
+using PublishTool.Core.Services.BuildRunners;
 
 namespace PublishTool.Gui;
 
@@ -37,8 +39,9 @@ public partial class ProjectEditDialog : Wpf.Ui.Controls.FluentWindow
     /// though the section it reveals is shared team data once you're looking at it.</summary>
     private IEnumerable<UIElement> SharedControls => new UIElement[]
     {
-        ProjectIdTextBox, PubxmlTextBox, ExtraTargetsTextBox,
-        SdkStyleProjectToggle, ListInHostingToggle,
+        ProjectIdTextBox, ProjectTypeComboBox,
+        DotNetSharedFieldsPanel, AngularSharedFieldsPanel, AndroidSharedFieldsPanel,
+        ListInHostingToggle,
         UseAppConfigToggle, AppConfigTypeComboBox,
         UseEventLogToggle, EventLogPanel,
         RemoteEnvironmentsSectionPanel,
@@ -54,6 +57,13 @@ public partial class ProjectEditDialog : Wpf.Ui.Controls.FluentWindow
         AppConfigTypeComboBox.ItemsSource = AppConfigProviderRegistry.All;
 
         TitleTextBlock.Text = existing is null ? "Add project" : $"Edit {existing.Name}";
+
+        // Defaults to .NET (index 0) for a brand-new project; PopulateFrom below overwrites this
+        // for an existing one. Set programmatically (not via XAML SelectedIndex) so the
+        // SelectionChanged handler it fires runs after every other named control already exists --
+        // a XAML-time SelectedIndex fires during InitializeComponent, before later sibling controls
+        // are constructed yet.
+        ProjectTypeComboBox.SelectedIndex = 0;
 
         if (existing is not null)
         {
@@ -115,9 +125,24 @@ public partial class ProjectEditDialog : Wpf.Ui.Controls.FluentWindow
         LocalEnvironmentsSectionPanel.Visibility = p.LocalIisEnabled ? Visibility.Visible : Visibility.Collapsed;
 
         ProjectIdTextBox.Text = p.ProjectId ?? string.Empty;
-        PubxmlTextBox.Text = p.PubxmlName;
+        // Fires ProjectTypeComboBox_SelectionChanged, which toggles every type-specific panel's
+        // visibility -- set before populating this project's type-specific fields below.
+        ProjectTypeComboBox.SelectedIndex = p.ProjectType switch { ProjectType.Angular => 1, ProjectType.Android => 2, _ => 0 };
+
+        PubxmlTextBox.Text = p.PubxmlName ?? string.Empty;
         ExtraTargetsTextBox.Text = p.ExtraPublishTargets ?? string.Empty;
         SdkStyleProjectToggle.IsChecked = p.SdkStyleProject;
+
+        AngularProjectRootTextBox.Text = p.Angular?.ProjectRootPath ?? string.Empty;
+        AngularBuildConfigurationTextBox.Text = p.Angular?.BuildConfiguration ?? "production";
+        AngularWorkspaceProjectTextBox.Text = p.Angular?.WorkspaceProjectName ?? string.Empty;
+
+        AndroidProjectRootTextBox.Text = p.Android?.ProjectRootPath ?? string.Empty;
+        AndroidBuildConfigurationTextBox.Text = p.Android?.BuildConfiguration ?? "production";
+        AndroidBuildVariantTextBox.Text = p.Android?.BuildVariant ?? "release";
+        AndroidArtifactTypeComboBox.SelectedIndex = p.Android?.ArtifactType == AndroidArtifactType.Aab ? 1 : 0;
+        UpdateAndroidDetectedLabel();
+
         ListInHostingToggle.IsChecked = p.ListInHosting;
 
         UseAppConfigToggle.IsChecked = p.UseAppConfig;
@@ -180,6 +205,59 @@ public partial class ProjectEditDialog : Wpf.Ui.Controls.FluentWindow
         {
             LocalHostRootPathTextBox.Text = dialog.SelectedPath;
         }
+    }
+
+    private void BrowseAngularProjectRoot_Click(object sender, RoutedEventArgs e)
+    {
+        using var dialog = new System.Windows.Forms.FolderBrowserDialog();
+        if (dialog.ShowDialog() == System.Windows.Forms.DialogResult.OK)
+        {
+            AngularProjectRootTextBox.Text = dialog.SelectedPath;
+        }
+    }
+
+    private void BrowseAndroidProjectRoot_Click(object sender, RoutedEventArgs e)
+    {
+        using var dialog = new System.Windows.Forms.FolderBrowserDialog();
+        if (dialog.ShowDialog() == System.Windows.Forms.DialogResult.OK)
+        {
+            AndroidProjectRootTextBox.Text = dialog.SelectedPath;
+            UpdateAndroidDetectedLabel();
+        }
+    }
+
+    private void AndroidProjectRootTextBox_LostFocus(object sender, RoutedEventArgs e) => UpdateAndroidDetectedLabel();
+
+    /// <summary>Informational only, never persisted -- recomputed from the folder's actual contents
+    /// every time it might have changed, so it can never go stale the way a stored wrapper-type
+    /// field could.</summary>
+    private void UpdateAndroidDetectedLabel()
+    {
+        var path = AndroidProjectRootTextBox.Text;
+        if (string.IsNullOrWhiteSpace(path) || !Directory.Exists(path))
+        {
+            AndroidDetectedLabel.Text = "(point at a project folder above)";
+            return;
+        }
+
+        var wrapper = AndroidWrapperStrategyRegistry.Detect(path);
+        AndroidDetectedLabel.Text = wrapper is null
+            ? "Not recognized -- expected a capacitor.config.json/.ts or config.xml file in this folder."
+            : $"{wrapper.DisplayName} project";
+    }
+
+    private void ProjectTypeComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        var tag = (ProjectTypeComboBox.SelectedItem as ComboBoxItem)?.Tag as string ?? "DotNet";
+
+        DotNetLocalFieldsGrid.Visibility = tag == "DotNet" ? Visibility.Visible : Visibility.Collapsed;
+        DotNetSharedFieldsPanel.Visibility = tag == "DotNet" ? Visibility.Visible : Visibility.Collapsed;
+
+        AngularLocalFieldsGrid.Visibility = tag == "Angular" ? Visibility.Visible : Visibility.Collapsed;
+        AngularSharedFieldsPanel.Visibility = tag == "Angular" ? Visibility.Visible : Visibility.Collapsed;
+
+        AndroidLocalFieldsGrid.Visibility = tag == "Android" ? Visibility.Visible : Visibility.Collapsed;
+        AndroidSharedFieldsPanel.Visibility = tag == "Android" ? Visibility.Visible : Visibility.Collapsed;
     }
 
     private void LocalIisToggle_Toggled(object sender, RoutedEventArgs e) =>
@@ -316,11 +394,35 @@ public partial class ProjectEditDialog : Wpf.Ui.Controls.FluentWindow
 
     private async void SaveButton_Click(object sender, RoutedEventArgs e)
     {
-        if (string.IsNullOrWhiteSpace(NameTextBox.Text) || string.IsNullOrWhiteSpace(PubxmlTextBox.Text))
+        if (string.IsNullOrWhiteSpace(NameTextBox.Text))
         {
-            MessageBox.Show(
-                "Name and publish profile are required.",
-                "PublishTool", MessageBoxButton.OK, MessageBoxImage.Warning);
+            MessageBox.Show("Name is required.", "PublishTool", MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
+        }
+
+        var projectTypeTag = (ProjectTypeComboBox.SelectedItem as ComboBoxItem)?.Tag as string ?? "DotNet";
+        var projectType = projectTypeTag switch
+        {
+            "Angular" => ProjectType.Angular,
+            "Android" => ProjectType.Android,
+            _ => ProjectType.DotNet,
+        };
+
+        if (projectType == ProjectType.DotNet && string.IsNullOrWhiteSpace(PubxmlTextBox.Text))
+        {
+            MessageBox.Show("Publish profile is required for a .NET project.", "PublishTool", MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
+        }
+
+        if (projectType == ProjectType.Angular && string.IsNullOrWhiteSpace(AngularProjectRootTextBox.Text))
+        {
+            MessageBox.Show("Project root folder is required for an Angular project.", "PublishTool", MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
+        }
+
+        if (projectType == ProjectType.Android && string.IsNullOrWhiteSpace(AndroidProjectRootTextBox.Text))
+        {
+            MessageBox.Show("Project root folder is required for an Android project.", "PublishTool", MessageBoxButton.OK, MessageBoxImage.Warning);
             return;
         }
 
@@ -377,13 +479,27 @@ public partial class ProjectEditDialog : Wpf.Ui.Controls.FluentWindow
             Name = NameTextBox.Text.Trim(),
             ProjectId = string.IsNullOrWhiteSpace(ProjectIdTextBox.Text) ? null : ProjectIdTextBox.Text.Trim(),
             LastReleaseNotesSequence = _existing?.LastReleaseNotesSequence ?? 0,
-            CsprojPath = string.IsNullOrWhiteSpace(CsprojTextBox.Text) ? null : CsprojTextBox.Text.Trim(),
-            PubxmlName = PubxmlTextBox.Text.Trim(),
-            AssemblyInfoPath = string.IsNullOrWhiteSpace(AssemblyInfoTextBox.Text) ? null : AssemblyInfoTextBox.Text.Trim(),
-            ExtraPublishTargets = string.IsNullOrWhiteSpace(ExtraTargetsTextBox.Text) ? null : ExtraTargetsTextBox.Text.Trim(),
+            ProjectType = projectType,
+            CsprojPath = projectType == ProjectType.DotNet && !string.IsNullOrWhiteSpace(CsprojTextBox.Text) ? CsprojTextBox.Text.Trim() : null,
+            PubxmlName = projectType == ProjectType.DotNet ? PubxmlTextBox.Text.Trim() : null,
+            AssemblyInfoPath = projectType == ProjectType.DotNet && !string.IsNullOrWhiteSpace(AssemblyInfoTextBox.Text) ? AssemblyInfoTextBox.Text.Trim() : null,
+            ExtraPublishTargets = projectType == ProjectType.DotNet && !string.IsNullOrWhiteSpace(ExtraTargetsTextBox.Text) ? ExtraTargetsTextBox.Text.Trim() : null,
+            SdkStyleProject = projectType == ProjectType.DotNet && SdkStyleProjectToggle.IsChecked == true,
+            Angular = projectType == ProjectType.Angular ? new AngularProjectSettings
+            {
+                ProjectRootPath = AngularProjectRootTextBox.Text.Trim(),
+                BuildConfiguration = string.IsNullOrWhiteSpace(AngularBuildConfigurationTextBox.Text) ? "production" : AngularBuildConfigurationTextBox.Text.Trim(),
+                WorkspaceProjectName = string.IsNullOrWhiteSpace(AngularWorkspaceProjectTextBox.Text) ? null : AngularWorkspaceProjectTextBox.Text.Trim(),
+            } : null,
+            Android = projectType == ProjectType.Android ? new AndroidProjectSettings
+            {
+                ProjectRootPath = AndroidProjectRootTextBox.Text.Trim(),
+                BuildConfiguration = string.IsNullOrWhiteSpace(AndroidBuildConfigurationTextBox.Text) ? "production" : AndroidBuildConfigurationTextBox.Text.Trim(),
+                BuildVariant = string.IsNullOrWhiteSpace(AndroidBuildVariantTextBox.Text) ? "release" : AndroidBuildVariantTextBox.Text.Trim(),
+                ArtifactType = (AndroidArtifactTypeComboBox.SelectedItem as ComboBoxItem)?.Tag as string == "Aab" ? AndroidArtifactType.Aab : AndroidArtifactType.Apk,
+            } : null,
             LocalIisEnabled = localIisEnabled,
             LocalEnvironments = _localEnvironments.ToList(),
-            SdkStyleProject = SdkStyleProjectToggle.IsChecked == true,
             ListInHosting = ListInHostingToggle.IsChecked == true,
             UseAppConfig = useAppConfig,
             AppConfigType = useAppConfig ? appConfigProvider?.TypeName : null,

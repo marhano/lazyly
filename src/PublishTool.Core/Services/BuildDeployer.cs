@@ -33,12 +33,13 @@ public sealed class BuildDeployer
     /// "deployed version/date/by" columns and history view -- see <see cref="SiteDeploymentStore"/>.</param>
     public async Task DeployAsync(
         string siteName, string hostPath, IReadOnlyList<IisBinding> bindings, bool autoCreateSite,
-        string sourceDir, SiteDeploymentRecord deployment, CancellationToken ct = default)
+        string sourceDir, SiteDeploymentRecord deployment,
+        AppPoolRuntimeTemplate poolTemplate = AppPoolRuntimeTemplate.DotNetFramework, CancellationToken ct = default)
     {
         if (autoCreateSite)
         {
             _output.Stage("Ensuring IIS site exists...");
-            await _iisSiteManager.EnsureSiteExistsAsync(siteName, hostPath, bindings, ct);
+            await _iisSiteManager.EnsureSiteExistsAsync(siteName, hostPath, bindings, poolTemplate, ct);
         }
 
         _output.Stage($"Deploying to IIS host path: {hostPath}");

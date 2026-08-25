@@ -2230,6 +2230,9 @@ public partial class MainWindow : Wpf.Ui.Controls.FluentWindow
                     await Task.Run(() => System.IO.Compression.ZipFile.ExtractToDirectory(zipPathToExtract, tempDir));
 
                     var siteName = environment.ResolveSiteName(project.Name);
+                    var poolTemplate = project.ProjectType == ProjectType.Angular
+                        ? AppPoolRuntimeTemplate.NoManagedCode
+                        : AppPoolRuntimeTemplate.DotNetFramework;
                     await new BuildDeployer(_output).DeployAsync(
                         siteName, hostPath, environment.Bindings, environment.AutoCreateSite, tempDir,
                         new SiteDeploymentRecord
@@ -2240,7 +2243,8 @@ public partial class MainWindow : Wpf.Ui.Controls.FluentWindow
                             EnvironmentName = environment.Name,
                             DeployedAtUtc = DateTimeOffset.UtcNow,
                             DeployedBy = Environment.UserName,
-                        });
+                        },
+                        poolTemplate);
                     _output.Info($"Deployed {project.Name} v{row.Version} to local IIS ({environment.Name}).");
                 }
                 finally

@@ -14,7 +14,7 @@ public static class CommandLineFactory
 {
     public static RootCommand Create(IOutputSink output)
     {
-        var root = new RootCommand("PublishTool - build, archive, and deploy publishes for .NET projects.");
+        var root = new RootCommand("PublishTool - build, archive, and deploy publishes for .NET, Angular, and hybrid-mobile Android projects.");
 
         root.Add(BuildPublishCommand(output));
         root.Add(BuildGitCheckoutCommand(output));
@@ -207,15 +207,15 @@ public static class CommandLineFactory
                 return 1;
             }
 
-            if (string.IsNullOrWhiteSpace(project.CsprojPath))
+            if (string.IsNullOrWhiteSpace(project.SourceRootPath))
             {
-                output.Error($"'{project.Name}' has no .csproj path configured.");
+                output.Error($"'{project.Name}' has no project source configured.");
                 return 1;
             }
 
             try
             {
-                await new GitService(output).CheckoutAsync(project.CsprojPath, parseResult.GetValue(branchOption)!, ct);
+                await new GitService(output).CheckoutAsync(project.SourceRootPath, parseResult.GetValue(branchOption)!, ct);
                 return 0;
             }
             catch (Exception ex)
@@ -254,13 +254,47 @@ public static class CommandLineFactory
                            "produces references like BPS-2026-0007. Optional -- release notes are only " +
                            "generated at publish time when this is set.",
         };
+        var projectTypeOption = new Option<string>("--project-type")
+        {
+            Description = "What kind of project this is: \"dotnet\" (default), \"angular\", or \"android\" " +
+                           "(a hybrid Capacitor/Cordova app built to an APK/AAB). Determines which of the " +
+                           "options below are required/used.",
+            DefaultValueFactory = _ => "dotnet",
+        };
         var csprojOption = new Option<string?>("--csproj")
         {
-            Description = "Path to the .csproj file. Optional -- omit for a project registered purely to " +
-                           "deploy/monitor/manage (redeploy an existing build, Event Logs, IIS, firewall rules); " +
-                           "publishing requires this to be set first.",
+            Description = "For --project-type dotnet: path to the .csproj file. Optional -- omit for a project " +
+                           "registered purely to deploy/monitor/manage (redeploy an existing build, Event Logs, " +
+                           "IIS, firewall rules); publishing requires this to be set first.",
         };
-        var pubxmlOption = new Option<string>("--pubxml") { Description = "Publish profile name (e.g. FolderProfile).", Required = true };
+        var pubxmlOption = new Option<string?>("--pubxml")
+        {
+            Description = "For --project-type dotnet: publish profile name (e.g. FolderProfile). Required for that type.",
+        };
+        var projectRootOption = new Option<string?>("--project-root")
+        {
+            Description = "For --project-type angular/android: the project's root folder. PublishTool " +
+                           "auto-detects what it needs from there (package.json/angular.json for Angular; a " +
+                           "capacitor.config.json/.ts or config.xml for Android). Required for those types.",
+        };
+        var buildConfigurationOption = new Option<string?>("--build-configuration")
+        {
+            Description = "For --project-type angular/android: build configuration passed to the web build step. Defaults to \"production\".",
+        };
+        var workspaceProjectOption = new Option<string?>("--workspace-project")
+        {
+            Description = "For --project-type angular workspaces with more than one buildable project -- which one to build.",
+        };
+        var buildVariantOption = new Option<string>("--build-variant")
+        {
+            Description = "For --project-type android: Gradle build variant.",
+            DefaultValueFactory = _ => "release",
+        };
+        var artifactTypeOption = new Option<string>("--artifact-type")
+        {
+            Description = "For --project-type android: which artifact to build, \"apk\" or \"aab\".",
+            DefaultValueFactory = _ => "apk",
+        };
         var assemblyInfoOption = new Option<string?>("--assembly-info") { Description = "Path to AssemblyInfo.cs, for version stamping (optional)." };
         var extraTargetsOption = new Option<string?>("--extra-publish-targets")
         {
@@ -319,8 +353,14 @@ public static class CommandLineFactory
         var command = new Command("add-project", "Register a project (or update an existing registration).");
         command.Add(nameOption);
         command.Add(projectIdOption);
+        command.Add(projectTypeOption);
         command.Add(csprojOption);
         command.Add(pubxmlOption);
+        command.Add(projectRootOption);
+        command.Add(buildConfigurationOption);
+        command.Add(workspaceProjectOption);
+        command.Add(buildVariantOption);
+        command.Add(artifactTypeOption);
         command.Add(assemblyInfoOption);
         command.Add(extraTargetsOption);
         command.Add(sdkStyleOption);
@@ -338,6 +378,55 @@ public static class CommandLineFactory
         {
             try
             {
+                var projectTypeRaw = parseResult.GetValue(projectTypeOption)!;
+                ProjectType projectType;
+                if (string.Equals(projectTypeRaw, "dotnet", StringComparison.OrdinalIgnoreCase))
+                {
+                    projectType = ProjectType.DotNet;
+                }
+                else if (string.Equals(projectTypeRaw, "angular", StringComparison.OrdinalIgnoreCase))
+                {
+                    projectType = ProjectType.Angular;
+                }
+                else if (string.Equals(projectTypeRaw, "android", StringComparison.OrdinalIgnoreCase))
+                {
+                    projectType = ProjectType.Android;
+                }
+                else
+                {
+                    output.Error($"Unknown --project-type '{projectTypeRaw}'. Valid values: dotnet, angular, android.");
+                    return 1;
+                }
+
+                var pubxml = parseResult.GetValue(pubxmlOption);
+                if (projectType == ProjectType.DotNet && string.IsNullOrWhiteSpace(pubxml))
+                {
+                    output.Error("--pubxml is required when --project-type is dotnet (the default).");
+                    return 1;
+                }
+
+                var projectRoot = parseResult.GetValue(projectRootOption);
+                if (projectType != ProjectType.DotNet && string.IsNullOrWhiteSpace(projectRoot))
+                {
+                    output.Error("--project-root is required when --project-type is angular or android.");
+                    return 1;
+                }
+
+                var artifactTypeRaw = parseResult.GetValue(artifactTypeOption)!;
+                var artifactType = AndroidArtifactType.Apk;
+                if (projectType == ProjectType.Android)
+                {
+                    if (string.Equals(artifactTypeRaw, "aab", StringComparison.OrdinalIgnoreCase))
+                    {
+                        artifactType = AndroidArtifactType.Aab;
+                    }
+                    else if (!string.Equals(artifactTypeRaw, "apk", StringComparison.OrdinalIgnoreCase))
+                    {
+                        output.Error($"Unknown --artifact-type '{artifactTypeRaw}'. Valid values: apk, aab.");
+                        return 1;
+                    }
+                }
+
                 var appConfigType = parseResult.GetValue(appConfigTypeOption);
                 var appConfigPath = parseResult.GetValue(appConfigPathOption);
                 if (appConfigType is not null)
@@ -378,8 +467,22 @@ public static class CommandLineFactory
                     Name = name,
                     ProjectId = parseResult.GetValue(projectIdOption),
                     LastReleaseNotesSequence = existing?.LastReleaseNotesSequence ?? 0,
+                    ProjectType = projectType,
                     CsprojPath = parseResult.GetValue(csprojOption),
-                    PubxmlName = parseResult.GetValue(pubxmlOption)!,
+                    PubxmlName = pubxml,
+                    Angular = projectType == ProjectType.Angular ? new AngularProjectSettings
+                    {
+                        ProjectRootPath = projectRoot,
+                        BuildConfiguration = parseResult.GetValue(buildConfigurationOption) ?? "production",
+                        WorkspaceProjectName = parseResult.GetValue(workspaceProjectOption),
+                    } : null,
+                    Android = projectType == ProjectType.Android ? new AndroidProjectSettings
+                    {
+                        ProjectRootPath = projectRoot,
+                        BuildConfiguration = parseResult.GetValue(buildConfigurationOption) ?? "production",
+                        BuildVariant = parseResult.GetValue(buildVariantOption) ?? "release",
+                        ArtifactType = artifactType,
+                    } : null,
                     AssemblyInfoPath = parseResult.GetValue(assemblyInfoOption),
                     ExtraPublishTargets = parseResult.GetValue(extraTargetsOption),
                     // Environments (local and dev-server deploy targets) have no CLI surface -- an
@@ -461,8 +564,13 @@ public static class CommandLineFactory
                 var remoteEnvs = project.RemoteEnvironments.Count == 0
                     ? "(none)"
                     : string.Join(", ", project.RemoteEnvironments.Select(e => e.Name));
-                var csprojPath = string.IsNullOrWhiteSpace(project.CsprojPath) ? "(no csproj)" : project.CsprojPath;
-                output.Info($"{project.Name}  ->  {csprojPath}  [{project.PubxmlName}]  local envs: {localEnvs}  dev-server envs: {remoteEnvs}");
+                var sourceLabel = project.ProjectType switch
+                {
+                    ProjectType.Angular => $"Angular: {project.Angular?.ProjectRootPath ?? "(no project root)"}",
+                    ProjectType.Android => $"Android: {project.Android?.ProjectRootPath ?? "(no project root)"}",
+                    _ => $"{(string.IsNullOrWhiteSpace(project.CsprojPath) ? "(no csproj)" : project.CsprojPath)}  [{project.PubxmlName ?? "(no pubxml)"}]",
+                };
+                output.Info($"{project.Name}  ->  {sourceLabel}  local envs: {localEnvs}  dev-server envs: {remoteEnvs}");
             }
 
             return 0;

@@ -67,7 +67,7 @@ public class UploadBuildModel : PageModel
 
         if (BuildZip is null || BuildZip.Length == 0)
         {
-            ErrorMessage = "Select the build's .zip file.";
+            ErrorMessage = "Select the build's file (.zip, or .apk/.aab for Android).";
             return Page();
         }
 

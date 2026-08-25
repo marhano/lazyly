@@ -1,9 +1,11 @@
 # PublishTool
 
-A standalone publisher for classic .NET Framework (4.8+) projects: build via MSBuild, stamp a
-version, archive the result as a zip in a shared build repository organized by project name, and
-mirror the latest build into an IIS-hosted folder — all from one command or one click, with no
-need to open Visual Studio.
+A standalone publisher for .NET, Angular, and hybrid-mobile (Capacitor/Cordova) Android projects:
+build, stamp a version, archive the result in a shared build repository organized by project name,
+and — for .NET/Angular — mirror the latest build into an IIS-hosted folder, all from one command or
+one click, with no need to open Visual Studio. Android builds skip IIS entirely (there's no
+"deploy" equivalent for an installable APK/AAB) and just land on the build-hosting site as a
+download.
 
 Two front ends, one shared pipeline: a CLI for scripting/automation, and a WPF GUI with a form for
 common actions plus an embedded command panel that runs the exact same commands as the CLI.
@@ -51,7 +53,9 @@ dotnet build PublishTool.slnx
 
 ```
 publishtool add-project --name <Name> --csproj <path.csproj> --pubxml <ProfileName>
-                         --iis-host <path> [--assembly-info <path>] [--extra-publish-targets <targets>]
+                         [--assembly-info <path>] [--extra-publish-targets <targets>]
+publishtool add-project --name <Name> --project-type angular --project-root <path> [--build-configuration <config>]
+publishtool add-project --name <Name> --project-type android --project-root <path> [--artifact-type apk|aab]
 publishtool remove-project --name <Name>
 publishtool list-projects
 publishtool publish --project <Name> --version <Version>
@@ -60,8 +64,12 @@ publishtool set-builds-root --path <path>
 publishtool set-msbuild-path --path <path-to-MSBuild.exe>
 ```
 
-- `--pubxml` is the publish profile name only (no extension) — e.g. `FolderProfile` for
-  `Properties\PublishProfiles\FolderProfile.pubxml`.
+- `--project-type` picks which of the other options apply and how `publish` builds the project:
+  `dotnet` (the default — `--pubxml` is required), `angular`, or `android` (both require
+  `--project-root`; PublishTool auto-detects Capacitor vs. Cordova from what's in that folder). Run
+  `publishtool add-project --help` for the full per-type option list.
+- `--pubxml` (dotnet only) is the publish profile name only (no extension) — e.g. `FolderProfile`
+  for `Properties\PublishProfiles\FolderProfile.pubxml`.
 - `--version` accepts any string (e.g. `1.0.0.R0001B`). It's used verbatim for the zip filename
   and manifest; only `AssemblyVersion`/`AssemblyFileVersion` (which require strict
   `major.minor.build.revision`) get the leading numeric prefix — the full string still lands in
@@ -73,13 +81,29 @@ publishtool set-msbuild-path --path <path-to-MSBuild.exe>
 
 ## What `publish` does
 
+The build step is the one part that differs by project type; archiving, release notes, and
+uploading/deploying afterward are identical regardless.
+
+**.NET** (`--project-type dotnet`, the default):
 1. Stamps the version into `AssemblyInfo.cs`, if `--assembly-info` was registered.
 2. Runs `MSBuild.exe /p:DeployOnBuild=true /p:PublishProfile=... /p:PublishUrl=<staging>`.
-3. Zips the staged output into `<BuildsRoot>\<ProjectName>\<Version>_<timestamp>.zip`, with a
-   sibling `.manifest.json` (project, version, who/when, zip path).
-4. Mirrors the staged output into the project's IIS host folder via `robocopy /MIR`, overwriting
-   whatever was there before.
-5. Shows a Windows notification with the project, version, and a click-through to the zip.
+
+**Angular** (`--project-type angular`): runs `npm run build -- --configuration=<config>
+--output-path=<staging>` in the project root.
+
+**Android** (`--project-type android`): auto-detects Capacitor or Cordova in the project root, then
+either (Capacitor) `npm run build`, `npx cap sync android`, and `gradlew assembleRelease`/
+`bundleRelease`, or (Cordova) `ionic cordova build android` / `cordova build android` — producing a
+single `.apk`/`.aab` instead of a folder.
+
+Then, for every type:
+3. Zips the staged output (or, for Android, copies the `.apk`/`.aab` as-is) into
+   `<BuildsRoot>\<ProjectName>\<Version>_<timestamp>.zip` (or `.apk`/`.aab`), with a sibling
+   `.manifest.json` (project, version, who/when, artifact path).
+4. .NET/Angular only: mirrors the staged output into the project's IIS host folder via
+   `robocopy /MIR`, overwriting whatever was there before. Android has no deploy step — the built
+   file is only ever downloaded from the build-hosting site.
+5. Shows a Windows notification with the project, version, and a click-through to the artifact.
 
 `BuildsRoot` defaults to `%APPDATA%\PublishTool\Builds`; override with `set-builds-root`.
 Project registrations live in `%APPDATA%\PublishTool\projects.json`.
@@ -233,26 +257,45 @@ warning pops up automatically the first time you open the app.
 
 ### Adding or editing a project
 
-Opened from the Projects tab's **Add project** / **Edit** buttons. Required fields: **Name** and
-**Publish profile**.
+Opened from the Projects tab's **Add project** / **Edit** buttons. Required fields: **Name**, plus
+whatever the selected **Project type** requires (see below).
 
 Most fields here are **local to your machine** — every dev registering the same shared project sees
 their own copy. If your team is in remote mode, a handful of fields are instead **shared** (project
-ID, publish profile, extra publish targets, SDK-style toggle, hosting listing, app config settings,
-Event Log settings, and the Remote IIS environments) — editing those needs an extra confirmation
-since it affects everyone on the team, not just you.
+ID, project type and its build settings, hosting listing, app config settings, Event Log settings,
+and the Remote IIS environments) — editing those needs an extra confirmation since it affects
+everyone on the team, not just you.
 
-- **Name**, **.csproj path** (optional — only needed to Publish; leave blank for a project
-  registered just to redeploy an existing build or manage its Event Logs/IIS/firewall rules),
-  **AssemblyInfo.cs** (optional, for version stamping).
+- **Name**.
 - **Local IIS** toggle — turn on to deploy this project to IIS sites on *your own* machine. Set a
   host root path, add one or more named environments, and configure each environment's site
-  bindings (protocol/IP/port/hostname).
+  bindings (protocol/IP/port/hostname). Not applicable to Android projects (see below) — there's
+  nothing to deploy to IIS.
+- **Project type** — **.NET** (the default), **Angular**, or **Android (Capacitor/Cordova)**. Picks
+  which fields below apply and how Publish actually builds the project:
+  - **.NET**: **.csproj path** (optional — only needed to Publish; leave blank for a project
+    registered just to redeploy an existing build or manage its Event Logs/IIS/firewall rules),
+    **AssemblyInfo.cs** (optional, for version stamping), **Publish profile** (the `.pubxml` profile
+    name to build with), extra publish targets, and **Modern SDK-style project** (turn on for
+    ASP.NET Core-style projects instead of classic .NET Framework Web Deploy projects).
+  - **Angular**: just point **Project root folder** at the app's root (where `package.json`/
+    `angular.json` live) — Publish runs `npm run build` there. Optionally set a **Build
+    configuration** (defaults to `production`) and a **Workspace project** name for an Angular
+    workspace with more than one buildable project. The built output deploys to IIS exactly like a
+    .NET project's does.
+  - **Android (Capacitor/Cordova)**: point **Project root folder** at a hybrid app's root (Ionic,
+    Capacitor, or Cordova — with or without Angular underneath, it doesn't matter which frontend
+    framework it is). PublishTool auto-detects whether it's a Capacitor or Cordova project from
+    what's in that folder (shown as **Detected: ...**) and builds accordingly: Capacitor runs `npm
+    run build` then `npx cap sync android` then Gradle; Cordova runs `ionic cordova build android`
+    (or plain `cordova build android` without Ionic). Set the **Build configuration**, **Build
+    variant** (defaults to `release`), and whether to produce an **APK** or **AAB**. There's no
+    deploy step — the built file just lands on the Build Archive hosting page as a download, since
+    an installable app has no IIS equivalent. Signing/keystore setup stays entirely the native
+    project's own responsibility; PublishTool never touches it. Node/npm and the Android SDK/Gradle
+    (via the project's own `gradlew`) need to already be set up on whatever machine runs the build.
 - **Project ID** — a short code used as the release-notes reference prefix (e.g. `BPS` →
   `BPS-2026-0007`).
-- **Publish profile** — the `.pubxml` profile name to build with.
-- **Modern SDK-style project** — turn on for ASP.NET Core-style projects instead of classic .NET
-  Framework Web Deploy projects.
 - **List builds in hosting site** — on by default; only affects visibility on the hosting page,
   builds are always archived regardless.
 - **Edit user-visible app config from the Publish tab** — turn on to expose a config file's
@@ -262,7 +305,7 @@ since it affects everyone on the team, not just you.
   in the message — useful for apps sharing a generic log via something like NLog), plus an optional
   remote machine/username for local-mode reads.
 - **Remote IIS** toggle — same shape as Local IIS, but for deploying to environments on the team's
-  dev server; only usable once remote mode is on in Settings.
+  dev server; only usable once remote mode is on in Settings. Not applicable to Android projects.
 
 ### Other dialogs you might see
 

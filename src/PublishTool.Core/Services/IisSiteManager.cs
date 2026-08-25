@@ -30,7 +30,8 @@ public sealed partial class IisSiteManager
         Environment.GetFolderPath(Environment.SpecialFolder.Windows), "System32", "inetsrv", "appcmd.exe");
 
     public async Task EnsureSiteExistsAsync(
-        string siteName, string physicalPath, IReadOnlyList<IisBinding> bindings, CancellationToken ct = default)
+        string siteName, string physicalPath, IReadOnlyList<IisBinding> bindings,
+        AppPoolRuntimeTemplate poolTemplate = AppPoolRuntimeTemplate.DotNetFramework, CancellationToken ct = default)
     {
         RequireAppCmd();
 
@@ -52,11 +53,10 @@ public sealed partial class IisSiteManager
         // otherwise -- unlike IIS Manager's own "Add Website" wizard, which always creates a
         // dedicated pool matching the site name. Sharing DefaultAppPool is bad practice (no
         // crash isolation between sites) and, worse, DefaultAppPool's managed runtime version
-        // may not suit a classic .NET Framework app at all, which is what shows as "Unknown"
-        // status in IIS Manager -- the pool exists but can't actually run the app. So: give
-        // every auto-created site its own pool, sized for classic .NET Framework 4.x (all 4.x
-        // versions share CLR v4.0).
-        await EnsureAppPoolExistsAsync(siteName, ct);
+        // may not suit the app at all, which is what shows as "Unknown" status in IIS Manager --
+        // the pool exists but can't actually run the app. So: give every auto-created site its
+        // own pool, sized for whichever runtime template fits this project (see AppPoolRuntimeTemplate).
+        await EnsureAppPoolExistsAsync(siteName, poolTemplate, ct);
 
         var bindingArg = string.Join(",", bindings.Select(FormatBinding));
         var addSiteArgs = $"add site /name:\"{siteName}\" /physicalPath:\"{physicalPath}\" /bindings:\"{bindingArg}\"";
@@ -81,7 +81,7 @@ public sealed partial class IisSiteManager
         _output.Info($"IIS site '{siteName}' created with its own application pool.");
     }
 
-    private async Task EnsureAppPoolExistsAsync(string poolName, CancellationToken ct)
+    private async Task EnsureAppPoolExistsAsync(string poolName, AppPoolRuntimeTemplate poolTemplate, CancellationToken ct)
     {
         if (await AppPoolExistsAsync(poolName, ct))
         {
@@ -89,8 +89,14 @@ public sealed partial class IisSiteManager
             return;
         }
 
-        _output.Info($"Creating application pool '{poolName}' (.NET CLR v4.0, Integrated pipeline)...");
-        var args = $"add apppool /name:\"{poolName}\" /managedRuntimeVersion:v4.0 /managedPipelineMode:Integrated";
+        // "" (quoted, empty) is appcmd's syntax for "No Managed Code" -- IIS's CLR hosting isn't
+        // used either way for a static-file site or an app that runs its own runtime (Kestrel/ANCM).
+        var (runtimeVersion, description) = poolTemplate == AppPoolRuntimeTemplate.NoManagedCode
+            ? ("", "No Managed Code")
+            : ("v4.0", ".NET CLR v4.0");
+
+        _output.Info($"Creating application pool '{poolName}' ({description}, Integrated pipeline)...");
+        var args = $"add apppool /name:\"{poolName}\" /managedRuntimeVersion:\"{runtimeVersion}\" /managedPipelineMode:Integrated";
 
         var exitCode = await ProcessRunner.RunAsync(AppCmdPath, args, _output, ct);
         if (exitCode != 0)

@@ -1,5 +1,6 @@
 using PublishTool.Core.Models;
 using PublishTool.Core.Services.AppConfig;
+using PublishTool.Core.Services.BuildRunners;
 
 namespace PublishTool.Core.Services;
 
@@ -7,7 +8,6 @@ public sealed class Publisher
 {
     private readonly IProjectRegistry _registry;
     private readonly IOutputSink _output;
-    private readonly MsBuildRunner _msBuild;
     private readonly BuildRepository _buildRepository;
     private readonly GitService _git;
     private readonly RemoteHostingClient _remoteHostingClient;
@@ -17,7 +17,6 @@ public sealed class Publisher
     {
         _registry = registry;
         _output = output;
-        _msBuild = new MsBuildRunner(output);
         _buildRepository = new BuildRepository();
         _git = new GitService(output);
         _remoteHostingClient = new RemoteHostingClient();
@@ -30,10 +29,11 @@ public sealed class Publisher
             ?? throw new InvalidOperationException(
                 $"Project '{options.ProjectName}' is not registered. Add it first with 'add-project'.");
 
-        if (string.IsNullOrWhiteSpace(project.CsprojPath))
+        var sourceRootPath = project.SourceRootPath;
+        if (string.IsNullOrWhiteSpace(sourceRootPath))
         {
             throw new InvalidOperationException(
-                $"'{project.Name}' has no .csproj path configured -- set one in the project's Edit dialog before publishing.");
+                $"'{project.Name}' has no project source configured -- set one in the project's Edit dialog before publishing.");
         }
 
         if (options.UseRemoteMode && string.IsNullOrWhiteSpace(options.RemoteHostingUrl))
@@ -47,7 +47,7 @@ public sealed class Publisher
 
         if (!string.IsNullOrWhiteSpace(options.GitBranch))
         {
-            await _git.CheckoutAsync(project.CsprojPath, options.GitBranch, ct);
+            await _git.CheckoutAsync(sourceRootPath, options.GitBranch, ct);
         }
 
         if (!string.IsNullOrEmpty(project.AssemblyInfoPath))
@@ -81,13 +81,15 @@ public sealed class Publisher
 
         try
         {
-            var msBuildExePath = await MsBuildLocator.LocateAsync(options.MsBuildPath, ct);
-            _output.Info($"Using MSBuild at {msBuildExePath}");
+            var runner = BuildRunnerRegistry.Get(project.ProjectType);
+            var buildResult = await runner.BuildAsync(new BuildContext(project, options, stagingDir, _output), ct);
 
-            _output.Stage("Running MSBuild publish...");
-            await _msBuild.PublishAsync(
-                msBuildExePath, project.CsprojPath, project.PubxmlName, stagingDir,
-                project.SdkStyleProject, project.ExtraPublishTargets, ct);
+            // Copies buildResult's output to destinationPath -- zipping a Directory-kind result
+            // (as every build did before Angular/Android existed), or copying a SingleFile-kind
+            // result (an APK/AAB) as-is, since it's meant to be installed directly, not unzipped.
+            Task WriteArtifactAsync(string destinationPath) => buildResult.ArtifactKind == BuildArtifactKind.Directory
+                ? Task.Run(() => _buildRepository.WriteZip(destinationPath, buildResult.Path), ct)
+                : Task.Run(() => File.Copy(buildResult.Path, destinationPath, overwrite: true), ct);
 
             string zipPath, manifestPath, releaseNotesPath;
             string? existingReleaseNotesReference;
@@ -95,13 +97,14 @@ public sealed class Publisher
             if (options.UseRemoteMode)
             {
                 _output.Stage("Preparing build for upload to dev server...");
+                var artifactExtension = buildResult.ArtifactKind == BuildArtifactKind.Directory ? ".zip" : Path.GetExtension(buildResult.Path);
                 uploadStagingDir = Path.Combine(Path.GetTempPath(), "PublishTool", Guid.NewGuid().ToString("N") + "-upload");
                 Directory.CreateDirectory(uploadStagingDir);
-                zipPath = Path.Combine(uploadStagingDir, $"{options.Version}.zip");
+                zipPath = Path.Combine(uploadStagingDir, $"{options.Version}{artifactExtension}");
                 manifestPath = Path.Combine(uploadStagingDir, $"{options.Version}.manifest.json");
                 releaseNotesPath = Path.Combine(uploadStagingDir, $"{options.Version}.releasenotes.txt");
 
-                await Task.Run(() => _buildRepository.WriteZip(zipPath, stagingDir), ct);
+                await WriteArtifactAsync(zipPath);
                 existingReleaseNotesReference = await TryGetExistingRemoteReleaseNotesReferenceAsync(options, project, ct);
             }
             else
@@ -119,7 +122,7 @@ public sealed class Publisher
                     releaseNotesPath = existing.Manifest.ReleaseNotesPath
                         ?? Path.ChangeExtension(zipPath, null) + ".releasenotes.txt";
 
-                    await Task.Run(() => _buildRepository.WriteZip(zipPath, stagingDir), ct);
+                    await WriteArtifactAsync(zipPath);
 
                     // Overwriting a build that already had release notes reuses its reference number
                     // instead of minting a new one -- this is still the same release, just edited.
@@ -129,11 +132,12 @@ public sealed class Publisher
                 }
                 else
                 {
-                    _output.Stage("Archiving build to repository (zip)...");
-                    // ZipFile.CreateFromDirectory is synchronous and can take real time on large
-                    // builds (tens of MB, thousands of files) -- Task.Run keeps that off the UI thread.
-                    var archive = await Task.Run(
-                        () => _buildRepository.Archive(options.BuildsRoot, project.Name, options.Version, stagingDir), ct);
+                    _output.Stage("Archiving build to repository...");
+                    // ZipFile.CreateFromDirectory/File.Copy are synchronous and can take real time on
+                    // large builds -- Task.Run keeps that off the UI thread.
+                    var archive = buildResult.ArtifactKind == BuildArtifactKind.Directory
+                        ? await Task.Run(() => _buildRepository.Archive(options.BuildsRoot, project.Name, options.Version, buildResult.Path), ct)
+                        : await Task.Run(() => _buildRepository.ArchiveFile(options.BuildsRoot, project.Name, options.Version, buildResult.Path), ct);
                     zipPath = archive.ZipPath;
                     manifestPath = archive.ManifestPath;
                     releaseNotesPath = archive.ReleaseNotesPath;
@@ -201,7 +205,11 @@ public sealed class Publisher
                 // applies its own SetLatest from that when it accepts the upload, same as marking
                 // latest locally does below, just server-side (see BuildUploadHandler).
 
-                var remoteEnvironment = options.DeployTarget == DeployTarget.Remote && project.RemoteIisEnabled && options.DeployEnvironmentName is not null
+                // IIS deploy only makes sense for a Directory-kind result (a folder of files to
+                // serve) -- a SingleFile artifact (e.g. an Android APK/AAB) has no IIS deploy story
+                // at all, so it's simply never offered as an option regardless of what's configured.
+                var remoteEnvironment = buildResult.ArtifactKind == BuildArtifactKind.Directory
+                    && options.DeployTarget == DeployTarget.Remote && project.RemoteIisEnabled && options.DeployEnvironmentName is not null
                     ? project.RemoteEnvironments.FirstOrDefault(e => string.Equals(e.Name, options.DeployEnvironmentName, StringComparison.OrdinalIgnoreCase))
                     : null;
 
@@ -228,7 +236,8 @@ public sealed class Publisher
                 _output.Info($"Archived to {zipPath}");
             }
 
-            var localEnvironment = options.DeployTarget == DeployTarget.Local && project.LocalIisEnabled && options.DeployEnvironmentName is not null
+            var localEnvironment = buildResult.ArtifactKind == BuildArtifactKind.Directory
+                && options.DeployTarget == DeployTarget.Local && project.LocalIisEnabled && options.DeployEnvironmentName is not null
                 ? project.LocalEnvironments.FirstOrDefault(e => string.Equals(e.Name, options.DeployEnvironmentName, StringComparison.OrdinalIgnoreCase))
                 : null;
 
@@ -239,7 +248,7 @@ public sealed class Publisher
                 {
                     var siteName = localEnvironment.ResolveSiteName(project.Name);
                     await _buildDeployer.DeployAsync(
-                        siteName, localHostPath, localEnvironment.Bindings, localEnvironment.AutoCreateSite, stagingDir,
+                        siteName, localHostPath, localEnvironment.Bindings, localEnvironment.AutoCreateSite, buildResult.Path,
                         new SiteDeploymentRecord
                         {
                             SiteName = siteName,
@@ -249,6 +258,7 @@ public sealed class Publisher
                             DeployedAtUtc = DateTimeOffset.UtcNow,
                             DeployedBy = Environment.UserName,
                         },
+                        PoolTemplateFor(project.ProjectType),
                         ct);
                     _output.Info($"Deployed {project.Name} v{options.Version} to local IIS ({localEnvironment.Name}).");
                 }
@@ -279,6 +289,11 @@ public sealed class Publisher
             }
         }
     }
+
+    /// <summary>Angular's static-file output (like ASP.NET Core) wants a "No Managed Code" app
+    /// pool, not the classic .NET Framework CLR default -- see AppPoolRuntimeTemplate.</summary>
+    private static AppPoolRuntimeTemplate PoolTemplateFor(ProjectType projectType) =>
+        projectType == ProjectType.Angular ? AppPoolRuntimeTemplate.NoManagedCode : AppPoolRuntimeTemplate.DotNetFramework;
 
     /// <summary>Looks for an already-uploaded build of this exact version on the dev server so
     /// republishing it reuses its release notes reference instead of minting a new one -- the

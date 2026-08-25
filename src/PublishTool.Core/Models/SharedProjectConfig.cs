@@ -14,9 +14,24 @@ public sealed class SharedProjectConfig
 
     public int LastReleaseNotesSequence { get; set; }
 
-    public required string PubxmlName { get; set; }
+    /// <summary>See <see cref="ProjectConfig.ProjectType"/>.</summary>
+    public ProjectType ProjectType { get; set; } = ProjectType.DotNet;
+
+    /// <summary>Only required when <see cref="ProjectType"/> is <see cref="ProjectType.DotNet"/> --
+    /// see <see cref="ProjectConfig.PubxmlName"/>.</summary>
+    public string? PubxmlName { get; set; }
 
     public string? ExtraPublishTargets { get; set; }
+
+    /// <summary>The team-wide subset of <see cref="ProjectConfig.Angular"/> -- excludes
+    /// <see cref="AngularProjectSettings.ProjectRootPath"/>, which lives in
+    /// <see cref="LocalProjectOverrides.AngularProjectRootPath"/>, same split as
+    /// <see cref="ProjectConfig.CsprojPath"/> vs <see cref="PubxmlName"/>.</summary>
+    public SharedAngularProjectSettings? Angular { get; set; }
+
+    /// <summary>The team-wide subset of <see cref="ProjectConfig.Android"/> -- see
+    /// <see cref="Angular"/> above for the same root-path split.</summary>
+    public SharedAndroidProjectSettings? Android { get; set; }
 
     public bool SdkStyleProject { get; set; }
 
@@ -50,8 +65,20 @@ public sealed class SharedProjectConfig
         Name = config.Name,
         ProjectId = config.ProjectId,
         LastReleaseNotesSequence = config.LastReleaseNotesSequence,
+        ProjectType = config.ProjectType,
         PubxmlName = config.PubxmlName,
         ExtraPublishTargets = config.ExtraPublishTargets,
+        Angular = config.Angular is null ? null : new SharedAngularProjectSettings
+        {
+            BuildConfiguration = config.Angular.BuildConfiguration,
+            WorkspaceProjectName = config.Angular.WorkspaceProjectName,
+        },
+        Android = config.Android is null ? null : new SharedAndroidProjectSettings
+        {
+            BuildConfiguration = config.Android.BuildConfiguration,
+            BuildVariant = config.Android.BuildVariant,
+            ArtifactType = config.Android.ArtifactType,
+        },
         SdkStyleProject = config.SdkStyleProject,
         ListInHosting = config.ListInHosting,
         UseAppConfig = config.UseAppConfig,
