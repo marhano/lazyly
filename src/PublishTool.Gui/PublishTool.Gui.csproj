@@ -26,16 +26,16 @@
     <UseWPF>true</UseWPF>
     <ApplicationIcon>Assets\app.ico</ApplicationIcon>
     <!-- The app's own version, shown in the Help tab: bump this by hand on notable releases. -->
-    <Version>1.3.2</Version>
+    <Version>1.4.0</Version>
   </PropertyGroup>
 
   <!--
-    app.manifest (requireAdministrator) only applies to Release, which is what actually gets
-    shipped via Velopack. Debug builds keep the SDK's default asInvoker manifest so
-    `dotnet build`/`dotnet run` stay launchable without an interactive UAC prompt during
-    day-to-day development, same as before this was added; elevation-gated features (IIS
-    management, etc.) just no-op/show the existing "not elevated" banner in a Debug run, exactly
-    like before.
+    app.manifest now requests asInvoker (see the file itself for why: only local IIS/Firewall
+    management actually needs elevation, surfaced via contextual in-app warnings instead of
+    gating the whole app), so this conditional is no longer about avoiding a UAC prompt in Debug.
+    It's kept Release-only because app.manifest also declares longPathAware and the supported-OS
+    list that matter for the shipped build; Debug just uses the SDK's own default manifest for
+    faster iteration.
   -->
   <PropertyGroup Condition="'$(Configuration)'=='Release'">
     <ApplicationManifest>app.manifest</ApplicationManifest>
