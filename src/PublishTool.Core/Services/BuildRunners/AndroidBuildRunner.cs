@@ -32,6 +32,22 @@ public sealed class AndroidBuildRunner : IBuildRunner
                 "expected a capacitor.config.json/.ts or config.xml file there.");
 
         context.Output.Info($"Detected {wrapper.DisplayName} project.");
-        return wrapper.BuildAsync(settings, context.StagingDir, context.Output, ct);
+
+        // Decrypted here (not earlier) so it only ever exists in memory for the duration of this
+        // one build call -- the build always runs on the same machine that registered the
+        // project, even in remote mode (remote mode only changes where the finished artifact is
+        // archived/uploaded to, never where the build itself runs), so DPAPI's user+machine
+        // scoping is always satisfied.
+        var keystorePassword = settings.ProtectedKeystorePassword is { } protectedKeystorePassword
+            ? SecretProtector.TryUnprotect(protectedKeystorePassword, SecretProtector.AndroidSigningPurpose)
+            : null;
+        var keyPassword = settings.ProtectedKeyPassword is { } protectedKeyPassword
+            ? SecretProtector.TryUnprotect(protectedKeyPassword, SecretProtector.AndroidSigningPurpose)
+            : null;
+
+        var request = new AndroidBuildRequest(
+            settings.ProjectRootPath, context.Options.BuildConfiguration, context.Options.AndroidBuildVariant, context.Options.AndroidArtifactType,
+            settings.KeystorePath, keystorePassword, settings.KeyAlias, keyPassword);
+        return wrapper.BuildAsync(request, context.StagingDir, context.Output, ct);
     }
 }

@@ -5,8 +5,18 @@ namespace PublishTool.Core.Models;
 /// <see cref="ProjectConfig.ProjectType"/> is <see cref="ProjectType.Android"/>. Deliberately has no
 /// wrapper-type field (Capacitor vs Cordova) -- that's auto-detected from
 /// <see cref="ProjectRootPath"/> at build time by <see cref="Services.BuildRunners.IAndroidWrapperStrategy"/>,
-/// so it can never go stale. Signing/keystore stays the native project's own responsibility -- this
-/// tool never stores signing secrets.
+/// so it can never go stale. Also deliberately has no build-configuration/build-variant/
+/// artifact-type fields -- those are all decided per publish instead (see
+/// <see cref="PublishOptions.BuildConfiguration"/>/<see cref="PublishOptions.AndroidBuildVariant"/>/
+/// <see cref="PublishOptions.AndroidArtifactType"/>).
+///
+/// Signing is the one exception to "nothing but where the app lives" -- optional keystore details
+/// for release builds, entered via the GUI's signing dialog (mirroring Android Studio's own
+/// "Generate Signed Bundle/APK" fields) so a release build can actually be signed without every
+/// dev needing the project's own build.gradle to already have a signingConfig wired up. Everything
+/// here is local to this machine, never shared -- same reasoning as <see cref="ProjectRootPath"/>,
+/// only more so since two of these are secrets. Passwords are DPAPI-protected
+/// (see <see cref="Services.SecretProtector.AndroidSigningPurpose"/>), never stored in plain text.
 /// </summary>
 public sealed class AndroidProjectSettings
 {
@@ -15,12 +25,18 @@ public sealed class AndroidProjectSettings
     /// <see cref="AngularProjectSettings.ProjectRootPath"/> is.</summary>
     public string? ProjectRootPath { get; set; }
 
-    /// <summary>Passed through to the web build step. Defaults to "production".</summary>
-    public string? BuildConfiguration { get; set; } = "production";
+    /// <summary>Path to the .jks/.keystore file used to sign release builds. Optional -- if unset,
+    /// a release build just uses the native project's own signingConfig (if any), same as before
+    /// this existed.</summary>
+    public string? KeystorePath { get; set; }
 
-    /// <summary>Gradle build variant, e.g. "release". v1 supports exactly one variant per
-    /// registered project -- multiple flavors need separate project registrations.</summary>
-    public string BuildVariant { get; set; } = "release";
+    /// <summary>The key alias within <see cref="KeystorePath"/> to sign with.</summary>
+    public string? KeyAlias { get; set; }
 
-    public AndroidArtifactType ArtifactType { get; set; } = AndroidArtifactType.Apk;
+    /// <summary>DPAPI-protected keystore password.</summary>
+    public string? ProtectedKeystorePassword { get; set; }
+
+    /// <summary>DPAPI-protected password for <see cref="KeyAlias"/> (often the same as the
+    /// keystore password, but not always).</summary>
+    public string? ProtectedKeyPassword { get; set; }
 }

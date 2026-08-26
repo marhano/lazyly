@@ -1,3 +1,4 @@
+using System.Xml.Linq;
 using PublishTool.Core.Models;
 
 namespace PublishTool.Core.Services.BuildRunners;
@@ -9,15 +10,17 @@ namespace PublishTool.Core.Services.BuildRunners;
 /// </summary>
 public sealed class CordovaWrapperStrategy : IAndroidWrapperStrategy
 {
+    private static readonly XNamespace AndroidNs = "http://schemas.android.com/apk/res/android";
+
     public string TypeName => "Cordova";
 
     public string DisplayName => "Cordova";
 
     public bool Detect(string projectRoot) => File.Exists(Path.Combine(projectRoot, "config.xml"));
 
-    public async Task<BuildResult> BuildAsync(AndroidProjectSettings settings, string stagingDir, IOutputSink output, CancellationToken ct)
+    public async Task<BuildResult> BuildAsync(AndroidBuildRequest request, string stagingDir, IOutputSink output, CancellationToken ct)
     {
-        var projectRoot = settings.ProjectRootPath!;
+        var projectRoot = request.ProjectRootPath;
         var usesIonic = File.Exists(Path.Combine(projectRoot, "ionic.config.json"));
 
         var args = new List<string>();
@@ -30,33 +33,124 @@ public sealed class CordovaWrapperStrategy : IAndroidWrapperStrategy
             args.AddRange(["cordova", "build", "android", "--release"]);
         }
 
-        var platformArgs = new List<string>();
-        if (usesIonic && !string.IsNullOrWhiteSpace(settings.BuildConfiguration))
+        var buildConfigPath = AndroidSigning.WriteCordovaBuildConfig(request);
+        try
         {
-            platformArgs.Add($"--configuration={settings.BuildConfiguration}");
-        }
+            var platformArgs = new List<string>();
+            if (usesIonic && !string.IsNullOrWhiteSpace(request.BuildConfiguration))
+            {
+                platformArgs.Add($"--configuration={request.BuildConfiguration}");
+            }
 
-        if (settings.ArtifactType == AndroidArtifactType.Aab)
-        {
-            platformArgs.Add("--packageType=bundle");
-        }
+            if (request.ArtifactType == AndroidArtifactType.Aab)
+            {
+                platformArgs.Add("--packageType=bundle");
+            }
 
-        if (platformArgs.Count > 0)
-        {
-            args.Add("--");
-            args.AddRange(platformArgs);
-        }
+            if (buildConfigPath is not null)
+            {
+                platformArgs.Add($"--buildConfig=\"{buildConfigPath}\"");
+            }
 
-        var commandLabel = usesIonic ? "ionic cordova build android" : "cordova build android";
-        output.Stage($"Running {commandLabel}...");
-        var exitCode = await ShellCommandRunner.RunAsync(string.Join(' ', args), projectRoot, output, ct);
-        if (exitCode != 0)
+            if (platformArgs.Count > 0)
+            {
+                args.Add("--");
+                args.AddRange(platformArgs);
+            }
+
+            var commandLabel = usesIonic ? "ionic cordova build android" : "cordova build android";
+            output.Stage($"Running {commandLabel}...");
+            var exitCode = await ShellCommandRunner.RunAsync(string.Join(' ', args), projectRoot, output, ct);
+            if (exitCode != 0)
+            {
+                throw new InvalidOperationException($"{commandLabel} exited with code {exitCode}. See log output above for details.");
+            }
+        }
+        finally
         {
-            throw new InvalidOperationException($"{commandLabel} exited with code {exitCode}. See log output above for details.");
+            if (buildConfigPath is not null)
+            {
+                File.Delete(buildConfigPath);
+            }
         }
 
         var platformDir = Path.Combine(projectRoot, "platforms", "android");
-        var artifactPath = AndroidArtifactLocator.Find(platformDir, settings.BuildVariant, settings.ArtifactType);
+        var artifactPath = AndroidArtifactLocator.Find(platformDir, request.BuildVariant, request.ArtifactType);
         return new BuildResult(BuildArtifactKind.SingleFile, artifactPath);
+    }
+
+    public AndroidAppMetadata ReadAppMetadata(string projectRoot)
+    {
+        var configPath = Path.Combine(projectRoot, "config.xml");
+        if (!File.Exists(configPath))
+        {
+            return new AndroidAppMetadata();
+        }
+
+        var doc = XDocument.Load(configPath);
+        var widget = doc.Root;
+        return new AndroidAppMetadata
+        {
+            BundleId = (string?)widget?.Attribute("id"),
+            DisplayName = (string?)widget?.Elements().FirstOrDefault(e => e.Name.LocalName == "name"),
+            VersionNumber = (string?)widget?.Attribute("version"),
+            BuildNumber = (string?)widget?.Attribute(AndroidNs + "versionCode") ?? (string?)widget?.Attribute("android-versionCode"),
+        };
+    }
+
+    public void WriteAppMetadata(string projectRoot, AndroidAppMetadata metadata)
+    {
+        var configPath = Path.Combine(projectRoot, "config.xml");
+        if (!File.Exists(configPath))
+        {
+            return;
+        }
+
+        var doc = XDocument.Load(configPath);
+        var widget = doc.Root;
+        if (widget is null)
+        {
+            return;
+        }
+
+        if (metadata.BundleId is not null)
+        {
+            widget.SetAttributeValue("id", metadata.BundleId);
+        }
+
+        if (metadata.VersionNumber is not null)
+        {
+            widget.SetAttributeValue("version", metadata.VersionNumber);
+        }
+
+        if (metadata.BuildNumber is not null)
+        {
+            // Cordova has historically shipped both a plain "android-versionCode" attribute and the
+            // namespaced "android:versionCode" form across template versions -- update whichever the
+            // project actually has, defaulting to the plain form for a project with neither.
+            if (widget.Attribute(AndroidNs + "versionCode") is not null)
+            {
+                widget.SetAttributeValue(AndroidNs + "versionCode", metadata.BuildNumber);
+            }
+            else
+            {
+                widget.SetAttributeValue("android-versionCode", metadata.BuildNumber);
+            }
+        }
+
+        if (metadata.DisplayName is not null)
+        {
+            var nameElement = widget.Elements().FirstOrDefault(e => e.Name.LocalName == "name");
+            if (nameElement is not null)
+            {
+                nameElement.Value = metadata.DisplayName;
+            }
+            else
+            {
+                widget.AddFirst(new XElement(widget.Name.Namespace + "name", metadata.DisplayName));
+            }
+        }
+
+        doc.Save(configPath);
     }
 }

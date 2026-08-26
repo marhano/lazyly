@@ -2,7 +2,11 @@ namespace PublishTool.Core.Models;
 
 /// <summary>
 /// Build settings for a <see cref="ProjectType.Angular"/> project. Only populated when
-/// <see cref="ProjectConfig.ProjectType"/> is <see cref="ProjectType.Angular"/>.
+/// <see cref="ProjectConfig.ProjectType"/> is <see cref="ProjectType.Angular"/>. Deliberately has no
+/// build-configuration field -- that's decided per publish instead (see
+/// <see cref="PublishOptions.BuildConfiguration"/>), normally derived from whichever
+/// environment.*.ts file gets picked for app config (see
+/// <see cref="Services.AppConfig.EnvironmentTsProvider.InferBuildConfiguration"/>).
 /// </summary>
 public sealed class AngularProjectSettings
 {
@@ -12,10 +16,6 @@ public sealed class AngularProjectSettings
     /// have this dev's local checkout path configured yet, and a project registered purely to
     /// monitor/manage an existing build doesn't need one at all.</summary>
     public string? ProjectRootPath { get; set; }
-
-    /// <summary>Passed as <c>npm run build -- --configuration=&lt;value&gt;</c>. Defaults to
-    /// "production", Angular's own conventional release configuration name.</summary>
-    public string? BuildConfiguration { get; set; } = "production";
 
     /// <summary>For Angular workspace/monorepo setups with more than one buildable project --
     /// passed as an extra argument to the build script. Null for a single-app repo.</summary>

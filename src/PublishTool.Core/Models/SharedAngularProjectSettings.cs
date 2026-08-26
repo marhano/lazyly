@@ -1,3 +1,6 @@
+using System.Text.Json;
+using System.Text.Json.Serialization;
+
 namespace PublishTool.Core.Models;
 
 /// <summary>
@@ -8,7 +11,11 @@ namespace PublishTool.Core.Models;
 /// </summary>
 public sealed class SharedAngularProjectSettings
 {
-    public string? BuildConfiguration { get; set; } = "production";
-
     public string? WorkspaceProjectName { get; set; }
+
+    /// <summary>See <see cref="SharedProjectConfig.ExtensionData"/> -- kept here too so a future
+    /// shared Angular-specific field nested under "angular" round-trips through an old server the
+    /// same way a new top-level field does.</summary>
+    [JsonExtensionData]
+    public Dictionary<string, JsonElement>? ExtensionData { get; set; }
 }

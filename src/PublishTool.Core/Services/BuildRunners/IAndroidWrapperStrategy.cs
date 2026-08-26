@@ -21,5 +21,31 @@ public interface IAndroidWrapperStrategy
     /// cached/persisted, so it can never go stale if a project's wrapper changes.</summary>
     bool Detect(string projectRoot);
 
-    Task<BuildResult> BuildAsync(AndroidProjectSettings settings, string stagingDir, IOutputSink output, CancellationToken ct);
+    Task<BuildResult> BuildAsync(AndroidBuildRequest request, string stagingDir, IOutputSink output, CancellationToken ct);
+
+    /// <summary>Reads the app-identity fields Android Studio's own UI shows prominently (bundle
+    /// id, display name, version name/code) from wherever this wrapper actually keeps them.
+    /// Best-effort -- any field it can't find comes back null, not an exception.</summary>
+    AndroidAppMetadata ReadAppMetadata(string projectRoot);
+
+    /// <summary>Writes back only the non-null fields of <paramref name="metadata"/>, same
+    /// "only touch what's given" contract as <see cref="AppConfig.IAppConfigProvider.WriteSettings"/>.</summary>
+    void WriteAppMetadata(string projectRoot, AndroidAppMetadata metadata);
 }
+
+/// <summary>Everything an <see cref="IAndroidWrapperStrategy"/> needs to build one Android publish.
+/// <see cref="BuildConfiguration"/>/<see cref="BuildVariant"/>/<see cref="ArtifactType"/> are
+/// per-publish choices (see <see cref="PublishOptions.BuildConfiguration"/> etc.), not project
+/// settings -- <see cref="ProjectRootPath"/> is the only thing that's actually fixed per project.
+/// The signing fields are resolved by the caller (from <see cref="Models.AndroidProjectSettings"/>,
+/// or a one-off prompt if unset) and only actually used for a "release"-shaped variant -- see each
+/// wrapper's own <c>BuildAsync</c> for exactly how they're passed to Gradle.</summary>
+public sealed record AndroidBuildRequest(
+    string ProjectRootPath,
+    string? BuildConfiguration,
+    string BuildVariant,
+    AndroidArtifactType ArtifactType,
+    string? KeystorePath = null,
+    string? KeystorePassword = null,
+    string? KeyAlias = null,
+    string? KeyPassword = null);

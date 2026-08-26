@@ -151,10 +151,12 @@ Build, version, annotate, and (optionally) deploy one publish of a project.
    (e.g. Staging, Production) to deploy to. If neither is enabled for this project, publishing just
    archives (and, in remote mode, uploads) the build with no deploy step.
 5. Toggle **Mark as latest release** if this build should replace whichever one is currently
-   flagged "latest" on the hosting site (only one build per project can hold that flag).
-6. If the project has "Edit user-visible app config" enabled, an **App Config** panel shows the
-   live config file's key/value pairs — edit them here and they're written to the config file at
-   publish time. Picking an already-published version above shows *that build's* saved config
+   flagged "latest" on the hosting site (only one build per project can hold that flag). Next to
+   it, **List in hosting site** is on by default — turn it off for a throwaway test build you don't
+   want cluttering the hosting page's listing (it's still archived either way).
+6. If the project has both an app config type and path configured, an **App Config** panel shows
+   the live config file's key/value pairs — edit them here and they're written to the config file
+   at publish time. Picking an already-published version above shows *that build's* saved config
    instead, for reference.
 7. Fill in **Release notes for this build** — four lists (Features and Enhancements, Fixes, Other
    Updates, Backlog Items) that get archived alongside the build and shown on the hosting site.
@@ -257,55 +259,76 @@ warning pops up automatically the first time you open the app.
 
 ### Adding or editing a project
 
-Opened from the Projects tab's **Add project** / **Edit** buttons. Required fields: **Name**, plus
-whatever the selected **Project type** requires (see below).
+Opened from the Projects tab's **Add project** / **Edit** buttons. The only required field is
+**Name** — every other field is optional, so a project can be registered purely to manage an
+existing build's IIS site, Event Log, or firewall rules, with nothing else filled in. Publish
+itself is what enforces whatever a given project type actually needs to build, with a clear error
+naming what's missing.
 
-Most fields here are **local to your machine** — every dev registering the same shared project sees
-their own copy. If your team is in remote mode, a handful of fields are instead **shared** (project
-ID, project type and its build settings, hosting listing, app config settings, Event Log settings,
-and the Remote IIS environments) — editing those needs an extra confirmation since it affects
-everyone on the team, not just you.
+Fields are split into two groups:
 
-- **Name**.
-- **Local IIS** toggle — turn on to deploy this project to IIS sites on *your own* machine. Set a
-  host root path, add one or more named environments, and configure each environment's site
-  bindings (protocol/IP/port/hostname). Not applicable to Android projects (see below) — there's
-  nothing to deploy to IIS.
+- **Local settings** — facts about this machine (where your clone of the repo lives, your own
+  local IIS target). Every dev registering the same shared project sees their own copy, and these
+  stay editable even in remote mode.
+- **Shared settings** — properties of the project itself. In remote mode, every PublishTool user
+  sees the same values here, and editing them needs an extra "Edit shared settings" confirmation
+  since it affects the whole team. **Name** is the one exception in this group — it's locked
+  permanently once a project is first added (in local mode too), since it's the key its build
+  folder and any shared registration are filed under; renaming it isn't supported.
+
+**Local settings:**
+
+- **Project root folder** (optional) — for Angular/Android projects, the app's root folder (see
+  Project type below). Not shown for .NET.
+- **.csproj path** (optional, .NET only) — only needed to Publish; leave blank for a project
+  registered just to redeploy an existing build or manage its Event Logs/IIS/firewall rules.
+- **AssemblyInfo.cs** (optional, .NET only) — for version stamping.
+- **Publish profile** (optional, .NET only) — the `.pubxml` profile name to build with.
+- **Local IIS** toggle (.NET and Angular only — Android has no IIS equivalent) — turn on to deploy
+  this project to IIS sites on *your own* machine. Set a host root path, add one or more named
+  environments, and configure each environment's site bindings (protocol/IP/port/hostname).
+
+**Shared settings:**
+
 - **Project type** — **.NET** (the default), **Angular**, or **Android (Capacitor/Cordova)**. Picks
-  which fields below apply and how Publish actually builds the project:
-  - **.NET**: **.csproj path** (optional — only needed to Publish; leave blank for a project
-    registered just to redeploy an existing build or manage its Event Logs/IIS/firewall rules),
-    **AssemblyInfo.cs** (optional, for version stamping), **Publish profile** (the `.pubxml` profile
-    name to build with), extra publish targets, and **Modern SDK-style project** (turn on for
-    ASP.NET Core-style projects instead of classic .NET Framework Web Deploy projects).
-  - **Angular**: just point **Project root folder** at the app's root (where `package.json`/
-    `angular.json` live) — Publish runs `npm run build` there. Optionally set a **Build
-    configuration** (defaults to `production`) and a **Workspace project** name for an Angular
+  how Publish actually builds the project:
+  - **.NET** uses the Local settings above (.csproj/AssemblyInfo/Publish profile), plus **Extra
+    publish targets** (optional) and **Modern SDK-style project** (turn on for ASP.NET Core-style
+    projects instead of classic .NET Framework Web Deploy projects).
+  - **Angular** just needs **Project root folder** pointed at the app's root (where
+    `package.json`/`angular.json` live) — Publish runs `npm run build` there. Optionally set a
+    **Build configuration** (defaults to `production`) and a **Workspace project** name for a
     workspace with more than one buildable project. The built output deploys to IIS exactly like a
     .NET project's does.
-  - **Android (Capacitor/Cordova)**: point **Project root folder** at a hybrid app's root (Ionic,
-    Capacitor, or Cordova — with or without Angular underneath, it doesn't matter which frontend
-    framework it is). PublishTool auto-detects whether it's a Capacitor or Cordova project from
-    what's in that folder (shown as **Detected: ...**) and builds accordingly: Capacitor runs `npm
-    run build` then `npx cap sync android` then Gradle; Cordova runs `ionic cordova build android`
-    (or plain `cordova build android` without Ionic). Set the **Build configuration**, **Build
-    variant** (defaults to `release`), and whether to produce an **APK** or **AAB**. There's no
-    deploy step — the built file just lands on the Build Archive hosting page as a download, since
-    an installable app has no IIS equivalent. Signing/keystore setup stays entirely the native
-    project's own responsibility; PublishTool never touches it. Node/npm and the Android SDK/Gradle
-    (via the project's own `gradlew`) need to already be set up on whatever machine runs the build.
+  - **Android (Capacitor/Cordova)** needs **Project root folder** pointed at a hybrid app's root
+    (Ionic, Capacitor, or Cordova — whichever frontend framework is underneath doesn't matter).
+    PublishTool auto-detects whether it's a Capacitor or Cordova project from what's in that folder
+    (shown live as **Detected: ...**) and builds accordingly: Capacitor runs `npm run build` then
+    `npx cap sync android` then Gradle; Cordova runs `ionic cordova build android` (or plain
+    `cordova build android` without Ionic). Set the **Build configuration**, **Build variant**
+    (defaults to `release`), and whether to produce an **APK** or **AAB**. There's no deploy step
+    for Android — the built file lands on the Build Archive hosting page as a download instead,
+    since an installable app has no IIS equivalent, and "List in hosting" is chosen per-publish on
+    the Publish tab (see below). Signing/keystore setup stays entirely the native project's own
+    responsibility. Node/npm and the Android SDK/Gradle (via the project's own `gradlew`) need to
+    already be set up on whatever machine runs the build.
 - **Project ID** — a short code used as the release-notes reference prefix (e.g. `BPS` →
   `BPS-2026-0007`).
-- **List builds in hosting site** — on by default; only affects visibility on the hosting page,
-  builds are always archived regardless.
-- **Edit user-visible app config from the Publish tab** — turn on to expose a config file's
-  key/value pairs on the Publish tab (config type + file path, e.g. `Web.config`).
+- **App config (optional)** — a config type + file path (e.g. `Web.config`) to expose that file's
+  key/value pairs for editing on the Publish tab. Leave both blank to skip; fill in both to use it.
 - **Enable Event Logs tab for this project** — turn on to make this project selectable on the Event
   Logs tab; set the log name, and how entries are matched (by Event Source name, or by a substring
   in the message — useful for apps sharing a generic log via something like NLog), plus an optional
   remote machine/username for local-mode reads.
 - **Remote IIS** toggle — same shape as Local IIS, but for deploying to environments on the team's
-  dev server; only usable once remote mode is on in Settings. Not applicable to Android projects.
+  dev server; only usable once remote mode is on in Settings.
+
+Two settings that used to live in this dialog are now decided per-publish on the **Publish tab**
+instead, next to "Mark as latest": **List in hosting site** (on by default — turn off for a
+throwaway test build you don't want cluttering the hosting page's listing; the build is still
+archived either way) and app config editing (already lived there — it just activates automatically
+now whenever a project has both an app config type and path set, instead of needing a separate
+toggle in this dialog).
 
 ### Other dialogs you might see
 

@@ -3,12 +3,13 @@
   <assemblyIdentity version="1.0.0.0" name="PublishTool.Gui.app"/>
 
   <!--
-    PublishTool needs IIS/appcmd management rights for most of what it does (auto-creating sites,
-    starting/stopping/recycling sites and app pools), so it requires Administrator outright rather
-    than degrading gracefully; this forces Windows to elevate it (via UAC) on every launch, no
-    matter how it's started (desktop shortcut, Start menu, a pinned taskbar icon, or a Velopack
-    relaunch after an update). If the user declines the UAC prompt, the process simply doesn't
-    start; there is no unelevated fallback anymore.
+    Only this machine's own IIS/appcmd management (the IIS and Firewall tabs' local-mode actions,
+    and a "Local" deploy target on Publish) actually needs Administrator; publishing itself, remote
+    (dev-server) IIS actions, and most of the app work fine unelevated. So this runs "asInvoker"
+    (whatever privileges the launching context already has, no forced UAC prompt) instead of
+    requireAdministrator, and MainWindow surfaces contextual warnings (ElevationInfoBar,
+    LocalDeployElevationInfoBar) at the specific points that do need it, rather than gating the
+    whole app behind an elevation prompt most users publishing via the dev server never need.
 
     Note: a comment in this file must never contain two consecutive hyphen characters anywhere in
     its body, only at the very start and end. The general .NET/MSBuild XML parser tolerates that,
@@ -19,7 +20,7 @@
   <trustInfo xmlns="urn:schemas-microsoft-com:asm.v2">
     <security>
       <requestedPrivileges xmlns="urn:schemas-microsoft-com:asm.v3">
-        <requestedExecutionLevel level="requireAdministrator" uiAccess="false" />
+        <requestedExecutionLevel level="asInvoker" uiAccess="false" />
       </requestedPrivileges>
     </security>
   </trustInfo>

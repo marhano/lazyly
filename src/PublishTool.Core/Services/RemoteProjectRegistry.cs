@@ -118,15 +118,15 @@ public sealed class RemoteProjectRegistry : IProjectRegistry
             Angular = shared.Angular is null ? null : new AngularProjectSettings
             {
                 ProjectRootPath = local.AngularProjectRootPath,
-                BuildConfiguration = shared.Angular.BuildConfiguration,
                 WorkspaceProjectName = shared.Angular.WorkspaceProjectName,
             },
             Android = shared.Android is null ? null : new AndroidProjectSettings
             {
                 ProjectRootPath = local.AndroidProjectRootPath,
-                BuildConfiguration = shared.Android.BuildConfiguration,
-                BuildVariant = shared.Android.BuildVariant,
-                ArtifactType = shared.Android.ArtifactType,
+                KeystorePath = local.AndroidKeystorePath,
+                KeyAlias = local.AndroidKeyAlias,
+                ProtectedKeystorePassword = local.AndroidProtectedKeystorePassword,
+                ProtectedKeyPassword = local.AndroidProtectedKeyPassword,
             },
             LocalIisEnabled = local.LocalIisEnabled,
             LocalEnvironments = local.LocalEnvironments,
@@ -153,6 +153,10 @@ public sealed class RemoteProjectRegistry : IProjectRegistry
         AssemblyInfoPath = config.AssemblyInfoPath,
         AngularProjectRootPath = config.Angular?.ProjectRootPath,
         AndroidProjectRootPath = config.Android?.ProjectRootPath,
+        AndroidKeystorePath = config.Android?.KeystorePath,
+        AndroidKeyAlias = config.Android?.KeyAlias,
+        AndroidProtectedKeystorePassword = config.Android?.ProtectedKeystorePassword,
+        AndroidProtectedKeyPassword = config.Android?.ProtectedKeyPassword,
         LocalIisEnabled = config.LocalIisEnabled,
         LocalEnvironments = config.LocalEnvironments,
         RemoteIisEnabled = config.RemoteIisEnabled,

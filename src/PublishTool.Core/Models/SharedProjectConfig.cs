@@ -1,3 +1,6 @@
+using System.Text.Json;
+using System.Text.Json.Serialization;
+
 namespace PublishTool.Core.Models;
 
 /// <summary>
@@ -5,6 +8,18 @@ namespace PublishTool.Core.Models;
 /// <c>/api/projects</c> surface stores/returns. Deliberately excludes anything that's a fact about
 /// one dev's own machine (local paths, local IIS target, per-user automation toggles) -- see the
 /// field split in <see cref="Services.RemoteProjectRegistry"/>.
+///
+/// <see cref="ExtensionData"/> exists so a Hosting server doesn't need redeploying every time a new
+/// named property is added here for a purely client-interpreted setting: PublishTool.Hosting only
+/// ever round-trips this whole object through <c>System.Text.Json</c> (see <c>SharedProjectStore</c>)
+/// without touching individual field names, except for <see cref="Name"/>/<see cref="LastReleaseNotesSequence"/>
+/// and (in <c>Program.cs</c>'s deploy endpoint) <see cref="ProjectType"/>/<see cref="RemoteEnvironments"/>,
+/// which the server's own IIS-deploy logic genuinely needs to understand -- those two still require an
+/// actual server code change (and redeploy) if their *behavior* changes, same as any real logic
+/// change would. But a server binary that's ever seen this attribute preserves every OTHER property
+/// it doesn't recognize (a newer client's property this exact server predates) intact through
+/// deserialize -> store -> serialize, instead of silently discarding it -- so once a server build
+/// with this attribute is deployed, later purely-informational settings never need a redeploy again.
 /// </summary>
 public sealed class SharedProjectConfig
 {
@@ -57,6 +72,13 @@ public sealed class SharedProjectConfig
     /// <see cref="ProjectConfig.RemoteEnvironments"/>.</summary>
     public List<DeploymentEnvironment> RemoteEnvironments { get; set; } = new();
 
+    /// <summary>Catches any JSON property this exact build of the class doesn't declare a named
+    /// property for, and re-emits it unchanged on serialize -- see the class remarks above. Never
+    /// read or written directly by application code; <c>System.Text.Json</c> populates/consumes it
+    /// automatically.</summary>
+    [JsonExtensionData]
+    public Dictionary<string, JsonElement>? ExtensionData { get; set; }
+
     /// <summary>Extracts the shared half of a full <see cref="ProjectConfig"/> -- the only place
     /// that mapping should happen, since <see cref="Services.RemoteProjectRegistry.AddOrUpdateAsync"/>
     /// needs it kept in sync with every new shared field this model gains.</summary>
@@ -70,15 +92,9 @@ public sealed class SharedProjectConfig
         ExtraPublishTargets = config.ExtraPublishTargets,
         Angular = config.Angular is null ? null : new SharedAngularProjectSettings
         {
-            BuildConfiguration = config.Angular.BuildConfiguration,
             WorkspaceProjectName = config.Angular.WorkspaceProjectName,
         },
-        Android = config.Android is null ? null : new SharedAndroidProjectSettings
-        {
-            BuildConfiguration = config.Android.BuildConfiguration,
-            BuildVariant = config.Android.BuildVariant,
-            ArtifactType = config.Android.ArtifactType,
-        },
+        Android = config.Android is null ? null : new SharedAndroidProjectSettings(),
         SdkStyleProject = config.SdkStyleProject,
         ListInHosting = config.ListInHosting,
         UseAppConfig = config.UseAppConfig,

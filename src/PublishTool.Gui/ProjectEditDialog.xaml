@@ -21,20 +21,50 @@
                 <TextBlock Text="Local settings" FontWeight="SemiBold" Margin="0,0,0,4"/>
                 <TextBlock TextWrapping="Wrap" Margin="0,0,0,10" FontSize="12"
                            Foreground="{DynamicResource TextFillColorSecondaryBrush}"
-                           Text="Facts about this machine -- where your clone of the repo lives, your own local IIS target. Never shared, always editable."/>
+                           Text="Facts about this machine -- where your clone of the repo lives, your own local IIS target. Never shared, always editable. Every field here is optional -- a project registered with none of them filled in can still be used to manage an existing build's IIS site, Event Log, or firewall rules."/>
 
-                <Grid>
+                <Grid x:Name="ProjectRootFieldsGrid" Visibility="Collapsed">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                    </Grid.RowDefinitions>
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="150"/>
                         <ColumnDefinition Width="*"/>
                         <ColumnDefinition Width="Auto"/>
                     </Grid.ColumnDefinitions>
-                    <TextBlock Grid.Column="0" Text="Name" VerticalAlignment="Center"/>
-                    <ui:TextBox Grid.Column="1" Grid.ColumnSpan="2" x:Name="NameTextBox" Margin="0,6" PlaceholderText="MyProject"/>
+                    <TextBlock Grid.Row="0" Grid.Column="0" Text="Project root folder&#10;(optional)" VerticalAlignment="Center"/>
+                    <ui:TextBox Grid.Row="0" Grid.Column="1" x:Name="ProjectRootTextBox" Margin="0,6,6,6" PlaceholderText="C:\src\MyProject"
+                                ToolTip="Where the project's source lives -- for Angular, its package.json/angular.json; for Android, its Capacitor/Cordova config. Only needed to Publish; leave blank to just manage this project's IIS/Event Logs/firewall rules."
+                                LostFocus="ProjectRootTextBox_LostFocus"/>
+                    <ui:Button Grid.Row="0" Grid.Column="2" Content="Browse..." Icon="{ui:SymbolIcon FolderOpen24}" Width="100" Click="BrowseProjectRoot_Click"/>
+
+                    <TextBlock Grid.Row="1" Grid.Column="0" x:Name="AndroidDetectedCaptionText" Text="Detected" VerticalAlignment="Center" Visibility="Collapsed"/>
+                    <TextBlock Grid.Row="1" Grid.Column="1" x:Name="AndroidDetectedLabel" Margin="0,6" VerticalAlignment="Center" Visibility="Collapsed"
+                               Foreground="{DynamicResource TextFillColorSecondaryBrush}" Text="(point at a project folder above)"/>
                 </Grid>
+
+                <StackPanel x:Name="AndroidSigningSectionPanel" Visibility="Collapsed" Margin="0,16,0,0">
+                    <TextBlock Text="Release signing" FontWeight="SemiBold" Margin="0,0,0,4"/>
+                    <TextBlock TextWrapping="Wrap" Margin="0,0,0,10" FontSize="12"
+                               Foreground="{DynamicResource TextFillColorSecondaryBrush}"
+                               Text="Optional, same fields as Android Studio's &quot;Generate Signed Bundle/APK&quot; dialog -- used to sign a release build. Leave unconfigured to fall back to the native project's own signingConfig, if it has one. Passwords are encrypted and never shared with your team."/>
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="150"/>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" Text="Keystore" VerticalAlignment="Center"/>
+                        <TextBlock Grid.Column="1" x:Name="AndroidSigningStatusTextBlock" VerticalAlignment="Center" TextWrapping="Wrap"
+                                   Foreground="{DynamicResource TextFillColorSecondaryBrush}"/>
+                        <ui:Button Grid.Column="2" Content="Configure signing..." Click="ConfigureAndroidSigningButton_Click"/>
+                    </Grid>
+                </StackPanel>
 
                 <Grid x:Name="DotNetLocalFieldsGrid">
                     <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
                         <RowDefinition Height="Auto"/>
                         <RowDefinition Height="Auto"/>
                     </Grid.RowDefinitions>
@@ -52,44 +82,17 @@
                     <TextBlock Grid.Row="1" Grid.Column="0" Text="AssemblyInfo.cs&#10;(optional)" VerticalAlignment="Center"/>
                     <ui:TextBox Grid.Row="1" Grid.Column="1" x:Name="AssemblyInfoTextBox" Margin="0,6,6,6" PlaceholderText="Properties\AssemblyInfo.cs"/>
                     <ui:Button Grid.Row="1" Grid.Column="2" Content="Browse..." Icon="{ui:SymbolIcon FolderOpen24}" Width="100" Click="BrowseAssemblyInfo_Click"/>
+
+                    <TextBlock Grid.Row="2" Grid.Column="0" Text="Publish profile&#10;(optional)" VerticalAlignment="Center"/>
+                    <ui:TextBox Grid.Row="2" Grid.Column="1" x:Name="PubxmlTextBox" Margin="0,6,6,6" PlaceholderText="FolderProfile"/>
                 </Grid>
 
-                <Grid x:Name="AngularLocalFieldsGrid" Visibility="Collapsed">
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="150"/>
-                        <ColumnDefinition Width="*"/>
-                        <ColumnDefinition Width="Auto"/>
-                    </Grid.ColumnDefinitions>
-                    <TextBlock Grid.Column="0" Text="Project root folder" VerticalAlignment="Center"/>
-                    <ui:TextBox Grid.Column="1" x:Name="AngularProjectRootTextBox" Margin="0,6,6,6" PlaceholderText="C:\src\MyAngularApp"
-                                ToolTip="The Angular project's root folder -- where package.json/angular.json live."/>
-                    <ui:Button Grid.Column="2" Content="Browse..." Icon="{ui:SymbolIcon FolderOpen24}" Width="100" Click="BrowseAngularProjectRoot_Click"/>
-                </Grid>
-
-                <Grid x:Name="AndroidLocalFieldsGrid" Visibility="Collapsed">
-                    <Grid.RowDefinitions>
-                        <RowDefinition Height="Auto"/>
-                        <RowDefinition Height="Auto"/>
-                    </Grid.RowDefinitions>
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="150"/>
-                        <ColumnDefinition Width="*"/>
-                        <ColumnDefinition Width="Auto"/>
-                    </Grid.ColumnDefinitions>
-                    <TextBlock Grid.Row="0" Grid.Column="0" Text="Project root folder" VerticalAlignment="Center"/>
-                    <ui:TextBox Grid.Row="0" Grid.Column="1" x:Name="AndroidProjectRootTextBox" Margin="0,6,6,6" PlaceholderText="C:\src\MyHybridApp"
-                                ToolTip="The hybrid app's root folder -- PublishTool auto-detects Capacitor/Cordova from what's there."
-                                LostFocus="AndroidProjectRootTextBox_LostFocus"/>
-                    <ui:Button Grid.Row="0" Grid.Column="2" Content="Browse..." Icon="{ui:SymbolIcon FolderOpen24}" Width="100" Click="BrowseAndroidProjectRoot_Click"/>
-
-                    <TextBlock Grid.Row="1" Grid.Column="0" Text="Detected" VerticalAlignment="Center"/>
-                    <TextBlock Grid.Row="1" Grid.Column="1" x:Name="AndroidDetectedLabel" Margin="0,6" VerticalAlignment="Center"
-                               Foreground="{DynamicResource TextFillColorSecondaryBrush}" Text="(point at a project folder above)"/>
-                </Grid>
-
-                <ui:ToggleSwitch x:Name="LocalIisToggle" Content="Local IIS" Margin="0,16,0,0"
+                <ui:ToggleSwitch x:Name="RemoteIisToggle" Content="Remote IIS" Margin="0,16,0,0"
+                                 Checked="RemoteIisToggle_Toggled" Unchecked="RemoteIisToggle_Toggled"
+                                 ToolTip="Per-user, a personal preference: only takes effect while &quot;Use dev server for projects&quot; is on in Settings. When on, shows this project's dev-server deploy target (configured below, in Shared settings) and offers it as a Publish tab option."/>
+                <ui:ToggleSwitch x:Name="LocalIisToggle" Content="Local IIS" Margin="0,10,0,0"
                                  Checked="LocalIisToggle_Toggled" Unchecked="LocalIisToggle_Toggled"
-                                 ToolTip="Per-user: when on, every publish you do of this project can deploy straight to your own local IIS. Teammates decide this independently for their own machines."/>
+                                 ToolTip="Per-user: when on, every publish you do of this project can deploy straight to your own local IIS. Teammates decide this independently for their own machines. Not available for Android projects -- there's no IIS equivalent for an installable APK/AAB. Note: whoever publishes with this on needs to run PublishTool as Administrator on their own machine, or the local deploy step will fail."/>
                 <StackPanel x:Name="LocalEnvironmentsSectionPanel" Visibility="Collapsed" Margin="0,10,0,0">
                     <TextBlock Text="Local environments" FontWeight="SemiBold" Margin="0,0,0,4"/>
                     <TextBlock TextWrapping="Wrap" Margin="0,0,0,10" FontSize="12"
@@ -107,32 +110,23 @@
                         <ui:Button Grid.Column="2" Content="Browse..." Icon="{ui:SymbolIcon FolderOpen24}" Width="100" Click="BrowseLocalHostRootPath_Click"/>
                     </Grid>
 
-                    <DataGrid x:Name="LocalEnvironmentsDataGrid" Height="120" AutoGenerateColumns="False" CanUserAddRows="False"
-                              SelectionChanged="LocalEnvironmentsDataGrid_SelectionChanged">
+                    <DataGrid x:Name="LocalEnvironmentsDataGrid" Height="160" AutoGenerateColumns="False" CanUserAddRows="False" IsReadOnly="True">
                         <DataGrid.Columns>
-                            <DataGridComboBoxColumn x:Name="LocalEnvironmentNameColumn" Header="Environment" SelectedItemBinding="{Binding Name}" Width="*"/>
+                            <DataGridTextColumn Header="Environment" Binding="{Binding Name}" Width="*"/>
                             <DataGridCheckBoxColumn Header="Auto-create site" Binding="{Binding AutoCreateSite}" Width="110"/>
+                            <DataGridTemplateColumn Header="Actions" Width="150">
+                                <DataGridTemplateColumn.CellTemplate>
+                                    <DataTemplate>
+                                        <StackPanel Orientation="Horizontal">
+                                            <ui:Button Content="Edit" Width="65" Click="EditLocalEnvironmentButton_Click"/>
+                                            <ui:Button Content="Remove" Width="75" Margin="6,0,0,0" Click="RemoveLocalEnvironmentButton_Click"/>
+                                        </StackPanel>
+                                    </DataTemplate>
+                                </DataGridTemplateColumn.CellTemplate>
+                            </DataGridTemplateColumn>
                         </DataGrid.Columns>
                     </DataGrid>
-                    <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
-                        <ui:Button Content="Add environment" Icon="{ui:SymbolIcon Add24}" Width="150" Click="AddLocalEnvironmentButton_Click"/>
-                        <ui:Button Content="Remove environment" Icon="{ui:SymbolIcon Delete24}" Width="160" Margin="10,0,0,0" Click="RemoveLocalEnvironmentButton_Click"/>
-                    </StackPanel>
-
-                    <TextBlock x:Name="LocalEnvironmentBindingsLabel" Text="Site bindings for the selected environment" Margin="0,14,0,6"
-                               Foreground="{DynamicResource TextFillColorSecondaryBrush}"/>
-                    <DataGrid x:Name="LocalEnvironmentBindingsDataGrid" Height="100" AutoGenerateColumns="False" CanUserAddRows="False">
-                        <DataGrid.Columns>
-                            <DataGridTextColumn Header="Type" Binding="{Binding Protocol}" Width="80"/>
-                            <DataGridTextColumn Header="IP Address" Binding="{Binding IpAddress}" Width="130"/>
-                            <DataGridTextColumn Header="Port" Binding="{Binding Port}" Width="70"/>
-                            <DataGridTextColumn Header="Host name" Binding="{Binding HostName}" Width="*"/>
-                        </DataGrid.Columns>
-                    </DataGrid>
-                    <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
-                        <ui:Button Content="Add binding" Icon="{ui:SymbolIcon Add24}" Width="130" Click="AddLocalBindingButton_Click"/>
-                        <ui:Button Content="Remove binding" Icon="{ui:SymbolIcon Delete24}" Width="140" Margin="10,0,0,0" Click="RemoveLocalBindingButton_Click"/>
-                    </StackPanel>
+                    <ui:Button Content="Add environment" Icon="{ui:SymbolIcon Add24}" Width="150" Margin="0,8,0,0" Click="AddLocalEnvironmentButton_Click"/>
                 </StackPanel>
 
                 <Border BorderThickness="0,1,0,0" BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}" Margin="0,20,0,20"/>
@@ -159,6 +153,16 @@
                         <ColumnDefinition Width="150"/>
                         <ColumnDefinition Width="*"/>
                     </Grid.ColumnDefinitions>
+                    <TextBlock Grid.Column="0" Text="Name" VerticalAlignment="Center"/>
+                    <ui:TextBox Grid.Column="1" x:Name="NameTextBox" Margin="0,6" PlaceholderText="MyProject"
+                                ToolTip="Can't be changed after the project is first added -- it's the key everything else (the build folder, shared registrations) is filed under."/>
+                </Grid>
+
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="150"/>
+                        <ColumnDefinition Width="*"/>
+                    </Grid.ColumnDefinitions>
                     <TextBlock Grid.Column="0" Text="Project ID" VerticalAlignment="Center"/>
                     <ui:TextBox Grid.Column="1" x:Name="ProjectIdTextBox" Margin="0,6" PlaceholderText="e.g. BPS"
                                 ToolTip="Short project code used as the release notes reference prefix, e.g. &quot;BPS&quot; produces references like BPS-2026-0007."/>
@@ -166,83 +170,42 @@
 
                 <StackPanel x:Name="DotNetSharedFieldsPanel">
                     <Grid>
-                        <Grid.RowDefinitions>
-                            <RowDefinition Height="Auto"/>
-                            <RowDefinition Height="Auto"/>
-                        </Grid.RowDefinitions>
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="150"/>
                             <ColumnDefinition Width="*"/>
                         </Grid.ColumnDefinitions>
-
-                        <TextBlock Grid.Row="0" Grid.Column="0" Text="Publish profile" VerticalAlignment="Center"/>
-                        <ui:TextBox Grid.Row="0" Grid.Column="1" x:Name="PubxmlTextBox" Margin="0,6" PlaceholderText="FolderProfile"/>
-
-                        <TextBlock Grid.Row="1" Grid.Column="0" Text="Extra publish&#10;targets (optional)" VerticalAlignment="Center"/>
-                        <ui:TextBox Grid.Row="1" Grid.Column="1" x:Name="ExtraTargetsTextBox" Margin="0,6" PlaceholderText="e.g. CollectSQLiteInteropFiles"/>
+                        <TextBlock Grid.Column="0" Text="Extra publish&#10;targets (optional)" VerticalAlignment="Center"/>
+                        <ui:TextBox Grid.Column="1" x:Name="ExtraTargetsTextBox" Margin="0,6" PlaceholderText="e.g. CollectSQLiteInteropFiles"/>
                     </Grid>
                     <ui:ToggleSwitch x:Name="SdkStyleProjectToggle" Content="Modern SDK-style project (e.g. ASP.NET Core)" Margin="0,10,0,0"/>
                 </StackPanel>
 
                 <StackPanel x:Name="AngularSharedFieldsPanel" Visibility="Collapsed">
                     <Grid>
-                        <Grid.RowDefinitions>
-                            <RowDefinition Height="Auto"/>
-                            <RowDefinition Height="Auto"/>
-                        </Grid.RowDefinitions>
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="150"/>
                             <ColumnDefinition Width="*"/>
                         </Grid.ColumnDefinitions>
-
-                        <TextBlock Grid.Row="0" Grid.Column="0" Text="Build configuration" VerticalAlignment="Center"/>
-                        <ui:TextBox Grid.Row="0" Grid.Column="1" x:Name="AngularBuildConfigurationTextBox" Margin="0,6" PlaceholderText="production"/>
-
-                        <TextBlock Grid.Row="1" Grid.Column="0" Text="Workspace project&#10;(optional)" VerticalAlignment="Center"/>
-                        <ui:TextBox Grid.Row="1" Grid.Column="1" x:Name="AngularWorkspaceProjectTextBox" Margin="0,6" PlaceholderText="e.g. my-app"
+                        <TextBlock Grid.Column="0" Text="Workspace project&#10;(optional)" VerticalAlignment="Center"/>
+                        <ui:TextBox Grid.Column="1" x:Name="AngularWorkspaceProjectTextBox" Margin="0,6" PlaceholderText="e.g. my-app"
                                     ToolTip="For an Angular workspace with more than one buildable project -- which one to build. Leave blank for a single-app repo."/>
                     </Grid>
                 </StackPanel>
-
-                <StackPanel x:Name="AndroidSharedFieldsPanel" Visibility="Collapsed">
-                    <Grid>
-                        <Grid.RowDefinitions>
-                            <RowDefinition Height="Auto"/>
-                            <RowDefinition Height="Auto"/>
-                        </Grid.RowDefinitions>
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="150"/>
-                            <ColumnDefinition Width="*"/>
-                        </Grid.ColumnDefinitions>
-
-                        <TextBlock Grid.Row="0" Grid.Column="0" Text="Build configuration" VerticalAlignment="Center"/>
-                        <ui:TextBox Grid.Row="0" Grid.Column="1" x:Name="AndroidBuildConfigurationTextBox" Margin="0,6" PlaceholderText="production"/>
-
-                        <TextBlock Grid.Row="1" Grid.Column="0" Text="Build variant" VerticalAlignment="Center"/>
-                        <ui:TextBox Grid.Row="1" Grid.Column="1" x:Name="AndroidBuildVariantTextBox" Margin="0,6" PlaceholderText="release"/>
-                    </Grid>
-                    <TextBlock Text="Artifact type" Margin="10,10,0,6" Foreground="{DynamicResource TextFillColorSecondaryBrush}"/>
-                    <ComboBox x:Name="AndroidArtifactTypeComboBox" HorizontalAlignment="Left" Width="150" Margin="10,0,0,0">
-                        <ComboBoxItem Content="APK" Tag="Apk"/>
-                        <ComboBoxItem Content="AAB" Tag="Aab"/>
-                    </ComboBox>
-                </StackPanel>
-
-                <ui:ToggleSwitch x:Name="ListInHostingToggle" Content="List builds in hosting site" IsChecked="True" Margin="0,10,0,0"/>
 
                 <ui:ToggleSwitch x:Name="UseAppConfigToggle" Content="Edit user-visible app config from the Publish tab" Margin="0,16,0,0"
                                   Checked="UseAppConfigToggle_Toggled" Unchecked="UseAppConfigToggle_Toggled"/>
                 <StackPanel x:Name="AppConfigTypePanel" Visibility="Collapsed" Margin="0,10,0,0">
                     <TextBlock Text="Config type" Margin="0,0,0,6" Foreground="{DynamicResource TextFillColorSecondaryBrush}"/>
-                    <ComboBox x:Name="AppConfigTypeComboBox" HorizontalAlignment="Left" Width="240" DisplayMemberPath="DisplayName"/>
+                    <ComboBox x:Name="AppConfigTypeComboBox" HorizontalAlignment="Left" Width="280" DisplayMemberPath="DisplayName"/>
 
-                    <TextBlock Text="Config file path" Margin="0,10,0,6" Foreground="{DynamicResource TextFillColorSecondaryBrush}"/>
+                    <TextBlock Text="Config file path (optional)" Margin="0,10,0,6" Foreground="{DynamicResource TextFillColorSecondaryBrush}"/>
                     <Grid>
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="*"/>
                             <ColumnDefinition Width="Auto"/>
                         </Grid.ColumnDefinitions>
-                        <ui:TextBox Grid.Column="0" x:Name="AppConfigPathTextBox" Margin="0,0,6,0" PlaceholderText="C:\src\MyProject\Web.config"/>
+                        <ui:TextBox Grid.Column="0" x:Name="AppConfigPathTextBox" Margin="0,0,6,0" PlaceholderText="Leave blank to find it automatically at publish time"
+                                    ToolTip="Optional. If left blank, PublishTool looks for a matching config file under the project's own source folder each time it's needed -- you'll be asked to pick if more than one is found."/>
                         <ui:Button Grid.Column="1" Content="Browse..." Icon="{ui:SymbolIcon FolderOpen24}" Width="100" Click="BrowseAppConfigPath_Click"/>
                     </Grid>
                 </StackPanel>
@@ -284,10 +247,7 @@
                     </Grid>
                 </StackPanel>
 
-                <ui:ToggleSwitch x:Name="RemoteIisToggle" Content="Remote IIS" Margin="0,16,0,0"
-                                 Checked="RemoteIisToggle_Toggled" Unchecked="RemoteIisToggle_Toggled"
-                                 ToolTip="Per-user: only takes effect while &quot;Use dev server for projects&quot; is on in Settings. When on, shows this project's dev-server deploy target and offers it as a Publish tab option."/>
-                <StackPanel x:Name="RemoteEnvironmentsSectionPanel" Visibility="Collapsed" Margin="0,10,0,0">
+                <StackPanel x:Name="RemoteEnvironmentsSectionPanel" Visibility="Collapsed" Margin="0,16,0,0">
                     <TextBlock Text="Dev-server environments" FontWeight="SemiBold" Margin="0,0,0,4"/>
                     <TextBlock TextWrapping="Wrap" Margin="0,0,0,10" FontSize="12"
                                Foreground="{DynamicResource TextFillColorSecondaryBrush}"
@@ -302,32 +262,23 @@
                             <ui:TextBox Grid.Column="1" x:Name="RemoteHostRootPathTextBox" PlaceholderText="C:\PublishToolServerTest (on the dev server)"/>
                         </Grid>
 
-                        <DataGrid x:Name="RemoteEnvironmentsDataGrid" Height="120" AutoGenerateColumns="False" CanUserAddRows="False"
-                                  SelectionChanged="RemoteEnvironmentsDataGrid_SelectionChanged">
+                        <DataGrid x:Name="RemoteEnvironmentsDataGrid" Height="160" AutoGenerateColumns="False" CanUserAddRows="False" IsReadOnly="True">
                             <DataGrid.Columns>
-                                <DataGridComboBoxColumn x:Name="RemoteEnvironmentNameColumn" Header="Environment" SelectedItemBinding="{Binding Name}" Width="*"/>
+                                <DataGridTextColumn Header="Environment" Binding="{Binding Name}" Width="*"/>
                                 <DataGridCheckBoxColumn Header="Auto-create site" Binding="{Binding AutoCreateSite}" Width="110"/>
+                                <DataGridTemplateColumn Header="Actions" Width="150">
+                                    <DataGridTemplateColumn.CellTemplate>
+                                        <DataTemplate>
+                                            <StackPanel Orientation="Horizontal">
+                                                <ui:Button Content="Edit" Width="65" Click="EditRemoteEnvironmentButton_Click"/>
+                                                <ui:Button Content="Remove" Width="75" Margin="6,0,0,0" Click="RemoveRemoteEnvironmentButton_Click"/>
+                                            </StackPanel>
+                                        </DataTemplate>
+                                    </DataGridTemplateColumn.CellTemplate>
+                                </DataGridTemplateColumn>
                             </DataGrid.Columns>
                         </DataGrid>
-                        <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
-                            <ui:Button Content="Add environment" Icon="{ui:SymbolIcon Add24}" Width="150" Click="AddRemoteEnvironmentButton_Click"/>
-                            <ui:Button Content="Remove environment" Icon="{ui:SymbolIcon Delete24}" Width="160" Margin="10,0,0,0" Click="RemoveRemoteEnvironmentButton_Click"/>
-                        </StackPanel>
-
-                        <TextBlock Text="Site bindings for the selected environment" Margin="0,14,0,6"
-                                   Foreground="{DynamicResource TextFillColorSecondaryBrush}"/>
-                        <DataGrid x:Name="RemoteEnvironmentBindingsDataGrid" Height="100" AutoGenerateColumns="False" CanUserAddRows="False">
-                            <DataGrid.Columns>
-                                <DataGridTextColumn Header="Type" Binding="{Binding Protocol}" Width="80"/>
-                                <DataGridTextColumn Header="IP Address" Binding="{Binding IpAddress}" Width="130"/>
-                                <DataGridTextColumn Header="Port" Binding="{Binding Port}" Width="70"/>
-                                <DataGridTextColumn Header="Host name" Binding="{Binding HostName}" Width="*"/>
-                            </DataGrid.Columns>
-                        </DataGrid>
-                        <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
-                            <ui:Button Content="Add binding" Icon="{ui:SymbolIcon Add24}" Width="130" Click="AddRemoteBindingButton_Click"/>
-                            <ui:Button Content="Remove binding" Icon="{ui:SymbolIcon Delete24}" Width="140" Margin="10,0,0,0" Click="RemoveRemoteBindingButton_Click"/>
-                        </StackPanel>
+                        <ui:Button Content="Add environment" Icon="{ui:SymbolIcon Add24}" Width="150" Margin="0,8,0,0" Click="AddRemoteEnvironmentButton_Click"/>
                     </StackPanel>
                 </StackPanel>
             </StackPanel>

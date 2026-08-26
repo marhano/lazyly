@@ -93,7 +93,7 @@ public sealed class BuildDeployer
             }
 
             _output.Info($"Stopping IIS application pool '{poolName}' before copying files...");
-            await _iisSiteManager.StopAppPoolAsync(poolName, ct);
+            await _iisSiteManager.StopAppPoolAsync(poolName, ct: ct);
             return true;
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
@@ -108,7 +108,7 @@ public sealed class BuildDeployer
     {
         try
         {
-            await _iisSiteManager.StartAppPoolAsync(poolName, ct);
+            await _iisSiteManager.StartAppPoolAsync(poolName, ct: ct);
             _output.Info($"Restarted IIS application pool '{poolName}'.");
         }
         catch (Exception ex) when (ex is not OperationCanceledException)

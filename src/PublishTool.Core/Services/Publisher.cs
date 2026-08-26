@@ -64,13 +64,31 @@ public sealed class Publisher
                 ?? throw new InvalidOperationException(
                     $"'{project.Name}' has an unknown app config type '{project.AppConfigType}'.");
 
-            if (string.IsNullOrWhiteSpace(project.AppConfigPath))
+            var configPath = ResolveAppConfigPath(project, options, provider);
+
+            // Angular/Android no longer have a separate "build configuration" setting -- it's
+            // inferred from whichever environment file app config is actually writing into (e.g.
+            // environment.prod.ts -> "prod"), unless the caller already gave an explicit override.
+            if (string.IsNullOrWhiteSpace(options.BuildConfiguration) && provider is EnvironmentTsProvider)
             {
-                throw new InvalidOperationException($"'{project.Name}' has app config enabled but no config file path set.");
+                options.BuildConfiguration = EnvironmentTsProvider.InferBuildConfiguration(configPath);
             }
 
             _output.Stage($"Writing app config ({provider.DisplayName})...");
-            await Task.Run(() => provider.WriteSettings(project.AppConfigPath, options.AppConfigSettings), ct);
+            await Task.Run(() => provider.WriteSettings(configPath, options.AppConfigSettings), ct);
+        }
+
+        if (project.ProjectType == ProjectType.Android && options.AndroidAppMetadata is not null
+            && !string.IsNullOrWhiteSpace(project.Android?.ProjectRootPath))
+        {
+            var androidRootPath = project.Android.ProjectRootPath;
+            var wrapper = AndroidWrapperStrategyRegistry.Detect(androidRootPath)
+                ?? throw new InvalidOperationException(
+                    $"'{project.Name}': couldn't detect a Capacitor or Cordova project at '{androidRootPath}' -- " +
+                    "expected a capacitor.config.json/.ts or config.xml file there.");
+
+            _output.Stage("Writing Android app config (bundle id / display name / version)...");
+            await Task.Run(() => wrapper.WriteAppMetadata(androidRootPath, options.AndroidAppMetadata), ct);
         }
 
         var stagingDir = Path.Combine(Path.GetTempPath(), "PublishTool", Guid.NewGuid().ToString("N"));
@@ -189,7 +207,7 @@ public sealed class Publisher
                 PublishedAtUtc = DateTimeOffset.UtcNow,
                 PublishedBy = Environment.UserName,
                 ZipPath = zipPath,
-                ListInHosting = project.ListInHosting,
+                ListInHosting = options.ListInHosting,
                 ReleaseNotesPath = writtenReleaseNotesPath,
                 AppConfigSettings = project.UseAppConfig ? options.AppConfigSettings : null,
                 IsLatest = options.MarkAsLatest,
@@ -294,6 +312,40 @@ public sealed class Publisher
     /// pool, not the classic .NET Framework CLR default -- see AppPoolRuntimeTemplate.</summary>
     private static AppPoolRuntimeTemplate PoolTemplateFor(ProjectType projectType) =>
         projectType == ProjectType.Angular ? AppPoolRuntimeTemplate.NoManagedCode : AppPoolRuntimeTemplate.DotNetFramework;
+
+    /// <summary>The config file path is optional even with app config enabled -- if neither the
+    /// project's own <see cref="ProjectConfig.AppConfigPath"/> nor an explicit
+    /// <see cref="PublishOptions.AppConfigPathOverride"/> (the GUI's Publish-tab pick, or the CLI's
+    /// --app-config-path) is set, this searches the project's own source tree via
+    /// <see cref="IAppConfigProvider.FindCandidateConfigPaths"/> and only proceeds if that search
+    /// is unambiguous -- zero or multiple matches error out asking for an explicit choice instead
+    /// of guessing.</summary>
+    private static string ResolveAppConfigPath(ProjectConfig project, PublishOptions options, IAppConfigProvider provider)
+    {
+        if (!string.IsNullOrWhiteSpace(options.AppConfigPathOverride))
+        {
+            return options.AppConfigPathOverride;
+        }
+
+        if (!string.IsNullOrWhiteSpace(project.AppConfigPath))
+        {
+            return project.AppConfigPath;
+        }
+
+        var sourceRoot = string.IsNullOrWhiteSpace(project.SourceRootPath) ? null : Path.GetDirectoryName(project.SourceRootPath);
+        var candidates = string.IsNullOrWhiteSpace(sourceRoot) ? [] : provider.FindCandidateConfigPaths(sourceRoot);
+
+        return candidates.Count switch
+        {
+            1 => candidates[0],
+            0 => throw new InvalidOperationException(
+                $"'{project.Name}' has app config enabled but no config file path set, and none could be found " +
+                $"automatically under its project folder for {provider.DisplayName}."),
+            _ => throw new InvalidOperationException(
+                $"'{project.Name}' has app config enabled but no config file path set, and multiple {provider.DisplayName} " +
+                "files were found automatically -- pick one explicitly (Publish tab, or --app-config-path)."),
+        };
+    }
 
     /// <summary>Looks for an already-uploaded build of this exact version on the dev server so
     /// republishing it reuses its release notes reference instead of minting a new one -- the
