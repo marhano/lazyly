@@ -37,9 +37,9 @@
             @Html.AntiForgeryToken()
 
             <div class="pt-form-grid">
-                <label for="BuildZip">Build .zip</label>
+                <label for="BuildZip">Build file (.zip, or .apk/.aab for Android)</label>
                 <div>
-                    <input class="pt-input" type="file" id="BuildZip" name="BuildZip" accept=".zip" required />
+                    <input class="pt-input" type="file" id="BuildZip" name="BuildZip" accept=".zip,.apk,.aab" required />
                     <p class="pt-muted" style="margin: 0.4rem 0 0;">Max upload size: @Model.MaxUploadSizeDisplay</p>
                 </div>
 

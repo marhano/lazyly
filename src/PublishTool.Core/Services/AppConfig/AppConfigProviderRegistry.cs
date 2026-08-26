@@ -10,6 +10,8 @@ public static class AppConfigProviderRegistry
     public static readonly IReadOnlyList<IAppConfigProvider> All = new IAppConfigProvider[]
     {
         new WebConfigAppSettingsProvider(),
+        new AppSettingsJsonProvider(),
+        new EnvironmentTsProvider(),
     };
 
     public static IAppConfigProvider? Get(string? typeName) =>

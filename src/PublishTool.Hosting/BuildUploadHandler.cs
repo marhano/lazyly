@@ -36,11 +36,15 @@ internal sealed class BuildUploadHandler
 {
     private readonly BuildRepository _buildRepository = new();
 
+    private static readonly string[] AllowedArtifactExtensions = [".zip", ".apk", ".aab"];
+
     public async Task<BuildUploadResult> HandleAsync(string buildsRoot, BuildUploadRequest request, CancellationToken ct)
     {
-        if (!Path.GetExtension(request.ZipFileName).Equals(".zip", StringComparison.OrdinalIgnoreCase))
+        var artifactExtension = Path.GetExtension(request.ZipFileName);
+        var isZip = artifactExtension.Equals(".zip", StringComparison.OrdinalIgnoreCase);
+        if (!AllowedArtifactExtensions.Contains(artifactExtension, StringComparer.OrdinalIgnoreCase))
         {
-            return BuildUploadResult.Fail("The build file must be a .zip.");
+            return BuildUploadResult.Fail("The build file must be a .zip, .apk, or .aab.");
         }
 
         if (request.ReleaseNotesFileName is not null &&
@@ -80,14 +84,17 @@ internal sealed class BuildUploadHandler
 
         // Same version uploaded again overwrites in place instead of creating a duplicate --
         // matches how a republish of the same version already behaves.
-        var paths = _buildRepository.ResolvePaths(buildsRoot, projectName, version);
+        var paths = _buildRepository.ResolvePaths(buildsRoot, projectName, version, artifactExtension);
 
         await using (var fileStream = File.Create(paths.ZipPath))
         {
             await request.ZipStream.CopyToAsync(fileStream, ct);
         }
 
-        if (!UploadValidation.IsValidZip(paths.ZipPath))
+        // .apk/.aab have their own binary format guarantees -- this structural check only applies
+        // to an actual .zip upload, the same "don't inspect the artifact's contents" stance the rest
+        // of this pipeline already takes toward whatever's inside a build's zip.
+        if (isZip && !UploadValidation.IsValidZip(paths.ZipPath))
         {
             File.Delete(paths.ZipPath);
             return BuildUploadResult.Fail("The uploaded build file isn't a valid .zip archive.");

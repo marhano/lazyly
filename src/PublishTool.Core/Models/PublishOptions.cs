@@ -24,6 +24,12 @@ public sealed class PublishOptions
     /// <see cref="Services.BuildRepository.SetLatest"/>.</summary>
     public bool MarkAsLatest { get; set; }
 
+    /// <summary>Whether this build appears in the build-hosting site's listing -- decided per
+    /// publish (e.g. a throwaway test build you don't want cluttering the listing) rather than
+    /// baked into the project's own settings. The build is always archived either way; this only
+    /// controls visibility there. Defaults to true, matching every publish before this existed.</summary>
+    public bool ListInHosting { get; set; } = true;
+
     /// <summary>Base URL of the Remote Build Hosting API, e.g. "https://devserver.internal". Only
     /// used when <see cref="UseRemoteMode"/> is true -- supplied so <see cref="Services.Publisher"/>
     /// doesn't need to load <see cref="AppSettings"/> itself.</summary>
@@ -71,4 +77,32 @@ public sealed class PublishOptions
     /// building, if the project uses app config (see ProjectConfig.UseAppConfig). Null/empty
     /// means "don't touch the config file" -- distinct from writing an empty dictionary.</summary>
     public Dictionary<string, string>? AppConfigSettings { get; set; }
+
+    /// <summary>Explicit config file path for this publish, overriding <see cref="ProjectConfig.AppConfigPath"/>
+    /// -- used when the project has no fixed path configured and one was instead resolved by
+    /// auto-discovery (GUI: picked from the Publish tab's discovered-files list; CLI: the one
+    /// unambiguous match <see cref="Services.AppConfig.IAppConfigProvider.FindCandidateConfigPaths"/>
+    /// found). Null defers to <see cref="ProjectConfig.AppConfigPath"/> as before.</summary>
+    public string? AppConfigPathOverride { get; set; }
+
+    /// <summary>Passed as <c>npm run build -- --configuration=&lt;value&gt;</c> for Angular/Android
+    /// builds -- a per-publish choice rather than a project setting, normally derived from whichever
+    /// environment.*.ts file was picked for app config (see
+    /// <see cref="Services.AppConfig.EnvironmentTsProvider.InferBuildConfiguration"/>). Null omits
+    /// the flag entirely, falling back to the build tool's own default configuration.</summary>
+    public string? BuildConfiguration { get; set; }
+
+    /// <summary>Gradle build variant for an Android publish, e.g. "release" or "debug". Only used
+    /// when the project is <see cref="ProjectType.Android"/>.</summary>
+    public string AndroidBuildVariant { get; set; } = "release";
+
+    /// <summary>Which artifact an Android publish produces. Only used when the project is
+    /// <see cref="ProjectType.Android"/>.</summary>
+    public AndroidArtifactType AndroidArtifactType { get; set; } = AndroidArtifactType.Apk;
+
+    /// <summary>App-identity fields (bundle id, display name, version name/code) to write into the
+    /// Android project before building, via <see cref="Services.BuildRunners.IAndroidWrapperStrategy.WriteAppMetadata"/>.
+    /// Null, or any null field on it, means "leave that alone" -- same per-publish, only-touch-what's-given
+    /// contract as <see cref="AppConfigSettings"/>. Only used when the project is <see cref="ProjectType.Android"/>.</summary>
+    public AndroidAppMetadata? AndroidAppMetadata { get; set; }
 }

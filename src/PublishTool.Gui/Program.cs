@@ -12,7 +12,16 @@ public static class Program
     [STAThread]
     public static void Main(string[] args)
     {
+        // Checked before VelopackApp.Build().Run() -- an update/install/uninstall relaunch is a
+        // real, separate lifecycle event Velopack needs to see even if a normal instance happens
+        // to already be running, so this only guards the ordinary "user launched it twice" case by
+        // running after Velopack's own hook has had its chance to intercept and exit early.
         VelopackApp.Build().Run();
+
+        if (!SingleInstanceGuard.TryAcquire())
+        {
+            return;
+        }
 
         var app = new App();
         app.InitializeComponent();

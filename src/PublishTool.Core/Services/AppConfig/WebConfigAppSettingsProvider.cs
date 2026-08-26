@@ -1,14 +1,18 @@
 using System.Xml.Linq;
+using PublishTool.Core.Models;
 
 namespace PublishTool.Core.Services.AppConfig;
 
-/// <summary>Reads/writes &lt;appSettings&gt;&lt;add key="..." value="..." /&gt; entries in a
-/// classic .NET Framework Web.config.</summary>
+/// <summary>Reads/writes &lt;appSettings&gt;&lt;add key="..." value="..." /&gt; entries -- the
+/// identical XML shape shared by both a Web.config (classic ASP.NET Framework) and an App.config
+/// (any other classic .NET Framework app), so one provider covers both.</summary>
 public sealed class WebConfigAppSettingsProvider : IAppConfigProvider
 {
     public string TypeName => "WebConfigAppSettings";
 
-    public string DisplayName => "Web.config (appSettings)";
+    public string DisplayName => "Web.config / App.config (appSettings)";
+
+    public IReadOnlyList<ProjectType> ApplicableProjectTypes => [ProjectType.DotNet];
 
     public Dictionary<string, string> ReadSettings(string configPath)
     {
@@ -78,4 +82,9 @@ public sealed class WebConfigAppSettingsProvider : IAppConfigProvider
 
         doc.Save(configPath);
     }
+
+    public IReadOnlyList<string> FindCandidateConfigPaths(string sourceRoot) =>
+        ConfigFileSearch.FindFiles(sourceRoot, name =>
+            string.Equals(name, "Web.config", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(name, "App.config", StringComparison.OrdinalIgnoreCase));
 }

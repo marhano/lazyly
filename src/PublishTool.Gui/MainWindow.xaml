@@ -23,7 +23,7 @@
         <ui:InfoBar Grid.Row="1" x:Name="ElevationInfoBar" Margin="16,8,16,0"
                     Severity="Informational" IsOpen="False"
                     Title="Not running as Administrator"
-                    Message="Auto-creating IIS sites and starting/stopping sites or application pools require running PublishTool elevated. Right-click the app and choose &quot;Run as administrator&quot; to enable those features."/>
+                    Message="Managing this machine's own IIS sites/app pools and firewall rules (the IIS and Firewall tabs) requires running PublishTool elevated. Right-click the app and choose &quot;Run as administrator&quot; if you need those -- publishing itself, and any dev-server (remote) IIS actions, work fine without it."/>
 
         <Grid Grid.Row="2" Margin="16,4,16,16">
             <Grid.ColumnDefinitions>
@@ -42,6 +42,8 @@
                 <TabItem Header="Publish">
                     <Grid Margin="12">
                         <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/>
                             <RowDefinition Height="Auto"/>
                             <RowDefinition Height="Auto"/>
                             <RowDefinition Height="Auto"/>
@@ -103,12 +105,57 @@
                                 <ComboBox Grid.Row="1" Grid.Column="1" x:Name="DeployEnvironmentComboBox" Margin="0,6"
                                           ToolTip="Which named environment (e.g. Staging, Production) within the selected deploy target to deploy to."/>
                             </Grid>
+                            <ui:InfoBar x:Name="LocalDeployElevationInfoBar" Margin="0,6,0,0"
+                                        Severity="Warning" IsOpen="False" IsClosable="False"
+                                        Title="Administrator required"
+                                        Message="Deploying to your own machine's IIS needs PublishTool running as Administrator, or this publish's local deploy step will fail. Close the app and relaunch it with &quot;Run as administrator&quot;, or switch Deploy target to a dev-server environment instead."/>
                         </StackPanel>
 
-                        <ui:ToggleSwitch Grid.Row="4" Grid.Column="1" x:Name="MarkAsLatestToggle" Content="Mark as latest release" Margin="0,10,0,0"
-                                         ToolTip="Shown as &quot;(latest)&quot; next to this build on the hosting site. Only one build per project can be latest -- marking this one un-flags whichever build had it before."/>
+                        <StackPanel Grid.Row="4" Grid.Column="0" Grid.ColumnSpan="2" x:Name="AndroidBuildOptionsPanel" Visibility="Collapsed" Margin="0,6,0,0">
+                            <Grid>
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto"/>
+                                    <RowDefinition Height="Auto"/>
+                                </Grid.RowDefinitions>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="120"/>
+                                    <ColumnDefinition Width="*"/>
+                                </Grid.ColumnDefinitions>
 
-                        <StackPanel Grid.Row="5" Grid.Column="1" Orientation="Horizontal" Margin="0,14,0,0">
+                                <TextBlock Grid.Row="0" Grid.Column="0" Text="Artifact type" VerticalAlignment="Center"/>
+                                <ComboBox Grid.Row="0" Grid.Column="1" x:Name="AndroidArtifactTypeComboBox" Margin="0,6" HorizontalAlignment="Left" Width="180" SelectedIndex="0"
+                                          SelectionChanged="AndroidArtifactTypeComboBox_SelectionChanged">
+                                    <ComboBoxItem Content="APK" Tag="Apk"/>
+                                    <ComboBoxItem Content="AAB" Tag="Aab"/>
+                                </ComboBox>
+
+                                <TextBlock Grid.Row="1" Grid.Column="0" Text="Build variant" VerticalAlignment="Center"/>
+                                <ComboBox Grid.Row="1" Grid.Column="1" x:Name="AndroidBuildVariantComboBox" Margin="0,6" HorizontalAlignment="Left" Width="180" SelectedIndex="0">
+                                    <ComboBoxItem Content="release"/>
+                                    <ComboBoxItem Content="debug"/>
+                                </ComboBox>
+                            </Grid>
+                        </StackPanel>
+
+                        <Grid Grid.Row="5" Grid.Column="0" Grid.ColumnSpan="2" x:Name="AppConfigCandidatePanel" Visibility="Collapsed" Margin="0,10,0,0">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="120"/>
+                                <ColumnDefinition Width="*"/>
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Grid.Column="0" Text="Config file to edit" VerticalAlignment="Center"/>
+                            <ComboBox Grid.Column="1" x:Name="AppConfigCandidatePathComboBox" HorizontalAlignment="Left"
+                                      SelectionChanged="AppConfigCandidatePathComboBox_SelectionChanged"
+                                      ToolTip="No fixed config path is set on this project -- pick which of the automatically found files to edit for this publish."/>
+                        </Grid>
+
+                        <StackPanel Grid.Row="6" Grid.Column="1" Orientation="Horizontal" Margin="0,10,0,0">
+                            <ui:ToggleSwitch x:Name="MarkAsLatestToggle" Content="Mark as latest release"
+                                             ToolTip="Shown as &quot;(latest)&quot; next to this build on the hosting site. Only one build per project can be latest -- marking this one un-flags whichever build had it before."/>
+                            <ui:ToggleSwitch x:Name="ListInHostingToggle" Content="List in hosting site" IsChecked="True" Margin="24,0,0,0"
+                                             ToolTip="Whether this build appears in the build-hosting site's listing. Turn off for a throwaway test build you don't want showing up there -- it's still archived either way."/>
+                        </StackPanel>
+
+                        <StackPanel Grid.Row="7" Grid.Column="1" Orientation="Horizontal" Margin="0,14,0,0">
                             <ui:Button x:Name="PublishButton" Content="Publish"
                                        Appearance="Primary" Icon="{ui:SymbolIcon Rocket24}"
                                        Width="140" Click="PublishButton_Click"/>
@@ -117,7 +164,7 @@
                                        Width="140" Margin="10,0,0,0" Click="RefreshProjectsButton_Click"/>
                         </StackPanel>
 
-                        <ScrollViewer Grid.Row="6" Grid.Column="0" Grid.ColumnSpan="2" VerticalScrollBarVisibility="Auto" Margin="0,20,0,0">
+                        <ScrollViewer Grid.Row="8" Grid.Column="0" Grid.ColumnSpan="2" VerticalScrollBarVisibility="Auto" Margin="0,20,0,0">
                             <StackPanel>
                                 <ui:CardExpander x:Name="AppConfigExpander" Header="App Config" IsExpanded="False"
                                                   Margin="0,0,0,12" Visibility="Collapsed">
@@ -137,6 +184,40 @@
                                                        Margin="10,0,0,0" Click="RemoveAppConfigSettingButton_Click"/>
                                         </StackPanel>
                                     </StackPanel>
+                                </ui:CardExpander>
+
+                                <ui:CardExpander x:Name="AndroidConfigExpander" Header="Android Config" IsExpanded="False"
+                                                  Margin="0,0,0,12" Visibility="Collapsed">
+                                    <Grid Margin="2">
+                                        <Grid.RowDefinitions>
+                                            <RowDefinition Height="Auto"/>
+                                            <RowDefinition Height="Auto"/>
+                                            <RowDefinition Height="Auto"/>
+                                            <RowDefinition Height="Auto"/>
+                                        </Grid.RowDefinitions>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="140"/>
+                                            <ColumnDefinition Width="*"/>
+                                        </Grid.ColumnDefinitions>
+
+                                        <TextBlock Grid.Row="0" Grid.Column="0" Text="Bundle Id" VerticalAlignment="Center"/>
+                                        <ui:TextBox Grid.Row="0" Grid.Column="1" x:Name="AndroidBundleIdTextBox" Margin="0,6"
+                                                    PlaceholderText="Not found -- leave blank to keep unchanged"/>
+
+                                        <TextBlock Grid.Row="1" Grid.Column="0" Text="Display Name" VerticalAlignment="Center"/>
+                                        <ui:TextBox Grid.Row="1" Grid.Column="1" x:Name="AndroidDisplayNameTextBox" Margin="0,6"
+                                                    PlaceholderText="Not found -- leave blank to keep unchanged"/>
+
+                                        <TextBlock Grid.Row="2" Grid.Column="0" Text="Version Number" VerticalAlignment="Center"/>
+                                        <ui:TextBox Grid.Row="2" Grid.Column="1" x:Name="AndroidVersionNumberTextBox" Margin="0,6"
+                                                    PlaceholderText="Not found -- leave blank to keep unchanged"
+                                                    ToolTip="Android's versionName, e.g. 1.0.1"/>
+
+                                        <TextBlock Grid.Row="3" Grid.Column="0" Text="Build Number" VerticalAlignment="Center"/>
+                                        <ui:TextBox Grid.Row="3" Grid.Column="1" x:Name="AndroidBuildNumberTextBox" Margin="0,6"
+                                                    PlaceholderText="Not found -- leave blank to keep unchanged"
+                                                    ToolTip="Android's versionCode -- must strictly increase release over release for Play Store uploads."/>
+                                    </Grid>
                                 </ui:CardExpander>
 
                                 <ui:CardExpander Header="Release notes for this build" IsExpanded="False">
@@ -168,6 +249,10 @@
                             </Grid.RowDefinitions>
 
                             <DockPanel Grid.Row="0" Margin="0,0,0,6">
+                                <ui:Button DockPanel.Dock="Right" x:Name="AllProjectsHistoryButton" Content="All history"
+                                           Icon="{ui:SymbolIcon History24}" Padding="10,4" Margin="6,0,0,0"
+                                           ToolTip="View every action recorded across every project -- add/remove, settings changes, publishes, deploys, build changes."
+                                           Click="AllProjectsHistoryButton_Click"/>
                                 <ui:Button DockPanel.Dock="Right" x:Name="RefreshRegisteredProjectsButton" Content="Refresh"
                                            Icon="{ui:SymbolIcon ArrowSync24}" Padding="10,4"
                                            ToolTip="Reload the project list -- picks up projects another teammate added, or config they changed on an existing one."
@@ -197,6 +282,9 @@
                             </Grid.RowDefinitions>
 
                             <DockPanel Grid.Row="0" Margin="0,0,0,10">
+                                <ui:Button DockPanel.Dock="Right" x:Name="ProjectHistoryButton" Content="History"
+                                           Icon="{ui:SymbolIcon History24}" Width="110" Margin="6,0,0,0" Click="ProjectHistoryButton_Click"
+                                           ToolTip="View this project's own audit trail -- add/remove, settings changes, publishes, deploys, build changes."/>
                                 <ui:Button DockPanel.Dock="Right" x:Name="RefreshBuildsButton" Content="Refresh"
                                            Icon="{ui:SymbolIcon ArrowSync24}" Width="110" Click="RefreshBuildsButton_Click"/>
                                 <TextBlock x:Name="BuildHistoryTitleTextBlock" Text="Select a project to see its build history"
@@ -251,6 +339,12 @@
                         <DockPanel Grid.Row="0" Margin="0,0,0,10">
                             <ui:Button DockPanel.Dock="Right" x:Name="RefreshIisButton" Content="Refresh"
                                        Icon="{ui:SymbolIcon ArrowSync24}" Width="110" Click="RefreshIisButton_Click"/>
+                            <ui:Button DockPanel.Dock="Right" x:Name="IisHistoryButton" Content="All history"
+                                       Icon="{ui:SymbolIcon History24}" Width="110" Margin="0,0,10,0" Click="IisHistoryButton_Click"
+                                       ToolTip="View every site/application pool action recorded here -- start/stop/remove/recycle, who did it and when."/>
+                            <ui:Button DockPanel.Dock="Right" x:Name="ManualDeployButton" Content="Manual deploy"
+                                       Icon="{ui:SymbolIcon ArrowUpload24}" Width="130" Margin="0,0,10,0" Click="ManualDeployButton_Click"
+                                       ToolTip="Deploy a folder or zip file into a new or existing IIS site, without going through a registered project's build history. Works in both local and remote mode."/>
                         </DockPanel>
 
                         <TabControl Grid.Row="1">
@@ -259,7 +353,6 @@
                                     <Grid.RowDefinitions>
                                         <RowDefinition Height="Auto"/>
                                         <RowDefinition Height="*"/>
-                                        <RowDefinition Height="Auto"/>
                                     </Grid.RowDefinitions>
 
                                     <StackPanel Grid.Row="0" Orientation="Horizontal" Margin="0,0,0,10">
@@ -280,39 +373,85 @@
                                             <DataGridTextColumn Header="Deployed Version" Binding="{Binding DeployedVersion}" Width="120"/>
                                             <DataGridTextColumn Header="Deployed At" Binding="{Binding DeployedAtUtc}" Width="160"/>
                                             <DataGridTextColumn Header="Deployed By" Binding="{Binding DeployedBy}" Width="120"/>
+                                            <DataGridTemplateColumn Header="Actions" Width="Auto">
+                                                <DataGridTemplateColumn.CellTemplate>
+                                                    <DataTemplate>
+                                                        <StackPanel Orientation="Horizontal">
+                                                            <ui:Button Icon="{ui:SymbolIcon Play24}" ToolTip="Start site"
+                                                                       Width="36" Margin="0,2,4,2" Click="StartSiteButton_Click">
+                                                                <ui:Button.Style>
+                                                                    <Style TargetType="ui:Button" BasedOn="{StaticResource {x:Type ui:Button}}">
+                                                                        <Style.Triggers>
+                                                                            <DataTrigger Binding="{Binding State}" Value="Started">
+                                                                                <Setter Property="Visibility" Value="Collapsed"/>
+                                                                            </DataTrigger>
+                                                                        </Style.Triggers>
+                                                                    </Style>
+                                                                </ui:Button.Style>
+                                                            </ui:Button>
+                                                            <ui:Button Icon="{ui:SymbolIcon Stop24}" ToolTip="Stop site"
+                                                                       Width="36" Margin="0,2,4,2" Click="StopSiteButton_Click">
+                                                                <ui:Button.Style>
+                                                                    <Style TargetType="ui:Button" BasedOn="{StaticResource {x:Type ui:Button}}">
+                                                                        <Setter Property="Visibility" Value="Collapsed"/>
+                                                                        <Style.Triggers>
+                                                                            <DataTrigger Binding="{Binding State}" Value="Started">
+                                                                                <Setter Property="Visibility" Value="Visible"/>
+                                                                            </DataTrigger>
+                                                                        </Style.Triggers>
+                                                                    </Style>
+                                                                </ui:Button.Style>
+                                                            </ui:Button>
+                                                            <ui:Button Icon="{ui:SymbolIcon Globe24}" ToolTip="Browse site"
+                                                                       Width="36" Margin="0,2,4,2" Click="BrowseSiteButton_Click">
+                                                                <ui:Button.Style>
+                                                                    <Style TargetType="ui:Button" BasedOn="{StaticResource {x:Type ui:Button}}">
+                                                                        <Setter Property="Visibility" Value="Collapsed"/>
+                                                                        <Style.Triggers>
+                                                                            <DataTrigger Binding="{Binding State}" Value="Started">
+                                                                                <Setter Property="Visibility" Value="Visible"/>
+                                                                            </DataTrigger>
+                                                                        </Style.Triggers>
+                                                                    </Style>
+                                                                </ui:Button.Style>
+                                                            </ui:Button>
+                                                            <ui:Button Icon="{ui:SymbolIcon History24}" ToolTip="Deployment history"
+                                                                       Width="36" Margin="0,2,4,2" Click="SiteHistoryButton_Click"/>
+                                                            <ui:Button Icon="{ui:SymbolIcon Delete24}" ToolTip="Remove site"
+                                                                       Width="36" Margin="0,2" Click="RemoveSiteButton_Click"/>
+                                                        </StackPanel>
+                                                    </DataTemplate>
+                                                </DataGridTemplateColumn.CellTemplate>
+                                            </DataGridTemplateColumn>
                                         </DataGrid.Columns>
                                     </DataGrid>
-
-                                    <StackPanel Grid.Row="2" Orientation="Horizontal" Margin="0,10,0,0">
-                                        <ui:Button Content="Start site" Icon="{ui:SymbolIcon Play24}" Width="120" Click="StartSiteButton_Click"/>
-                                        <ui:Button Content="Stop site" Icon="{ui:SymbolIcon Stop24}" Width="120" Margin="10,0,0,0" Click="StopSiteButton_Click"/>
-                                        <ui:Button Content="Browse site" Icon="{ui:SymbolIcon Globe24}" Width="130" Margin="10,0,0,0" Click="BrowseSiteButton_Click"/>
-                                        <ui:Button Content="History" Icon="{ui:SymbolIcon History24}" Width="110" Margin="10,0,0,0" Click="SiteHistoryButton_Click"/>
-                                    </StackPanel>
                                 </Grid>
                             </TabItem>
 
                             <TabItem Header="Application Pools">
                                 <Grid Margin="12">
-                                    <Grid.RowDefinitions>
-                                        <RowDefinition Height="*"/>
-                                        <RowDefinition Height="Auto"/>
-                                    </Grid.RowDefinitions>
-
-                                    <DataGrid Grid.Row="0" x:Name="IisAppPoolsDataGrid" AutoGenerateColumns="False" IsReadOnly="True" MinHeight="120">
+                                    <DataGrid x:Name="IisAppPoolsDataGrid" AutoGenerateColumns="False" IsReadOnly="True" MinHeight="120">
                                         <DataGrid.Columns>
                                             <DataGridTextColumn Header="Name" Binding="{Binding Name}" Width="*"/>
                                             <DataGridTextColumn Header="State" Binding="{Binding State}" Width="100"/>
                                             <DataGridTextColumn Header=".NET Version" Binding="{Binding ManagedRuntimeVersion}" Width="120"/>
                                             <DataGridTextColumn Header="Pipeline" Binding="{Binding PipelineMode}" Width="100"/>
+                                            <DataGridTemplateColumn Header="Actions" Width="Auto">
+                                                <DataGridTemplateColumn.CellTemplate>
+                                                    <DataTemplate>
+                                                        <StackPanel Orientation="Horizontal">
+                                                            <ui:Button Icon="{ui:SymbolIcon Play24}" ToolTip="Start pool"
+                                                                       Width="36" Margin="0,2,4,2" Click="StartAppPoolButton_Click"/>
+                                                            <ui:Button Icon="{ui:SymbolIcon Stop24}" ToolTip="Stop pool"
+                                                                       Width="36" Margin="0,2,4,2" Click="StopAppPoolButton_Click"/>
+                                                            <ui:Button Icon="{ui:SymbolIcon ArrowClockwise24}" ToolTip="Recycle pool"
+                                                                       Width="36" Margin="0,2" Click="RecycleAppPoolButton_Click"/>
+                                                        </StackPanel>
+                                                    </DataTemplate>
+                                                </DataGridTemplateColumn.CellTemplate>
+                                            </DataGridTemplateColumn>
                                         </DataGrid.Columns>
                                     </DataGrid>
-
-                                    <StackPanel Grid.Row="1" Orientation="Horizontal" Margin="0,10,0,0">
-                                        <ui:Button Content="Start pool" Icon="{ui:SymbolIcon Play24}" Width="120" Click="StartAppPoolButton_Click"/>
-                                        <ui:Button Content="Stop pool" Icon="{ui:SymbolIcon Stop24}" Width="120" Margin="10,0,0,0" Click="StopAppPoolButton_Click"/>
-                                        <ui:Button Content="Recycle pool" Icon="{ui:SymbolIcon ArrowClockwise24}" Width="130" Margin="10,0,0,0" Click="RecycleAppPoolButton_Click"/>
-                                    </StackPanel>
                                 </Grid>
                             </TabItem>
                         </TabControl>
@@ -620,6 +759,38 @@
                     </ScrollViewer>
                 </TabItem>
 
+                <TabItem Header="Audit Logs">
+                    <Grid Margin="12">
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="*"/>
+                        </Grid.RowDefinitions>
+
+                        <DockPanel Grid.Row="0" Margin="0,0,0,10">
+                            <ui:Button DockPanel.Dock="Right" x:Name="RefreshCombinedAuditButton" Content="Refresh"
+                                       Icon="{ui:SymbolIcon ArrowSync24}" Width="110" Click="RefreshCombinedAuditButton_Click"/>
+                            <TextBlock Text="Every action recorded across every tab -- Projects, Firewall, and IIS"
+                                       VerticalAlignment="Center" Foreground="{DynamicResource TextFillColorSecondaryBrush}"/>
+                        </DockPanel>
+
+                        <ui:TextBox Grid.Row="1" x:Name="CombinedAuditSearchTextBox" Margin="0,0,0,10"
+                                    PlaceholderText="Search category, subject, action, details, by..."
+                                    TextChanged="CombinedAuditSearchTextBox_TextChanged"/>
+
+                        <DataGrid Grid.Row="2" x:Name="CombinedAuditDataGrid" AutoGenerateColumns="False" IsReadOnly="True">
+                            <DataGrid.Columns>
+                                <DataGridTextColumn Header="Time" Binding="{Binding PerformedAtUtc}" Width="160"/>
+                                <DataGridTextColumn Header="Category" Binding="{Binding Category}" Width="90"/>
+                                <DataGridTextColumn Header="Subject" Binding="{Binding Subject}" Width="150"/>
+                                <DataGridTextColumn Header="Action" Binding="{Binding Action}" Width="120"/>
+                                <DataGridTextColumn Header="Details" Binding="{Binding Details}" Width="*"/>
+                                <DataGridTextColumn Header="By" Binding="{Binding PerformedBy}" Width="120"/>
+                            </DataGrid.Columns>
+                        </DataGrid>
+                    </Grid>
+                </TabItem>
+
                 <TabItem Header="Help">
                     <Grid Margin="12">
                         <Grid.RowDefinitions>
@@ -643,7 +814,7 @@
 
                         <TextBlock Grid.Row="2" Foreground="{DynamicResource TextFillColorSecondaryBrush}"
                                    TextWrapping="Wrap" Margin="0,0,0,10"
-                                   Text="External tools PublishTool relies on. MSBuild is required for Publish; IIS (appcmd.exe) is required for auto-creating sites and the IIS tab."/>
+                                   Text="External tools PublishTool relies on. MSBuild is required for Publish (.NET projects); IIS (appcmd.exe) is required for auto-creating sites and the IIS tab; Node.js/npm is required for Angular and Android projects; Java (JDK) and the Android SDK are additionally required for Android projects."/>
 
                         <DataGrid Grid.Row="3" x:Name="DependenciesDataGrid" AutoGenerateColumns="False" IsReadOnly="True">
                             <DataGrid.Columns>

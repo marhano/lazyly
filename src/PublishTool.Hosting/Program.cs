@@ -52,11 +52,7 @@ app.MapGet("/download", (string path, IConfiguration configuration) =>
         return Results.NotFound();
     }
 
-    var contentType = Path.GetExtension(fullPath).Equals(".txt", StringComparison.OrdinalIgnoreCase)
-        ? "text/plain"
-        : "application/zip";
-
-    return Results.File(fullPath, contentType, Path.GetFileName(fullPath));
+    return Results.File(fullPath, ContentTypeForDownload(fullPath), Path.GetFileName(fullPath));
 });
 
 // ---------------------------------------------------------------------------------------------
@@ -108,11 +104,7 @@ app.MapGet("/api/builds/download", (HttpRequest request, IConfiguration configur
         return Results.NotFound();
     }
 
-    var contentType = Path.GetExtension(fullPath).Equals(".txt", StringComparison.OrdinalIgnoreCase)
-        ? "text/plain"
-        : "application/zip";
-
-    return Results.File(fullPath, contentType, Path.GetFileName(fullPath));
+    return Results.File(fullPath, ContentTypeForDownload(fullPath), Path.GetFileName(fullPath));
 });
 
 app.MapPost("/api/builds/upload", async (HttpRequest request, IConfiguration configuration) =>
@@ -352,6 +344,56 @@ app.MapPost("/api/projects/{name}/reserve-release-sequence", (HttpRequest reques
 });
 
 // ---------------------------------------------------------------------------------------------
+// /api/projects/audit -- a flat log of every project-related action (add/remove/settings/publish/
+// deploy/build changes) across every project, recorded by the client after an action succeeds
+// (see MainWindow.RecordProjectAuditAsync). Same shape as /api/firewall/audit, just POST-able
+// since (unlike a firewall rule change) there's no server-side mutation for this to piggyback on --
+// the actual action already happened wherever it happened; this just logs that it did.
+// ---------------------------------------------------------------------------------------------
+
+app.MapGet("/api/projects/audit", async (HttpRequest request, IConfiguration configuration) =>
+{
+    if (!ApiKeyAuth.Validate(request, configuration))
+    {
+        return Results.Unauthorized();
+    }
+
+    try
+    {
+        var history = await new ProjectAuditStore().GetHistoryAsync(ProjectAuditRoot(configuration), request.HttpContext.RequestAborted);
+        return Results.Ok(history);
+    }
+    catch (Exception ex)
+    {
+        return Results.Problem(ex.Message, statusCode: StatusCodes.Status500InternalServerError);
+    }
+});
+
+app.MapPost("/api/projects/audit", async (HttpRequest request, IConfiguration configuration) =>
+{
+    if (!ApiKeyAuth.Validate(request, configuration))
+    {
+        return Results.Unauthorized();
+    }
+
+    var body = await request.ReadFromJsonAsync<ProjectAuditEntry>(request.HttpContext.RequestAborted);
+    if (body is null)
+    {
+        return Results.BadRequest(new { error = "Expected a JSON body." });
+    }
+
+    try
+    {
+        await new ProjectAuditStore().AppendAsync(ProjectAuditRoot(configuration), body, request.HttpContext.RequestAborted);
+        return Results.Ok();
+    }
+    catch (Exception ex)
+    {
+        return Results.Problem(ex.Message, statusCode: StatusCodes.Status500InternalServerError);
+    }
+});
+
+// ---------------------------------------------------------------------------------------------
 // /api/environments -- the shared deployment environment name list (Staging/Production/etc.) every
 // PublishTool user picks from when configuring or deploying to a project's environments.
 // ---------------------------------------------------------------------------------------------
@@ -449,6 +491,9 @@ app.MapPost("/api/deploy", async (HttpRequest request, IConfiguration configurat
         var siteName = deployEnvironment.ResolveSiteName(manifest.ProjectName);
         var deployer = new BuildDeployer(
             new LoggerOutputSink(loggerFactory.CreateLogger("Deploy")), Path.Combine(buildsRoot, "_deployments"));
+        var poolTemplate = project?.ProjectType == ProjectType.Angular
+            ? AppPoolRuntimeTemplate.NoManagedCode
+            : AppPoolRuntimeTemplate.DotNetFramework;
         await deployer.DeployAsync(
             siteName, hostPath, deployEnvironment.Bindings, deployEnvironment.AutoCreateSite, stagingDir,
             new SiteDeploymentRecord
@@ -460,6 +505,7 @@ app.MapPost("/api/deploy", async (HttpRequest request, IConfiguration configurat
                 DeployedAtUtc = DateTimeOffset.UtcNow,
                 DeployedBy = string.IsNullOrWhiteSpace(deployedBy) ? "unknown" : deployedBy,
             },
+            poolTemplate,
             request.HttpContext.RequestAborted);
 
         return Results.Ok(new { deployed = true, project = manifest.ProjectName, environment = deployEnvironment.Name, hostPath });
@@ -486,11 +532,33 @@ app.MapPost("/api/deploy", async (HttpRequest request, IConfiguration configurat
 // Deployment/audit history live under BuildsRoot (already configured, no new setting needed)
 // rather than each manager's own machine-wide default -- this server may run other things too,
 // and these records are specific to what PublishTool itself put into IIS/the firewall here.
+// Every archived build is a .zip except Android's, which is a raw .apk/.aab (see BuildRepository.ArchiveFile) --
+// both are also, technically, zip-format containers, so a wrong-but-plausible "application/zip" wouldn't
+// actually break a download, but this gets the MIME type right for a browser/download manager either way.
+static string ContentTypeForDownload(string filePath) => Path.GetExtension(filePath).ToLowerInvariant() switch
+{
+    ".txt" => "text/plain",
+    ".apk" => "application/vnd.android.package-archive",
+    ".aab" => "application/octet-stream",
+    _ => "application/zip",
+};
+
 static string? DeploymentsRoot(IConfiguration configuration) =>
     configuration["BuildsRoot"] is { Length: > 0 } buildsRoot ? Path.Combine(buildsRoot, "_deployments") : null;
 
 static string? FirewallAuditRoot(IConfiguration configuration) =>
     configuration["BuildsRoot"] is { Length: > 0 } buildsRoot ? Path.Combine(buildsRoot, "_firewall-audit") : null;
+
+static string ProjectAuditRoot(IConfiguration configuration) =>
+    configuration["BuildsRoot"] is { Length: > 0 } buildsRoot ? Path.Combine(buildsRoot, "_project-audit") : ProjectAuditStore.DefaultRoot;
+
+static string IisAuditRoot(IConfiguration configuration) =>
+    configuration["BuildsRoot"] is { Length: > 0 } buildsRoot ? Path.Combine(buildsRoot, "_iis-audit") : IisAuditStore.DefaultRoot;
+
+static IisSiteManager CreateIisSiteManager(IConfiguration configuration) =>
+    new(NullOutputSink.Instance, DeploymentsRoot(configuration), IisAuditRoot(configuration));
+
+static string ResolvePerformedBy(string? performedBy) => string.IsNullOrWhiteSpace(performedBy) ? "unknown" : performedBy;
 
 app.MapGet("/api/iis/sites", async (HttpRequest request, IConfiguration configuration) =>
 {
@@ -501,7 +569,7 @@ app.MapGet("/api/iis/sites", async (HttpRequest request, IConfiguration configur
 
     try
     {
-        return Results.Ok(await new IisSiteManager(NullOutputSink.Instance, DeploymentsRoot(configuration)).ListSitesAsync(request.HttpContext.RequestAborted));
+        return Results.Ok(await CreateIisSiteManager(configuration).ListSitesAsync(request.HttpContext.RequestAborted));
     }
     catch (Exception ex)
     {
@@ -518,8 +586,7 @@ app.MapGet("/api/iis/sites/{name}/history", async (HttpRequest request, IConfigu
 
     try
     {
-        var history = await new IisSiteManager(NullOutputSink.Instance, DeploymentsRoot(configuration))
-            .GetDeploymentHistoryAsync(name, request.HttpContext.RequestAborted);
+        var history = await CreateIisSiteManager(configuration).GetDeploymentHistoryAsync(name, request.HttpContext.RequestAborted);
         return Results.Ok(history);
     }
     catch (Exception ex)
@@ -537,7 +604,7 @@ app.MapGet("/api/iis/apppools", async (HttpRequest request, IConfiguration confi
 
     try
     {
-        return Results.Ok(await new IisSiteManager(NullOutputSink.Instance).ListAppPoolsAsync(request.HttpContext.RequestAborted));
+        return Results.Ok(await CreateIisSiteManager(configuration).ListAppPoolsAsync(request.HttpContext.RequestAborted));
     }
     catch (Exception ex)
     {
@@ -545,7 +612,7 @@ app.MapGet("/api/iis/apppools", async (HttpRequest request, IConfiguration confi
     }
 });
 
-app.MapPost("/api/iis/sites/{name}/start", async (HttpRequest request, IConfiguration configuration, string name) =>
+app.MapGet("/api/iis/audit", async (HttpRequest request, IConfiguration configuration) =>
 {
     if (!ApiKeyAuth.Validate(request, configuration))
     {
@@ -554,8 +621,7 @@ app.MapPost("/api/iis/sites/{name}/start", async (HttpRequest request, IConfigur
 
     try
     {
-        await new IisSiteManager(NullOutputSink.Instance).StartSiteAsync(name, request.HttpContext.RequestAborted);
-        return Results.Ok();
+        return Results.Ok(await CreateIisSiteManager(configuration).GetAuditHistoryAsync(request.HttpContext.RequestAborted));
     }
     catch (Exception ex)
     {
@@ -563,7 +629,7 @@ app.MapPost("/api/iis/sites/{name}/start", async (HttpRequest request, IConfigur
     }
 });
 
-app.MapPost("/api/iis/sites/{name}/stop", async (HttpRequest request, IConfiguration configuration, string name) =>
+app.MapPost("/api/iis/sites/{name}/start", async (HttpRequest request, IConfiguration configuration, string name, string? performedBy) =>
 {
     if (!ApiKeyAuth.Validate(request, configuration))
     {
@@ -572,7 +638,7 @@ app.MapPost("/api/iis/sites/{name}/stop", async (HttpRequest request, IConfigura
 
     try
     {
-        await new IisSiteManager(NullOutputSink.Instance).StopSiteAsync(name, request.HttpContext.RequestAborted);
+        await CreateIisSiteManager(configuration).StartSiteAsync(name, ResolvePerformedBy(performedBy), request.HttpContext.RequestAborted);
         return Results.Ok();
     }
     catch (Exception ex)
@@ -581,7 +647,7 @@ app.MapPost("/api/iis/sites/{name}/stop", async (HttpRequest request, IConfigura
     }
 });
 
-app.MapPost("/api/iis/apppools/{name}/start", async (HttpRequest request, IConfiguration configuration, string name) =>
+app.MapPost("/api/iis/sites/{name}/stop", async (HttpRequest request, IConfiguration configuration, string name, string? performedBy) =>
 {
     if (!ApiKeyAuth.Validate(request, configuration))
     {
@@ -590,7 +656,7 @@ app.MapPost("/api/iis/apppools/{name}/start", async (HttpRequest request, IConfi
 
     try
     {
-        await new IisSiteManager(NullOutputSink.Instance).StartAppPoolAsync(name, request.HttpContext.RequestAborted);
+        await CreateIisSiteManager(configuration).StopSiteAsync(name, ResolvePerformedBy(performedBy), request.HttpContext.RequestAborted);
         return Results.Ok();
     }
     catch (Exception ex)
@@ -599,7 +665,7 @@ app.MapPost("/api/iis/apppools/{name}/start", async (HttpRequest request, IConfi
     }
 });
 
-app.MapPost("/api/iis/apppools/{name}/stop", async (HttpRequest request, IConfiguration configuration, string name) =>
+app.MapDelete("/api/iis/sites/{name}", async (HttpRequest request, IConfiguration configuration, string name, string? performedBy) =>
 {
     if (!ApiKeyAuth.Validate(request, configuration))
     {
@@ -608,7 +674,7 @@ app.MapPost("/api/iis/apppools/{name}/stop", async (HttpRequest request, IConfig
 
     try
     {
-        await new IisSiteManager(NullOutputSink.Instance).StopAppPoolAsync(name, request.HttpContext.RequestAborted);
+        await CreateIisSiteManager(configuration).DeleteSiteAsync(name, ResolvePerformedBy(performedBy), request.HttpContext.RequestAborted);
         return Results.Ok();
     }
     catch (Exception ex)
@@ -617,7 +683,7 @@ app.MapPost("/api/iis/apppools/{name}/stop", async (HttpRequest request, IConfig
     }
 });
 
-app.MapPost("/api/iis/apppools/{name}/recycle", async (HttpRequest request, IConfiguration configuration, string name) =>
+app.MapPost("/api/iis/apppools/{name}/start", async (HttpRequest request, IConfiguration configuration, string name, string? performedBy) =>
 {
     if (!ApiKeyAuth.Validate(request, configuration))
     {
@@ -626,12 +692,141 @@ app.MapPost("/api/iis/apppools/{name}/recycle", async (HttpRequest request, ICon
 
     try
     {
-        await new IisSiteManager(NullOutputSink.Instance).RecycleAppPoolAsync(name, request.HttpContext.RequestAborted);
+        await CreateIisSiteManager(configuration).StartAppPoolAsync(name, ResolvePerformedBy(performedBy), request.HttpContext.RequestAborted);
         return Results.Ok();
     }
     catch (Exception ex)
     {
         return Results.Problem(ex.Message, statusCode: StatusCodes.Status500InternalServerError);
+    }
+});
+
+app.MapPost("/api/iis/apppools/{name}/stop", async (HttpRequest request, IConfiguration configuration, string name, string? performedBy) =>
+{
+    if (!ApiKeyAuth.Validate(request, configuration))
+    {
+        return Results.Unauthorized();
+    }
+
+    try
+    {
+        await CreateIisSiteManager(configuration).StopAppPoolAsync(name, ResolvePerformedBy(performedBy), request.HttpContext.RequestAborted);
+        return Results.Ok();
+    }
+    catch (Exception ex)
+    {
+        return Results.Problem(ex.Message, statusCode: StatusCodes.Status500InternalServerError);
+    }
+});
+
+app.MapPost("/api/iis/apppools/{name}/recycle", async (HttpRequest request, IConfiguration configuration, string name, string? performedBy) =>
+{
+    if (!ApiKeyAuth.Validate(request, configuration))
+    {
+        return Results.Unauthorized();
+    }
+
+    try
+    {
+        await CreateIisSiteManager(configuration).RecycleAppPoolAsync(name, ResolvePerformedBy(performedBy), request.HttpContext.RequestAborted);
+        return Results.Ok();
+    }
+    catch (Exception ex)
+    {
+        return Results.Problem(ex.Message, statusCode: StatusCodes.Status500InternalServerError);
+    }
+});
+
+// Uploads a zip and deploys it into a site on the dev server's own IIS, creating the site (and its
+// own app pool) first if requested -- the remote counterpart to a local manual deploy, which calls
+// BuildDeployer directly instead of needing to ship the source content anywhere.
+app.MapPost("/api/iis/manual-deploy", async (HttpRequest request, IConfiguration configuration) =>
+{
+    if (!ApiKeyAuth.Validate(request, configuration))
+    {
+        return Results.Unauthorized();
+    }
+
+    if (!request.HasFormContentType)
+    {
+        return Results.BadRequest(new { error = "Expected multipart/form-data." });
+    }
+
+    var form = await request.ReadFormAsync(request.HttpContext.RequestAborted);
+    var zipFile = form.Files["Zip"];
+    if (zipFile is null || zipFile.Length == 0)
+    {
+        return Results.BadRequest(new { error = "Zip is required." });
+    }
+
+    var siteName = form["SiteName"].ToString();
+    var physicalPath = form["PhysicalPath"].ToString();
+    if (string.IsNullOrWhiteSpace(siteName) || string.IsNullOrWhiteSpace(physicalPath))
+    {
+        return Results.BadRequest(new { error = "SiteName and PhysicalPath are required." });
+    }
+
+    var autoCreateSite = bool.TryParse(form["AutoCreateSite"].ToString(), out var parsedAutoCreate) && parsedAutoCreate;
+    var bindingsJsonOptions = new JsonSerializerOptions(JsonSerializerDefaults.Web);
+    var bindings = form["BindingsJson"].ToString() is { Length: > 0 } bindingsJson
+        ? JsonSerializer.Deserialize<List<IisBinding>>(bindingsJson, bindingsJsonOptions) ?? new List<IisBinding>()
+        : new List<IisBinding>();
+    var poolTemplate = Enum.TryParse<AppPoolRuntimeTemplate>(form["PoolTemplate"].ToString(), out var parsedTemplate)
+        ? parsedTemplate
+        : AppPoolRuntimeTemplate.DotNetFramework;
+    var label = form["Label"].ToString() is { Length: > 0 } formLabel ? formLabel : "manual";
+    var performedBy = ResolvePerformedBy(form["PerformedBy"].ToString());
+
+    var tempDir = Path.Combine(Path.GetTempPath(), "PublishTool.Hosting", Guid.NewGuid().ToString("N"));
+    try
+    {
+        Directory.CreateDirectory(tempDir);
+        var zipPath = Path.Combine(tempDir, "upload.zip");
+        await using (var fileStream = File.Create(zipPath))
+        {
+            await zipFile.CopyToAsync(fileStream, request.HttpContext.RequestAborted);
+        }
+
+        var extractDir = Path.Combine(tempDir, "extracted");
+        ZipFile.ExtractToDirectory(zipPath, extractDir);
+
+        var deployer = new BuildDeployer(NullOutputSink.Instance, DeploymentsRoot(configuration));
+        await deployer.DeployAsync(
+            siteName, physicalPath, bindings, autoCreateSite, extractDir,
+            new SiteDeploymentRecord
+            {
+                SiteName = siteName,
+                ProjectName = "(manual)",
+                Version = label,
+                EnvironmentName = "(manual)",
+                DeployedAtUtc = DateTimeOffset.UtcNow,
+                DeployedBy = performedBy,
+            },
+            poolTemplate,
+            request.HttpContext.RequestAborted);
+
+        await new IisAuditStore().AppendAsync(IisAuditRoot(configuration), new IisAuditEntry
+        {
+            EntityType = "Site",
+            EntityName = siteName,
+            Action = "Manual Deploy",
+            Details = label,
+            PerformedAtUtc = DateTimeOffset.UtcNow,
+            PerformedBy = performedBy,
+        }, request.HttpContext.RequestAborted);
+
+        return Results.Ok();
+    }
+    catch (Exception ex)
+    {
+        return Results.Problem(ex.Message, statusCode: StatusCodes.Status500InternalServerError);
+    }
+    finally
+    {
+        if (Directory.Exists(tempDir))
+        {
+            Directory.Delete(tempDir, recursive: true);
+        }
     }
 });
 
