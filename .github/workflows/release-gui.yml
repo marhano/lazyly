@@ -1,7 +1,10 @@
 name: Release GUI
 
-# Cutting a release: bump <Version> in src/PublishTool.Gui/PublishTool.Gui.csproj, commit, then
-#   git tag v1.2.0 && git push --tags
+# Cutting a release:
+#   1. Bump <Version> in src/PublishTool.Gui/PublishTool.Gui.csproj
+#   2. Add release-notes/v<version>.md (markdown -- shown in the installed app's "what's new"
+#      dialog once it downloads the update, and as the GitHub Release body)
+#   3. Commit, then git tag v<version> && git push --tags
 # This workflow does the rest -- see src/PublishTool.Gui/README.md for the full process and a
 # manual local fallback.
 on:
@@ -33,20 +36,53 @@ jobs:
       - name: Install vpk
         run: dotnet tool install -g vpk
 
+      - name: Check release notes exist
+        shell: pwsh
+        run: |
+          $notesPath = "release-notes/v${{ steps.version.outputs.version }}.md"
+          if (-not (Test-Path $notesPath)) {
+            Write-Error "Missing $notesPath -- add release notes for this version before tagging (see src/PublishTool.Gui/README.md)."
+            exit 1
+          }
+
       - name: Publish
+        env:
+          # Read-only token (repo secret, added via GitHub Settings -> Secrets and variables ->
+          # Actions -- never committed) that raises the installed app's update-check rate limit
+          # from 60/hour to 5000/hour. Safe to leave unset: an empty value here just means the
+          # build falls back to unauthenticated checks, same as before this existed.
+          GITHUB_UPDATE_TOKEN: ${{ secrets.GH_UPDATE_TOKEN }}
         run: >
           dotnet publish src/PublishTool.Gui/PublishTool.Gui.csproj
           -c Release -r win-x64 --self-contained true
           -p:PublishSingleFile=false
           -p:Version=${{ steps.version.outputs.version }}
+          -p:GithubUpdateToken=$env:GITHUB_UPDATE_TOKEN
           -o publish/PublishTool.Gui
 
       - name: Pack with vpk
         run: >
           vpk pack -u PublishTool.Gui -v ${{ steps.version.outputs.version }}
           -p publish/PublishTool.Gui -e PublishTool.Gui.exe
+          -i src/PublishTool.Gui/Assets/app.ico
+          --releaseNotes release-notes/v${{ steps.version.outputs.version }}.md
 
       - name: Upload release to GitHub
         run: >
           vpk upload github --repoUrl https://github.com/marhano/lazyly
           --tag ${{ github.ref_name }} --publish true --token ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Add a version-named copy of Setup.exe
+        # vpk's own Setup.exe name (PublishTool.Gui-win-Setup.exe) is deliberately unversioned --
+        # it's meant to always be "download the latest installer" -- but that reads as ambiguous
+        # to a person grabbing it by hand from the Releases page, so upload an identically-signed
+        # renamed copy alongside it. Doesn't touch the original (Velopack's own update-check
+        # machinery keys off the versioned .nupkg assets vpk already created, not this file, so
+        # renaming it wouldn't have broken anything either way, but leaving it as-is is safest).
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: pwsh
+        run: |
+          $versioned = "Releases/PublishTool.Gui-Setup-v${{ steps.version.outputs.version }}.exe"
+          Copy-Item "Releases/PublishTool.Gui-win-Setup.exe" $versioned
+          gh release upload ${{ github.ref_name }} $versioned --repo marhano/lazyly

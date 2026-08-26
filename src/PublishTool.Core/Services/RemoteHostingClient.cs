@@ -4,6 +4,17 @@ using PublishTool.Core.Models;
 
 namespace PublishTool.Core.Services;
 
+/// <summary>Thrown when the dev server 404s an endpoint this client knows about -- meaning the
+/// server is running a version of PublishTool.Hosting that predates it, not that anything is
+/// actually wrong. Callers should show a specific "needs an updated dev server" message instead of
+/// a generic error for this.</summary>
+public sealed class RemoteFeatureNotAvailableException : InvalidOperationException
+{
+    public RemoteFeatureNotAvailableException(string message) : base(message)
+    {
+    }
+}
+
 /// <summary>
 /// Talks to a PublishTool.Hosting instance's <c>/api/builds</c> surface over HTTP -- the
 /// counterpart to a dev server devs don't have filesystem access to, so this is the only way to
@@ -187,11 +198,16 @@ public sealed class RemoteHostingClient
     /// from that project's <see cref="SharedProjectConfig.RemoteEnvironments"/>. Called automatically
     /// by <see cref="Publisher"/> when a publish selects a matching environment, or manually from
     /// the Projects tab for a specific (possibly older) version.</summary>
-    public async Task DeployAsync(string baseUrl, string? apiKey, string manifestRelativePath, string environmentName, CancellationToken ct = default)
+    /// <param name="deployedBy">The calling machine's user -- recorded in the server's own
+    /// deployment history (see <see cref="SiteDeploymentStore"/>) instead of the server's own
+    /// service identity, since that's the person who actually decided to deploy.</param>
+    public async Task DeployAsync(
+        string baseUrl, string? apiKey, string manifestRelativePath, string environmentName, string deployedBy, CancellationToken ct = default)
     {
         using var request = CreateRequest(
             HttpMethod.Post, baseUrl,
-            $"/api/deploy?path={Uri.EscapeDataString(manifestRelativePath)}&environment={Uri.EscapeDataString(environmentName)}", apiKey);
+            $"/api/deploy?path={Uri.EscapeDataString(manifestRelativePath)}&environment={Uri.EscapeDataString(environmentName)}" +
+            $"&deployedBy={Uri.EscapeDataString(deployedBy)}", apiKey);
         using var response = await Http.SendAsync(request, ct);
         await EnsureSuccessAsync(response, "deploy build", ct);
     }
@@ -242,26 +258,212 @@ public sealed class RemoteHostingClient
         return await response.Content.ReadFromJsonAsync<List<IisAppPoolStatus>>(JsonOptions, ct) ?? new List<IisAppPoolStatus>();
     }
 
-    public Task StartRemoteSiteAsync(string baseUrl, string? apiKey, string siteName, CancellationToken ct = default) =>
-        PostRemoteIisAction(baseUrl, apiKey, $"/api/iis/sites/{Uri.EscapeDataString(siteName)}/start", "start remote IIS site", ct);
+    public Task StartRemoteSiteAsync(string baseUrl, string? apiKey, string siteName, string performedBy, CancellationToken ct = default) =>
+        PostRemoteIisAction(baseUrl, apiKey, $"/api/iis/sites/{Uri.EscapeDataString(siteName)}/start?performedBy={Uri.EscapeDataString(performedBy)}", "start remote IIS site", ct);
 
-    public Task StopRemoteSiteAsync(string baseUrl, string? apiKey, string siteName, CancellationToken ct = default) =>
-        PostRemoteIisAction(baseUrl, apiKey, $"/api/iis/sites/{Uri.EscapeDataString(siteName)}/stop", "stop remote IIS site", ct);
+    public Task StopRemoteSiteAsync(string baseUrl, string? apiKey, string siteName, string performedBy, CancellationToken ct = default) =>
+        PostRemoteIisAction(baseUrl, apiKey, $"/api/iis/sites/{Uri.EscapeDataString(siteName)}/stop?performedBy={Uri.EscapeDataString(performedBy)}", "stop remote IIS site", ct);
 
-    public Task StartRemoteAppPoolAsync(string baseUrl, string? apiKey, string poolName, CancellationToken ct = default) =>
-        PostRemoteIisAction(baseUrl, apiKey, $"/api/iis/apppools/{Uri.EscapeDataString(poolName)}/start", "start remote application pool", ct);
+    public async Task DeleteRemoteSiteAsync(string baseUrl, string? apiKey, string siteName, string performedBy, CancellationToken ct = default)
+    {
+        using var request = CreateRequest(
+            HttpMethod.Delete, baseUrl,
+            $"/api/iis/sites/{Uri.EscapeDataString(siteName)}?performedBy={Uri.EscapeDataString(performedBy)}", apiKey);
+        using var response = await Http.SendAsync(request, ct);
+        await EnsureSuccessAsync(response, "remove remote IIS site", ct);
+    }
 
-    public Task StopRemoteAppPoolAsync(string baseUrl, string? apiKey, string poolName, CancellationToken ct = default) =>
-        PostRemoteIisAction(baseUrl, apiKey, $"/api/iis/apppools/{Uri.EscapeDataString(poolName)}/stop", "stop remote application pool", ct);
+    public Task StartRemoteAppPoolAsync(string baseUrl, string? apiKey, string poolName, string performedBy, CancellationToken ct = default) =>
+        PostRemoteIisAction(baseUrl, apiKey, $"/api/iis/apppools/{Uri.EscapeDataString(poolName)}/start?performedBy={Uri.EscapeDataString(performedBy)}", "start remote application pool", ct);
 
-    public Task RecycleRemoteAppPoolAsync(string baseUrl, string? apiKey, string poolName, CancellationToken ct = default) =>
-        PostRemoteIisAction(baseUrl, apiKey, $"/api/iis/apppools/{Uri.EscapeDataString(poolName)}/recycle", "recycle remote application pool", ct);
+    public Task StopRemoteAppPoolAsync(string baseUrl, string? apiKey, string poolName, string performedBy, CancellationToken ct = default) =>
+        PostRemoteIisAction(baseUrl, apiKey, $"/api/iis/apppools/{Uri.EscapeDataString(poolName)}/stop?performedBy={Uri.EscapeDataString(performedBy)}", "stop remote application pool", ct);
+
+    public Task RecycleRemoteAppPoolAsync(string baseUrl, string? apiKey, string poolName, string performedBy, CancellationToken ct = default) =>
+        PostRemoteIisAction(baseUrl, apiKey, $"/api/iis/apppools/{Uri.EscapeDataString(poolName)}/recycle?performedBy={Uri.EscapeDataString(performedBy)}", "recycle remote application pool", ct);
+
+    /// <summary>Full deployment history (newest-first) for one site on the dev server's own IIS --
+    /// for the IIS tab's History dialog in remote mode. Throws a 404 <see cref="InvalidOperationException"/>
+    /// against an older Hosting server that predates this endpoint -- callers should show a specific
+    /// "needs an updated dev server" message rather than a generic error for that case.</summary>
+    public async Task<IReadOnlyList<SiteDeploymentRecord>> GetRemoteSiteDeploymentHistoryAsync(
+        string baseUrl, string? apiKey, string siteName, CancellationToken ct = default)
+    {
+        using var request = CreateRequest(HttpMethod.Get, baseUrl, $"/api/iis/sites/{Uri.EscapeDataString(siteName)}/history", apiKey);
+        using var response = await Http.SendAsync(request, ct);
+        if (response.StatusCode == System.Net.HttpStatusCode.NotFound)
+        {
+            throw new RemoteFeatureNotAvailableException(
+                "Deployment history isn't available yet -- this dev server needs PublishTool.Hosting redeployed.");
+        }
+
+        await EnsureSuccessAsync(response, "read remote deployment history", ct);
+
+        return await response.Content.ReadFromJsonAsync<List<SiteDeploymentRecord>>(JsonOptions, ct) ?? new List<SiteDeploymentRecord>();
+    }
+
+    /// <summary>Full Start/Stop/Removed/Recycled audit trail (newest-first) for the dev server's own
+    /// IIS. Throws a 404 <see cref="RemoteFeatureNotAvailableException"/> against an older Hosting
+    /// server that predates this endpoint.</summary>
+    public async Task<IReadOnlyList<IisAuditEntry>> GetRemoteIisAuditAsync(string baseUrl, string? apiKey, CancellationToken ct = default)
+    {
+        using var request = CreateRequest(HttpMethod.Get, baseUrl, "/api/iis/audit", apiKey);
+        using var response = await Http.SendAsync(request, ct);
+        if (response.StatusCode == System.Net.HttpStatusCode.NotFound)
+        {
+            throw new RemoteFeatureNotAvailableException(
+                "IIS audit history isn't available yet -- this dev server needs PublishTool.Hosting redeployed.");
+        }
+
+        await EnsureSuccessAsync(response, "read remote IIS audit history", ct);
+
+        return await response.Content.ReadFromJsonAsync<List<IisAuditEntry>>(JsonOptions, ct) ?? new List<IisAuditEntry>();
+    }
 
     private async Task PostRemoteIisAction(string baseUrl, string? apiKey, string pathAndQuery, string action, CancellationToken ct)
     {
         using var request = CreateRequest(HttpMethod.Post, baseUrl, pathAndQuery, apiKey);
         using var response = await Http.SendAsync(request, ct);
         await EnsureSuccessAsync(response, action, ct);
+    }
+
+    /// <summary>Uploads a zip and deploys it into a site on the dev server's own IIS, creating the
+    /// site (and its own app pool) first if <paramref name="autoCreateSite"/> is set and it doesn't
+    /// exist yet -- the remote counterpart to <see cref="BuildDeployer.DeployAsync"/>, which runs
+    /// directly for a local manual deploy instead. Throws a 404 <see cref="RemoteFeatureNotAvailableException"/>
+    /// against an older Hosting server that predates this endpoint.</summary>
+    public async Task ManualDeployRemoteAsync(
+        string baseUrl, string? apiKey, string zipPath, string siteName, string physicalPath, bool autoCreateSite,
+        IReadOnlyList<IisBinding> bindings, AppPoolRuntimeTemplate poolTemplate, string label, string performedBy, CancellationToken ct = default)
+    {
+        using var content = new MultipartFormDataContent();
+        using var zipStream = File.OpenRead(zipPath);
+
+        content.Add(new StreamContent(zipStream), "Zip", Path.GetFileName(zipPath));
+        content.Add(new StringContent(siteName), "SiteName");
+        content.Add(new StringContent(physicalPath), "PhysicalPath");
+        content.Add(new StringContent(autoCreateSite.ToString()), "AutoCreateSite");
+        content.Add(new StringContent(JsonSerializer.Serialize(bindings, JsonOptions)), "BindingsJson");
+        content.Add(new StringContent(poolTemplate.ToString()), "PoolTemplate");
+        content.Add(new StringContent(label), "Label");
+        content.Add(new StringContent(performedBy), "PerformedBy");
+
+        using var request = CreateRequest(HttpMethod.Post, baseUrl, "/api/iis/manual-deploy", apiKey);
+        request.Content = content;
+
+        using var response = await Http.SendAsync(request, ct);
+        if (response.StatusCode == System.Net.HttpStatusCode.NotFound)
+        {
+            throw new RemoteFeatureNotAvailableException(
+                "Manual deploy isn't available yet -- this dev server needs PublishTool.Hosting redeployed.");
+        }
+
+        await EnsureSuccessAsync(response, "manually deploy to the dev server", ct);
+    }
+
+    // ---------------------------------------------------------------------------------------
+    // Firewall rules (/api/firewall/*) -- Hosting manages its own machine's inbound Windows
+    // Firewall rules for ports IIS sites use, same local/remote split as /api/iis/*.
+    // ---------------------------------------------------------------------------------------
+
+    public async Task<IReadOnlyList<FirewallRuleStatus>> ListRemoteFirewallRulesAsync(
+        string baseUrl, string? apiKey, bool includeAllRules = false, CancellationToken ct = default)
+    {
+        var query = includeAllRules ? "?all=true" : string.Empty;
+        using var request = CreateRequest(HttpMethod.Get, baseUrl, $"/api/firewall/rules{query}", apiKey);
+        using var response = await Http.SendAsync(request, ct);
+        await EnsureSuccessAsync(response, "list remote firewall rules", ct);
+
+        return await response.Content.ReadFromJsonAsync<List<FirewallRuleStatus>>(JsonOptions, ct) ?? new List<FirewallRuleStatus>();
+    }
+
+    private sealed record AddFirewallRuleRequest(string Label, string Ports, string Protocol, string PerformedBy);
+
+    public async Task AddRemoteFirewallRuleAsync(
+        string baseUrl, string? apiKey, string label, string ports, string protocol, string performedBy, CancellationToken ct = default)
+    {
+        using var request = CreateRequest(HttpMethod.Post, baseUrl, "/api/firewall/rules", apiKey);
+        request.Content = JsonContent.Create(new AddFirewallRuleRequest(label, ports, protocol, performedBy), options: JsonOptions);
+
+        using var response = await Http.SendAsync(request, ct);
+        await EnsureSuccessAsync(response, "add remote firewall rule", ct);
+    }
+
+    private sealed record EditFirewallRuleRequest(string CurrentName, string NewLabel, string Ports, string Protocol, string PerformedBy);
+
+    public async Task EditRemoteFirewallRuleAsync(
+        string baseUrl, string? apiKey, string currentName, string newLabel, string ports, string protocol, string performedBy,
+        CancellationToken ct = default)
+    {
+        using var request = CreateRequest(HttpMethod.Put, baseUrl, "/api/firewall/rules", apiKey);
+        request.Content = JsonContent.Create(new EditFirewallRuleRequest(currentName, newLabel, ports, protocol, performedBy), options: JsonOptions);
+
+        using var response = await Http.SendAsync(request, ct);
+        await EnsureSuccessAsync(response, "edit remote firewall rule", ct);
+    }
+
+    public async Task DeleteRemoteFirewallRuleAsync(
+        string baseUrl, string? apiKey, string ruleName, string performedBy, CancellationToken ct = default)
+    {
+        using var request = CreateRequest(
+            HttpMethod.Delete, baseUrl,
+            $"/api/firewall/rules?name={Uri.EscapeDataString(ruleName)}&performedBy={Uri.EscapeDataString(performedBy)}", apiKey);
+        using var response = await Http.SendAsync(request, ct);
+        await EnsureSuccessAsync(response, "delete remote firewall rule", ct);
+    }
+
+    /// <summary>Full Add/Edit/Remove audit trail (newest-first) for the dev server's own
+    /// firewall rules. Throws a 404 <see cref="RemoteFeatureNotAvailableException"/> against an
+    /// older Hosting server that predates this endpoint.</summary>
+    public async Task<IReadOnlyList<FirewallAuditEntry>> GetRemoteFirewallAuditAsync(string baseUrl, string? apiKey, CancellationToken ct = default)
+    {
+        using var request = CreateRequest(HttpMethod.Get, baseUrl, "/api/firewall/audit", apiKey);
+        using var response = await Http.SendAsync(request, ct);
+        if (response.StatusCode == System.Net.HttpStatusCode.NotFound)
+        {
+            throw new RemoteFeatureNotAvailableException(
+                "Firewall audit history isn't available yet -- this dev server needs PublishTool.Hosting redeployed.");
+        }
+
+        await EnsureSuccessAsync(response, "read remote firewall audit history", ct);
+
+        return await response.Content.ReadFromJsonAsync<List<FirewallAuditEntry>>(JsonOptions, ct) ?? new List<FirewallAuditEntry>();
+    }
+
+    // ---------------------------------------------------------------------------------------
+    // Project audit trail (/api/projects/audit) -- unlike the rest of /api/projects/*, this is a
+    // flat log of every project-related action (add/remove/settings/publish/deploy/build changes),
+    // not the projects themselves; see RemoteProjectRegistry vs this. Recorded by the client after
+    // an action succeeds (see MainWindow.RecordProjectAuditAsync), same "GUI tells the shared
+    // server what just happened" shape as the deployment/firewall audit trails, just without a
+    // dedicated Core service class fronting it since there's no local mutation to wrap here.
+    // ---------------------------------------------------------------------------------------
+
+    public async Task RecordRemoteProjectAuditAsync(string baseUrl, string? apiKey, ProjectAuditEntry entry, CancellationToken ct = default)
+    {
+        using var request = CreateRequest(HttpMethod.Post, baseUrl, "/api/projects/audit", apiKey);
+        request.Content = JsonContent.Create(entry, options: JsonOptions);
+
+        using var response = await Http.SendAsync(request, ct);
+        await EnsureSuccessAsync(response, "record project audit entry", ct);
+    }
+
+    /// <summary>Full project audit trail (newest-first), across every project. Throws a 404
+    /// <see cref="RemoteFeatureNotAvailableException"/> against an older Hosting server that
+    /// predates this endpoint.</summary>
+    public async Task<IReadOnlyList<ProjectAuditEntry>> GetRemoteProjectAuditAsync(string baseUrl, string? apiKey, CancellationToken ct = default)
+    {
+        using var request = CreateRequest(HttpMethod.Get, baseUrl, "/api/projects/audit", apiKey);
+        using var response = await Http.SendAsync(request, ct);
+        if (response.StatusCode == System.Net.HttpStatusCode.NotFound)
+        {
+            throw new RemoteFeatureNotAvailableException(
+                "Project audit history isn't available yet -- this dev server needs PublishTool.Hosting redeployed.");
+        }
+
+        await EnsureSuccessAsync(response, "read remote project audit history", ct);
+
+        return await response.Content.ReadFromJsonAsync<List<ProjectAuditEntry>>(JsonOptions, ct) ?? new List<ProjectAuditEntry>();
     }
 
     // ---------------------------------------------------------------------------------------

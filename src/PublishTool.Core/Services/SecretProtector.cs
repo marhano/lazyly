@@ -19,6 +19,10 @@ public static class SecretProtector
     /// <summary>Purpose string for the Remote Build Hosting API key (see <see cref="AppSettings.RemoteHostingProtectedApiKey"/>).</summary>
     public const string RemoteHostingPurpose = "PublishTool.RemoteHosting";
 
+    /// <summary>Purpose string for an Android project's keystore/key passwords (see
+    /// <see cref="Models.AndroidProjectSettings"/>).</summary>
+    public const string AndroidSigningPurpose = "PublishTool.AndroidSigning";
+
     /// <param name="purpose">Distinguishes secrets from different features so a blob saved for
     /// one (e.g. the remote hosting API key) can never be mistaken for/misapplied as another (e.g.
     /// an Event Log password) -- defaults to the original Event Log purpose for callers that

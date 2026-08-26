@@ -15,24 +15,31 @@ public sealed class BuildDeployer
     private readonly IOutputSink _output;
     private readonly IisSiteManager _iisSiteManager;
     private readonly RobocopyMirror _mirror;
+    private readonly SiteDeploymentStore _deploymentStore;
+    private readonly string _deploymentsRoot;
 
-    public BuildDeployer(IOutputSink output)
+    public BuildDeployer(IOutputSink output, string? deploymentsRoot = null)
     {
         _output = output;
         _iisSiteManager = new IisSiteManager(output);
         _mirror = new RobocopyMirror(output);
+        _deploymentStore = new SiteDeploymentStore();
+        _deploymentsRoot = deploymentsRoot ?? SiteDeploymentStore.DefaultRoot;
     }
 
     /// <param name="sourceDir">An already-extracted directory (MSBuild output, or a build's zip
     /// already unpacked by the caller) -- this method only handles the IIS side, not unzipping.</param>
+    /// <param name="deployment">Recorded (best-effort) after a successful deploy, for the IIS tab's
+    /// "deployed version/date/by" columns and history view -- see <see cref="SiteDeploymentStore"/>.</param>
     public async Task DeployAsync(
         string siteName, string hostPath, IReadOnlyList<IisBinding> bindings, bool autoCreateSite,
-        string sourceDir, CancellationToken ct = default)
+        string sourceDir, SiteDeploymentRecord deployment,
+        AppPoolRuntimeTemplate poolTemplate = AppPoolRuntimeTemplate.DotNetFramework, CancellationToken ct = default)
     {
         if (autoCreateSite)
         {
             _output.Stage("Ensuring IIS site exists...");
-            await _iisSiteManager.EnsureSiteExistsAsync(siteName, hostPath, bindings, ct);
+            await _iisSiteManager.EnsureSiteExistsAsync(siteName, hostPath, bindings, poolTemplate, ct);
         }
 
         _output.Stage($"Deploying to IIS host path: {hostPath}");
@@ -54,6 +61,22 @@ public sealed class BuildDeployer
                 await TryStartAppPoolAsync(siteName, ct);
             }
         }
+
+        await TryRecordDeploymentAsync(deployment, ct);
+    }
+
+    /// <summary>A missing/unwritable deployment history store is a diagnostic nicety, not something
+    /// that should fail an otherwise-successful deploy.</summary>
+    private async Task TryRecordDeploymentAsync(SiteDeploymentRecord deployment, CancellationToken ct)
+    {
+        try
+        {
+            await _deploymentStore.AppendAsync(_deploymentsRoot, deployment, ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _output.Warn($"Deployed successfully, but couldn't record deployment history: {ex.Message}");
+        }
     }
 
     /// <summary>Stops the IIS application pool sharing this project's name, if one exists, so its
@@ -70,7 +93,7 @@ public sealed class BuildDeployer
             }
 
             _output.Info($"Stopping IIS application pool '{poolName}' before copying files...");
-            await _iisSiteManager.StopAppPoolAsync(poolName, ct);
+            await _iisSiteManager.StopAppPoolAsync(poolName, ct: ct);
             return true;
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
@@ -85,7 +108,7 @@ public sealed class BuildDeployer
     {
         try
         {
-            await _iisSiteManager.StartAppPoolAsync(poolName, ct);
+            await _iisSiteManager.StartAppPoolAsync(poolName, ct: ct);
             _output.Info($"Restarted IIS application pool '{poolName}'.");
         }
         catch (Exception ex) when (ex is not OperationCanceledException)

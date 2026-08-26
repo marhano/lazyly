@@ -42,6 +42,20 @@ public sealed class BuildRepository
     }
 
     /// <summary>
+    /// Archives a single already-built file (e.g. an Android APK/AAB) as-is instead of zipping a
+    /// directory -- the "single file artifact" counterpart to <see cref="Archive"/>.
+    /// The reserved "zip path" keeps <paramref name="sourceFilePath"/>'s own extension (.apk/.aab)
+    /// rather than being forced to ".zip", since this is meant to be downloaded and installed
+    /// directly, not unzipped.
+    /// </summary>
+    public BuildArchiveResult ArchiveFile(string buildsRoot, string projectName, string version, string sourceFilePath)
+    {
+        var paths = ReservePaths(buildsRoot, projectName, version, Path.GetExtension(sourceFilePath));
+        File.Copy(sourceFilePath, paths.ZipPath, overwrite: true);
+        return paths;
+    }
+
+    /// <summary>
     /// Finds the existing build (if any) for this exact project+version, so republishing the same
     /// version overwrites it in place instead of creating a duplicate. If more than one already
     /// exists (e.g. from before this behavior existed), the most recently published one wins --
@@ -78,13 +92,16 @@ public sealed class BuildRepository
     /// writing anything yet -- used when the zip itself comes from somewhere other than
     /// <see cref="Archive"/>'s directory-zipping, e.g. a browser upload streamed straight to disk.
     /// </summary>
-    public BuildArchiveResult ReservePaths(string buildsRoot, string projectName, string version)
+    public BuildArchiveResult ReservePaths(string buildsRoot, string projectName, string version) =>
+        ReservePaths(buildsRoot, projectName, version, ".zip");
+
+    private BuildArchiveResult ReservePaths(string buildsRoot, string projectName, string version, string artifactExtension)
     {
         var projectDir = Path.Combine(buildsRoot, projectName);
         Directory.CreateDirectory(projectDir);
 
         var baseName = $"{version}_{DateTimeOffset.UtcNow:yyyyMMdd-HHmmss}";
-        var zipPath = Path.Combine(projectDir, $"{baseName}.zip");
+        var zipPath = Path.Combine(projectDir, $"{baseName}{artifactExtension}");
         var manifestPath = Path.Combine(projectDir, $"{baseName}.manifest.json");
         var releaseNotesPath = Path.Combine(projectDir, $"{baseName}.releasenotes.txt");
 
@@ -99,12 +116,19 @@ public sealed class BuildRepository
     /// one place every upload entry point (the manual Upload form, the build-files upload, and the
     /// remote hosting API) decides "new build or overwrite?".
     /// </summary>
-    public BuildArchiveResult ResolvePaths(string buildsRoot, string projectName, string version)
+    public BuildArchiveResult ResolvePaths(string buildsRoot, string projectName, string version) =>
+        ResolvePaths(buildsRoot, projectName, version, ".zip");
+
+    /// <summary>Same as the other overload, but for an upload whose artifact isn't a .zip (e.g. an
+    /// Android .apk/.aab, uploaded as-is -- see <see cref="ArchiveFile"/>) -- only used when
+    /// reserving a brand-new build; an existing build's own (already-decided) extension always wins
+    /// on overwrite, same as the .zip case.</summary>
+    public BuildArchiveResult ResolvePaths(string buildsRoot, string projectName, string version, string artifactExtension)
     {
         var existing = FindBuild(buildsRoot, projectName, version);
         if (existing is null)
         {
-            return ReservePaths(buildsRoot, projectName, version);
+            return ReservePaths(buildsRoot, projectName, version, artifactExtension);
         }
 
         // Pre-this-feature manifests may not have a release notes path yet -- fall back to the

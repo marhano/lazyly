@@ -1,3 +1,5 @@
+using PublishTool.Core.Models;
+
 namespace PublishTool.Core.Services.AppConfig;
 
 /// <summary>
@@ -15,6 +17,12 @@ public interface IAppConfigProvider
     /// <summary>Shown in the GUI's config-type dropdown.</summary>
     string DisplayName { get; }
 
+    /// <summary>Which project types this format makes sense for -- the GUI's config-type dropdown
+    /// only offers providers applicable to the project's own type (e.g. Web.config/appsettings.json
+    /// for .NET, environment.ts for Angular/Android), instead of listing every format regardless
+    /// of relevance.</summary>
+    IReadOnlyList<ProjectType> ApplicableProjectTypes { get; }
+
     /// <summary>Reads the current key/value settings from the config file at <paramref name="configPath"/>.</summary>
     Dictionary<string, string> ReadSettings(string configPath);
 
@@ -22,4 +30,11 @@ public interface IAppConfigProvider
     /// updating existing keys and adding any that don't already exist. Never removes keys that
     /// aren't present in <paramref name="settings"/> -- this only ever touches what it's given.</summary>
     void WriteSettings(string configPath, IReadOnlyDictionary<string, string> settings);
+
+    /// <summary>Looks for this format's config file(s) under a project's source root -- used when
+    /// no config path has been set explicitly, so app config still works without hand-typing a
+    /// path. Can return more than one match (e.g. several environment.*.ts files, or a Web.config
+    /// in more than one sub-project) -- the caller decides what to do with multiple candidates
+    /// (the GUI lets the user pick; the CLI/Publisher errors asking for an explicit --app-config-path).</summary>
+    IReadOnlyList<string> FindCandidateConfigPaths(string sourceRoot);
 }

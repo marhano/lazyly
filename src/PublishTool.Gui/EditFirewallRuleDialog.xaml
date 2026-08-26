@@ -1,0 +1,40 @@
+<ui:FluentWindow x:Class="PublishTool.Gui.EditFirewallRuleDialog"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:ui="http://schemas.lepo.co/wpfui/2022/xaml"
+        mc:Ignorable="d"
+        Title="Edit Firewall Rule" Height="320" Width="380"
+        WindowStartupLocation="CenterOwner"
+        ResizeMode="NoResize">
+    <Grid Margin="20">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <TextBlock Grid.Row="0" Text="Label" Margin="0,0,0,6"/>
+        <ui:TextBox Grid.Row="1" x:Name="LabelTextBox" Margin="0,0,0,14"/>
+
+        <TextBlock Grid.Row="2" Text="Ports" Margin="0,0,0,6"/>
+        <ui:TextBox Grid.Row="3" x:Name="PortsTextBox" Margin="0,0,0,14" PlaceholderText="8080 or 9001,9005-9008"/>
+
+        <TextBlock Grid.Row="4" Text="Protocol" Margin="0,0,0,6"/>
+        <ComboBox Grid.Row="5" x:Name="ProtocolComboBox" Margin="0,0,0,14">
+            <ComboBoxItem Content="TCP"/>
+            <ComboBoxItem Content="UDP"/>
+        </ComboBox>
+
+        <StackPanel Grid.Row="7" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,16,0,0">
+            <ui:Button Content="Cancel" Click="CancelButton_Click" Margin="0,0,8,0"/>
+            <ui:Button Content="Save changes" Appearance="Primary" Click="SaveButton_Click"/>
+        </StackPanel>
+    </Grid>
+</ui:FluentWindow>

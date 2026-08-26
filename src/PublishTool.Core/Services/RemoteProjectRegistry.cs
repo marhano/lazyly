@@ -110,10 +110,24 @@ public sealed class RemoteProjectRegistry : IProjectRegistry
             Name = shared.Name,
             ProjectId = shared.ProjectId,
             LastReleaseNotesSequence = shared.LastReleaseNotesSequence,
-            CsprojPath = local.CsprojPath ?? string.Empty,
+            ProjectType = shared.ProjectType,
+            CsprojPath = local.CsprojPath,
             PubxmlName = shared.PubxmlName,
             AssemblyInfoPath = local.AssemblyInfoPath,
             ExtraPublishTargets = shared.ExtraPublishTargets,
+            Angular = shared.Angular is null ? null : new AngularProjectSettings
+            {
+                ProjectRootPath = local.AngularProjectRootPath,
+                WorkspaceProjectName = shared.Angular.WorkspaceProjectName,
+            },
+            Android = shared.Android is null ? null : new AndroidProjectSettings
+            {
+                ProjectRootPath = local.AndroidProjectRootPath,
+                KeystorePath = local.AndroidKeystorePath,
+                KeyAlias = local.AndroidKeyAlias,
+                ProtectedKeystorePassword = local.AndroidProtectedKeystorePassword,
+                ProtectedKeyPassword = local.AndroidProtectedKeyPassword,
+            },
             LocalIisEnabled = local.LocalIisEnabled,
             LocalEnvironments = local.LocalEnvironments,
             SdkStyleProject = shared.SdkStyleProject,
@@ -137,6 +151,12 @@ public sealed class RemoteProjectRegistry : IProjectRegistry
     {
         CsprojPath = config.CsprojPath,
         AssemblyInfoPath = config.AssemblyInfoPath,
+        AngularProjectRootPath = config.Angular?.ProjectRootPath,
+        AndroidProjectRootPath = config.Android?.ProjectRootPath,
+        AndroidKeystorePath = config.Android?.KeystorePath,
+        AndroidKeyAlias = config.Android?.KeyAlias,
+        AndroidProtectedKeystorePassword = config.Android?.ProtectedKeystorePassword,
+        AndroidProtectedKeyPassword = config.Android?.ProtectedKeyPassword,
         LocalIisEnabled = config.LocalIisEnabled,
         LocalEnvironments = config.LocalEnvironments,
         RemoteIisEnabled = config.RemoteIisEnabled,

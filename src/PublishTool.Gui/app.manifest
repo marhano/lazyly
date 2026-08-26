@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="utf-8"?>
+<assembly xmlns="urn:schemas-microsoft-com:asm.v1" manifestVersion="1.0">
+  <assemblyIdentity version="1.0.0.0" name="PublishTool.Gui.app"/>
+
+  <!--
+    Only this machine's own IIS/appcmd management (the IIS and Firewall tabs' local-mode actions,
+    and a "Local" deploy target on Publish) actually needs Administrator; publishing itself, remote
+    (dev-server) IIS actions, and most of the app work fine unelevated. So this runs "asInvoker"
+    (whatever privileges the launching context already has, no forced UAC prompt) instead of
+    requireAdministrator, and MainWindow surfaces contextual warnings (ElevationInfoBar,
+    LocalDeployElevationInfoBar) at the specific points that do need it, rather than gating the
+    whole app behind an elevation prompt most users publishing via the dev server never need.
+
+    Note: a comment in this file must never contain two consecutive hyphen characters anywhere in
+    its body, only at the very start and end. The general .NET/MSBuild XML parser tolerates that,
+    but the strict legacy SxS manifest parser CreateProcess uses to generate the activation
+    context does not, and silently fails the entire process launch with "side by side
+    configuration is incorrect" if it is ever there. Use a semicolon or parentheses instead.
+  -->
+  <trustInfo xmlns="urn:schemas-microsoft-com:asm.v2">
+    <security>
+      <requestedPrivileges xmlns="urn:schemas-microsoft-com:asm.v3">
+        <requestedExecutionLevel level="asInvoker" uiAccess="false" />
+      </requestedPrivileges>
+    </security>
+  </trustInfo>
+
+  <compatibility xmlns="urn:schemas-microsoft-com:compatibility.v1">
+    <application>
+      <!-- Windows Vista -->
+      <supportedOS Id="{e2011457-1546-43c5-a5fe-008deee3d3f0}"/>
+      <!-- Windows 7 -->
+      <supportedOS Id="{35138b9a-5d96-4fbd-8e2d-a2440225f93a}"/>
+      <!-- Windows 8 -->
+      <supportedOS Id="{4a2f28e3-53b9-4441-ba9c-d69d4a4a6e38}"/>
+      <!-- Windows 8.1 -->
+      <supportedOS Id="{1f676c76-80e1-4239-95bb-83d0f6d0da78}"/>
+      <!-- Windows 10 / 11 -->
+      <supportedOS Id="{8e0f7a12-bfb3-4fe8-b9a5-48fd50a15a9a}"/>
+    </application>
+  </compatibility>
+
+  <application xmlns="urn:schemas-microsoft-com:asm.v3">
+    <windowsSettings>
+      <longPathAware xmlns="http://schemas.microsoft.com/SMI/2016/WindowsSettings">true</longPathAware>
+    </windowsSettings>
+  </application>
+</assembly>

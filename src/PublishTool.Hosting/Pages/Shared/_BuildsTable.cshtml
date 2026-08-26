@@ -1,0 +1,72 @@
+@model BuildsTableViewModel
+
+@if (Model.Builds.Count == 0)
+{
+    <p class="pt-muted" style="margin: 0;">No builds found yet.</p>
+}
+else
+{
+    @if (Model.ProjectNames.Count > 0)
+    {
+        <div class="pt-filter-bar">
+            <label for="projectFilter">Project</label>
+            <select id="projectFilter" class="pt-input">
+                <option value="">All projects</option>
+                @foreach (var name in Model.ProjectNames)
+                {
+                    <option value="@name">@name</option>
+                }
+            </select>
+        </div>
+    }
+
+    <div class="pt-table-wrap">
+        <table id="buildsTable" class="pt-table">
+            <thead>
+                <tr>
+                    <th>Project</th>
+                    <th>Version</th>
+                    <th>Published</th>
+                    <th>By</th>
+                    <th>Size</th>
+                    <th>&nbsp;</th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var build in Model.Builds)
+                {
+                    <tr>
+                        <td>@build.ProjectName</td>
+                        <td>
+                            <span class="pt-version">@build.Version</span>
+                            @if (build.IsLatest)
+                            {
+                                <span class="pt-badge-latest">latest</span>
+                            }
+                        </td>
+                        <td class="pt-muted" data-sort="@build.PublishedAtUtc.ToUnixTimeSeconds()">@build.PublishedAtUtc.ToLocalTime().ToString("yyyy-MM-dd HH:mm")</td>
+                        <td class="pt-muted">@build.PublishedBy</td>
+                        <td class="pt-num" data-sort="@BuildDisplayHelpers.GetFileSizeBytes(build.ZipPath)">@BuildDisplayHelpers.FormatFileSize(build.ZipPath)</td>
+                        <td>
+                            <div class="pt-actions">
+                                @if (BuildDisplayHelpers.HasReleaseNotes(build))
+                                {
+                                    <button type="button" class="pt-btn pt-btn-ghost pt-btn-sm pt-view-notes"
+                                            data-notes-key="@BuildDisplayHelpers.RelativeReleaseNotesPath(Model.BuildsRootPath, build)">
+                                        Release Notes
+                                    </button>
+                                }
+                                <a class="pt-btn pt-btn-primary pt-btn-sm"
+                                   href="/download?path=@Uri.EscapeDataString(BuildDisplayHelpers.RelativeZipPath(Model.BuildsRootPath, build))">
+                                    Download
+                                </a>
+                            </div>
+                        </td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    </div>
+}
+
+@await Html.PartialAsync("_ReleaseNotesModal")

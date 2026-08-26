@@ -1,5 +1,6 @@
 using PublishTool.Core.Models;
 using PublishTool.Core.Services.AppConfig;
+using PublishTool.Core.Services.BuildRunners;
 
 namespace PublishTool.Core.Services;
 
@@ -7,7 +8,6 @@ public sealed class Publisher
 {
     private readonly IProjectRegistry _registry;
     private readonly IOutputSink _output;
-    private readonly MsBuildRunner _msBuild;
     private readonly BuildRepository _buildRepository;
     private readonly GitService _git;
     private readonly RemoteHostingClient _remoteHostingClient;
@@ -17,7 +17,6 @@ public sealed class Publisher
     {
         _registry = registry;
         _output = output;
-        _msBuild = new MsBuildRunner(output);
         _buildRepository = new BuildRepository();
         _git = new GitService(output);
         _remoteHostingClient = new RemoteHostingClient();
@@ -30,6 +29,13 @@ public sealed class Publisher
             ?? throw new InvalidOperationException(
                 $"Project '{options.ProjectName}' is not registered. Add it first with 'add-project'.");
 
+        var sourceRootPath = project.SourceRootPath;
+        if (string.IsNullOrWhiteSpace(sourceRootPath))
+        {
+            throw new InvalidOperationException(
+                $"'{project.Name}' has no project source configured -- set one in the project's Edit dialog before publishing.");
+        }
+
         if (options.UseRemoteMode && string.IsNullOrWhiteSpace(options.RemoteHostingUrl))
         {
             throw new InvalidOperationException(
@@ -41,7 +47,7 @@ public sealed class Publisher
 
         if (!string.IsNullOrWhiteSpace(options.GitBranch))
         {
-            await _git.CheckoutAsync(project.CsprojPath, options.GitBranch, ct);
+            await _git.CheckoutAsync(sourceRootPath, options.GitBranch, ct);
         }
 
         if (!string.IsNullOrEmpty(project.AssemblyInfoPath))
@@ -58,13 +64,31 @@ public sealed class Publisher
                 ?? throw new InvalidOperationException(
                     $"'{project.Name}' has an unknown app config type '{project.AppConfigType}'.");
 
-            if (string.IsNullOrWhiteSpace(project.AppConfigPath))
+            var configPath = ResolveAppConfigPath(project, options, provider);
+
+            // Angular/Android no longer have a separate "build configuration" setting -- it's
+            // inferred from whichever environment file app config is actually writing into (e.g.
+            // environment.prod.ts -> "prod"), unless the caller already gave an explicit override.
+            if (string.IsNullOrWhiteSpace(options.BuildConfiguration) && provider is EnvironmentTsProvider)
             {
-                throw new InvalidOperationException($"'{project.Name}' has app config enabled but no config file path set.");
+                options.BuildConfiguration = EnvironmentTsProvider.InferBuildConfiguration(configPath);
             }
 
             _output.Stage($"Writing app config ({provider.DisplayName})...");
-            await Task.Run(() => provider.WriteSettings(project.AppConfigPath, options.AppConfigSettings), ct);
+            await Task.Run(() => provider.WriteSettings(configPath, options.AppConfigSettings), ct);
+        }
+
+        if (project.ProjectType == ProjectType.Android && options.AndroidAppMetadata is not null
+            && !string.IsNullOrWhiteSpace(project.Android?.ProjectRootPath))
+        {
+            var androidRootPath = project.Android.ProjectRootPath;
+            var wrapper = AndroidWrapperStrategyRegistry.Detect(androidRootPath)
+                ?? throw new InvalidOperationException(
+                    $"'{project.Name}': couldn't detect a Capacitor or Cordova project at '{androidRootPath}' -- " +
+                    "expected a capacitor.config.json/.ts or config.xml file there.");
+
+            _output.Stage("Writing Android app config (bundle id / display name / version)...");
+            await Task.Run(() => wrapper.WriteAppMetadata(androidRootPath, options.AndroidAppMetadata), ct);
         }
 
         var stagingDir = Path.Combine(Path.GetTempPath(), "PublishTool", Guid.NewGuid().ToString("N"));
@@ -75,13 +99,15 @@ public sealed class Publisher
 
         try
         {
-            var msBuildExePath = await MsBuildLocator.LocateAsync(options.MsBuildPath, ct);
-            _output.Info($"Using MSBuild at {msBuildExePath}");
+            var runner = BuildRunnerRegistry.Get(project.ProjectType);
+            var buildResult = await runner.BuildAsync(new BuildContext(project, options, stagingDir, _output), ct);
 
-            _output.Stage("Running MSBuild publish...");
-            await _msBuild.PublishAsync(
-                msBuildExePath, project.CsprojPath, project.PubxmlName, stagingDir,
-                project.SdkStyleProject, project.ExtraPublishTargets, ct);
+            // Copies buildResult's output to destinationPath -- zipping a Directory-kind result
+            // (as every build did before Angular/Android existed), or copying a SingleFile-kind
+            // result (an APK/AAB) as-is, since it's meant to be installed directly, not unzipped.
+            Task WriteArtifactAsync(string destinationPath) => buildResult.ArtifactKind == BuildArtifactKind.Directory
+                ? Task.Run(() => _buildRepository.WriteZip(destinationPath, buildResult.Path), ct)
+                : Task.Run(() => File.Copy(buildResult.Path, destinationPath, overwrite: true), ct);
 
             string zipPath, manifestPath, releaseNotesPath;
             string? existingReleaseNotesReference;
@@ -89,13 +115,14 @@ public sealed class Publisher
             if (options.UseRemoteMode)
             {
                 _output.Stage("Preparing build for upload to dev server...");
+                var artifactExtension = buildResult.ArtifactKind == BuildArtifactKind.Directory ? ".zip" : Path.GetExtension(buildResult.Path);
                 uploadStagingDir = Path.Combine(Path.GetTempPath(), "PublishTool", Guid.NewGuid().ToString("N") + "-upload");
                 Directory.CreateDirectory(uploadStagingDir);
-                zipPath = Path.Combine(uploadStagingDir, $"{options.Version}.zip");
+                zipPath = Path.Combine(uploadStagingDir, $"{options.Version}{artifactExtension}");
                 manifestPath = Path.Combine(uploadStagingDir, $"{options.Version}.manifest.json");
                 releaseNotesPath = Path.Combine(uploadStagingDir, $"{options.Version}.releasenotes.txt");
 
-                await Task.Run(() => _buildRepository.WriteZip(zipPath, stagingDir), ct);
+                await WriteArtifactAsync(zipPath);
                 existingReleaseNotesReference = await TryGetExistingRemoteReleaseNotesReferenceAsync(options, project, ct);
             }
             else
@@ -113,7 +140,7 @@ public sealed class Publisher
                     releaseNotesPath = existing.Manifest.ReleaseNotesPath
                         ?? Path.ChangeExtension(zipPath, null) + ".releasenotes.txt";
 
-                    await Task.Run(() => _buildRepository.WriteZip(zipPath, stagingDir), ct);
+                    await WriteArtifactAsync(zipPath);
 
                     // Overwriting a build that already had release notes reuses its reference number
                     // instead of minting a new one -- this is still the same release, just edited.
@@ -123,11 +150,12 @@ public sealed class Publisher
                 }
                 else
                 {
-                    _output.Stage("Archiving build to repository (zip)...");
-                    // ZipFile.CreateFromDirectory is synchronous and can take real time on large
-                    // builds (tens of MB, thousands of files) -- Task.Run keeps that off the UI thread.
-                    var archive = await Task.Run(
-                        () => _buildRepository.Archive(options.BuildsRoot, project.Name, options.Version, stagingDir), ct);
+                    _output.Stage("Archiving build to repository...");
+                    // ZipFile.CreateFromDirectory/File.Copy are synchronous and can take real time on
+                    // large builds -- Task.Run keeps that off the UI thread.
+                    var archive = buildResult.ArtifactKind == BuildArtifactKind.Directory
+                        ? await Task.Run(() => _buildRepository.Archive(options.BuildsRoot, project.Name, options.Version, buildResult.Path), ct)
+                        : await Task.Run(() => _buildRepository.ArchiveFile(options.BuildsRoot, project.Name, options.Version, buildResult.Path), ct);
                     zipPath = archive.ZipPath;
                     manifestPath = archive.ManifestPath;
                     releaseNotesPath = archive.ReleaseNotesPath;
@@ -179,7 +207,7 @@ public sealed class Publisher
                 PublishedAtUtc = DateTimeOffset.UtcNow,
                 PublishedBy = Environment.UserName,
                 ZipPath = zipPath,
-                ListInHosting = project.ListInHosting,
+                ListInHosting = options.ListInHosting,
                 ReleaseNotesPath = writtenReleaseNotesPath,
                 AppConfigSettings = project.UseAppConfig ? options.AppConfigSettings : null,
                 IsLatest = options.MarkAsLatest,
@@ -195,14 +223,19 @@ public sealed class Publisher
                 // applies its own SetLatest from that when it accepts the upload, same as marking
                 // latest locally does below, just server-side (see BuildUploadHandler).
 
-                var remoteEnvironment = options.DeployTarget == DeployTarget.Remote && project.RemoteIisEnabled && options.DeployEnvironmentName is not null
+                // IIS deploy only makes sense for a Directory-kind result (a folder of files to
+                // serve) -- a SingleFile artifact (e.g. an Android APK/AAB) has no IIS deploy story
+                // at all, so it's simply never offered as an option regardless of what's configured.
+                var remoteEnvironment = buildResult.ArtifactKind == BuildArtifactKind.Directory
+                    && options.DeployTarget == DeployTarget.Remote && project.RemoteIisEnabled && options.DeployEnvironmentName is not null
                     ? project.RemoteEnvironments.FirstOrDefault(e => string.Equals(e.Name, options.DeployEnvironmentName, StringComparison.OrdinalIgnoreCase))
                     : null;
 
                 if (remoteEnvironment is not null)
                 {
                     _output.Stage($"Deploying to dev server IIS ({remoteEnvironment.Name})...");
-                    await _remoteHostingClient.DeployAsync(options.RemoteHostingUrl!, options.RemoteHostingApiKey, remoteManifestPath, remoteEnvironment.Name, ct);
+                    await _remoteHostingClient.DeployAsync(
+                        options.RemoteHostingUrl!, options.RemoteHostingApiKey, remoteManifestPath, remoteEnvironment.Name, Environment.UserName, ct);
                     _output.Info($"Deployed to dev server IIS ({remoteEnvironment.Name}).");
                 }
                 else if (options.DeployTarget == DeployTarget.Remote && options.DeployEnvironmentName is not null)
@@ -221,7 +254,8 @@ public sealed class Publisher
                 _output.Info($"Archived to {zipPath}");
             }
 
-            var localEnvironment = options.DeployTarget == DeployTarget.Local && project.LocalIisEnabled && options.DeployEnvironmentName is not null
+            var localEnvironment = buildResult.ArtifactKind == BuildArtifactKind.Directory
+                && options.DeployTarget == DeployTarget.Local && project.LocalIisEnabled && options.DeployEnvironmentName is not null
                 ? project.LocalEnvironments.FirstOrDefault(e => string.Equals(e.Name, options.DeployEnvironmentName, StringComparison.OrdinalIgnoreCase))
                 : null;
 
@@ -230,8 +264,20 @@ public sealed class Publisher
                 var localHostPath = localEnvironment.ResolveHostPath(project.Name);
                 if (localHostPath is not null)
                 {
+                    var siteName = localEnvironment.ResolveSiteName(project.Name);
                     await _buildDeployer.DeployAsync(
-                        localEnvironment.ResolveSiteName(project.Name), localHostPath, localEnvironment.Bindings, localEnvironment.AutoCreateSite, stagingDir, ct);
+                        siteName, localHostPath, localEnvironment.Bindings, localEnvironment.AutoCreateSite, buildResult.Path,
+                        new SiteDeploymentRecord
+                        {
+                            SiteName = siteName,
+                            ProjectName = project.Name,
+                            Version = options.Version,
+                            EnvironmentName = localEnvironment.Name,
+                            DeployedAtUtc = DateTimeOffset.UtcNow,
+                            DeployedBy = Environment.UserName,
+                        },
+                        PoolTemplateFor(project.ProjectType),
+                        ct);
                     _output.Info($"Deployed {project.Name} v{options.Version} to local IIS ({localEnvironment.Name}).");
                 }
                 else
@@ -260,6 +306,45 @@ public sealed class Publisher
                 Directory.Delete(uploadStagingDir, recursive: true);
             }
         }
+    }
+
+    /// <summary>Angular's static-file output (like ASP.NET Core) wants a "No Managed Code" app
+    /// pool, not the classic .NET Framework CLR default -- see AppPoolRuntimeTemplate.</summary>
+    private static AppPoolRuntimeTemplate PoolTemplateFor(ProjectType projectType) =>
+        projectType == ProjectType.Angular ? AppPoolRuntimeTemplate.NoManagedCode : AppPoolRuntimeTemplate.DotNetFramework;
+
+    /// <summary>The config file path is optional even with app config enabled -- if neither the
+    /// project's own <see cref="ProjectConfig.AppConfigPath"/> nor an explicit
+    /// <see cref="PublishOptions.AppConfigPathOverride"/> (the GUI's Publish-tab pick, or the CLI's
+    /// --app-config-path) is set, this searches the project's own source tree via
+    /// <see cref="IAppConfigProvider.FindCandidateConfigPaths"/> and only proceeds if that search
+    /// is unambiguous -- zero or multiple matches error out asking for an explicit choice instead
+    /// of guessing.</summary>
+    private static string ResolveAppConfigPath(ProjectConfig project, PublishOptions options, IAppConfigProvider provider)
+    {
+        if (!string.IsNullOrWhiteSpace(options.AppConfigPathOverride))
+        {
+            return options.AppConfigPathOverride;
+        }
+
+        if (!string.IsNullOrWhiteSpace(project.AppConfigPath))
+        {
+            return project.AppConfigPath;
+        }
+
+        var sourceRoot = string.IsNullOrWhiteSpace(project.SourceRootPath) ? null : Path.GetDirectoryName(project.SourceRootPath);
+        var candidates = string.IsNullOrWhiteSpace(sourceRoot) ? [] : provider.FindCandidateConfigPaths(sourceRoot);
+
+        return candidates.Count switch
+        {
+            1 => candidates[0],
+            0 => throw new InvalidOperationException(
+                $"'{project.Name}' has app config enabled but no config file path set, and none could be found " +
+                $"automatically under its project folder for {provider.DisplayName}."),
+            _ => throw new InvalidOperationException(
+                $"'{project.Name}' has app config enabled but no config file path set, and multiple {provider.DisplayName} " +
+                "files were found automatically -- pick one explicitly (Publish tab, or --app-config-path)."),
+        };
     }
 
     /// <summary>Looks for an already-uploaded build of this exact version on the dev server so

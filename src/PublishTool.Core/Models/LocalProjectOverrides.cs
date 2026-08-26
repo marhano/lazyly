@@ -14,6 +14,25 @@ public sealed class LocalProjectOverrides
 
     public string? AssemblyInfoPath { get; set; }
 
+    /// <summary>See <see cref="AngularProjectSettings.ProjectRootPath"/> -- local for the same
+    /// reason <see cref="CsprojPath"/> is.</summary>
+    public string? AngularProjectRootPath { get; set; }
+
+    /// <summary>See <see cref="AndroidProjectSettings.ProjectRootPath"/>.</summary>
+    public string? AndroidProjectRootPath { get; set; }
+
+    /// <summary>See <see cref="AndroidProjectSettings.KeystorePath"/>.</summary>
+    public string? AndroidKeystorePath { get; set; }
+
+    /// <summary>See <see cref="AndroidProjectSettings.KeyAlias"/>.</summary>
+    public string? AndroidKeyAlias { get; set; }
+
+    /// <summary>DPAPI-bound to this Windows user, same reasoning as <see cref="EventLogProtectedPassword"/>.</summary>
+    public string? AndroidProtectedKeystorePassword { get; set; }
+
+    /// <summary>DPAPI-bound to this Windows user, same reasoning as <see cref="EventLogProtectedPassword"/>.</summary>
+    public string? AndroidProtectedKeyPassword { get; set; }
+
     public bool LocalIisEnabled { get; set; }
 
     /// <summary>This dev's own named deploy targets -- see <see cref="ProjectConfig.LocalEnvironments"/>.</summary>

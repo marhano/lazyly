@@ -48,28 +48,50 @@
             at the same new location.
         </div>
     }
-    else
+    else if (Model.Projects.Count == 0)
     {
         <div class="pt-card">
-            @if (Model.Builds.Count == 0)
+            <p class="pt-muted" style="margin: 0;">No builds found yet.</p>
+        </div>
+    }
+    else
+    {
+        <div class="pt-projects-grid">
+            @foreach (var project in Model.Projects)
+            {
+                <a class="pt-project-card" href="/Project/@Uri.EscapeDataString(project.Name)">
+                    <div class="pt-project-card-header">
+                        <h3>@project.Name</h3>
+                        @if (project.MostRecentBuild!.IsLatest)
+                        {
+                            <span class="pt-badge-latest">latest</span>
+                        }
+                    </div>
+                    <div class="pt-project-card-body">
+                        <span class="pt-version">@project.MostRecentBuild!.Version</span>
+                        <span class="pt-muted">@project.MostRecentBuild!.PublishedAtUtc.ToLocalTime().ToString("yyyy-MM-dd HH:mm")</span>
+                    </div>
+                    <div class="pt-project-card-footer pt-muted">
+                        @project.BuildCount build@(project.BuildCount == 1 ? "" : "s") &middot; by @project.MostRecentBuild!.PublishedBy
+                    </div>
+                </a>
+            }
+        </div>
+
+        <div class="pt-section-header">
+            <h2>Recent builds</h2>
+            <a href="/Builds" class="pt-btn pt-btn-ghost pt-btn-sm">View all</a>
+        </div>
+
+        <div class="pt-card">
+            @if (Model.RecentBuilds is null || Model.RecentBuilds.Builds.Count == 0)
             {
                 <p class="pt-muted" style="margin: 0;">No builds found yet.</p>
             }
             else
             {
-                <div class="pt-filter-bar">
-                    <label for="projectFilter">Project</label>
-                    <select id="projectFilter" class="pt-input">
-                        <option value="">All projects</option>
-                        @foreach (var name in Model.ProjectNames)
-                        {
-                            <option value="@name">@name</option>
-                        }
-                    </select>
-                </div>
-
                 <div class="pt-table-wrap">
-                    <table id="buildsTable" class="pt-table">
+                    <table class="pt-table">
                         <thead>
                             <tr>
                                 <th>Project</th>
@@ -81,10 +103,10 @@
                             </tr>
                         </thead>
                         <tbody>
-                            @foreach (var build in Model.Builds)
+                            @foreach (var build in Model.RecentBuilds.Builds)
                             {
                                 <tr>
-                                    <td>@build.ProjectName</td>
+                                    <td><a href="/Project/@Uri.EscapeDataString(build.ProjectName)">@build.ProjectName</a></td>
                                     <td>
                                         <span class="pt-version">@build.Version</span>
                                         @if (build.IsLatest)
@@ -92,20 +114,20 @@
                                             <span class="pt-badge-latest">latest</span>
                                         }
                                     </td>
-                                    <td class="pt-muted" data-sort="@build.PublishedAtUtc.ToUnixTimeSeconds()">@build.PublishedAtUtc.ToLocalTime().ToString("yyyy-MM-dd HH:mm")</td>
+                                    <td class="pt-muted">@build.PublishedAtUtc.ToLocalTime().ToString("yyyy-MM-dd HH:mm")</td>
                                     <td class="pt-muted">@build.PublishedBy</td>
-                                    <td class="pt-num" data-sort="@IndexModel.GetFileSizeBytes(build.ZipPath)">@IndexModel.FormatFileSize(build.ZipPath)</td>
+                                    <td class="pt-num">@BuildDisplayHelpers.FormatFileSize(build.ZipPath)</td>
                                     <td>
                                         <div class="pt-actions">
-                                            @if (Model.HasReleaseNotes(build))
+                                            @if (BuildDisplayHelpers.HasReleaseNotes(build))
                                             {
                                                 <button type="button" class="pt-btn pt-btn-ghost pt-btn-sm pt-view-notes"
-                                                        data-notes-key="@Model.RelativeReleaseNotesPath(build)">
+                                                        data-notes-key="@BuildDisplayHelpers.RelativeReleaseNotesPath(Model.BuildsRootPath, build)">
                                                     Release Notes
                                                 </button>
                                             }
                                             <a class="pt-btn pt-btn-primary pt-btn-sm"
-                                               href="/download?path=@Uri.EscapeDataString(Model.RelativeZipPath(build))">
+                                               href="/download?path=@Uri.EscapeDataString(BuildDisplayHelpers.RelativeZipPath(Model.BuildsRootPath, build))">
                                                 Download
                                             </a>
                                         </div>
@@ -117,93 +139,17 @@
                 </div>
             }
         </div>
+
+        @await Html.PartialAsync("_ReleaseNotesModal")
     }
 
     <div class="pt-footer">Build Archive</div>
 </div>
 
-<div id="releaseNotesModal" class="pt-modal-overlay" hidden>
-    <div class="pt-modal">
-        <div class="pt-modal-header">
-            <h2 id="releaseNotesModalTitle">Release Notes</h2>
-            <button type="button" class="pt-modal-close" id="releaseNotesModalClose" aria-label="Close">&times;</button>
-        </div>
-        <div class="pt-modal-body">
-            <pre id="releaseNotesModalContent"></pre>
-        </div>
-        <div class="pt-modal-footer">
-            <a id="releaseNotesModalDownload" class="pt-btn pt-btn-primary pt-btn-sm" href="#">Download .txt</a>
-        </div>
-    </div>
-</div>
-
 @section Scripts {
+    <script src="~/js/builds-table.js"></script>
     <script>
-        var releaseNotesData = @Html.Raw(System.Text.Json.JsonSerializer.Serialize(Model.ReleaseNotesByPath));
-
-        $(function () {
-            var buildsTable = $('#buildsTable').DataTable({
-                order: [[2, 'desc']],
-                pageLength: 25,
-                lengthMenu: [10, 25, 50, 100],
-                columnDefs: [{ orderable: false, targets: 5 }],
-                language: {
-                    search: 'Search:',
-                    info: 'Showing _START_-_END_ of _TOTAL_ builds',
-                    infoEmpty: 'No builds to show',
-                    infoFiltered: '(filtered from _MAX_ total)',
-                    emptyTable: 'No builds match your search.',
-                    lengthMenu: 'Show _MENU_ per page',
-                },
-            });
-
-            // Exact-match filter on the Project column, separate from the free-text search box --
-            // a plain column().search() would treat the project name as a regex/substring pattern,
-            // which breaks for names containing regex-special characters (parentheses, dots, etc.)
-            // and would also match "OmniPay" against a project literally named "OmniPay Business".
-            $('#projectFilter').on('change', function () {
-                var selected = this.value;
-                buildsTable.column(0).search(selected ? '^' + $.fn.dataTable.util.escapeRegex(selected) + '$' : '', true, false).draw();
-            });
-
-            var $overlay = $('#releaseNotesModal');
-            var $title = $('#releaseNotesModalTitle');
-            var $content = $('#releaseNotesModalContent');
-            var $download = $('#releaseNotesModalDownload');
-
-            function openModal(key) {
-                var entry = releaseNotesData[key];
-                if (!entry) {
-                    return;
-                }
-
-                $title.text(entry.Title);
-                $content.text(entry.Text);
-                $download.attr('href', '/download?path=' + encodeURIComponent(key));
-                $overlay.removeAttr('hidden');
-            }
-
-            function closeModal() {
-                $overlay.attr('hidden', true);
-            }
-
-            // Delegated on the table itself (not the buttons) so this keeps working across
-            // DataTables' pagination, which swaps tbody rows in and out of the DOM.
-            $('#buildsTable').on('click', '.pt-view-notes', function () {
-                openModal($(this).data('notes-key'));
-            });
-
-            $('#releaseNotesModalClose').on('click', closeModal);
-            $overlay.on('click', function (e) {
-                if (e.target === this) {
-                    closeModal();
-                }
-            });
-            $(document).on('keydown', function (e) {
-                if (e.key === 'Escape') {
-                    closeModal();
-                }
-            });
-        });
+        var releaseNotesData = @Html.Raw(System.Text.Json.JsonSerializer.Serialize(Model.RecentBuilds?.ReleaseNotesByPath ?? new Dictionary<string, PublishTool.Hosting.ReleaseNotesModalEntry>()));
+        PublishToolBuildsTable.init(releaseNotesData);
     </script>
 }

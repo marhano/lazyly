@@ -9,7 +9,7 @@ internal static class ProcessRunner
         string arguments,
         IOutputSink output,
         CancellationToken ct = default) =>
-        await RunAsync(fileName, arguments, output, treatStderrAsError: true, ct);
+        await RunAsync(fileName, arguments, output, treatStderrAsError: true, workingDirectory: null, ct);
 
     /// <summary>
     /// Same as the other overload, but with control over whether stderr lines are logged as
@@ -23,6 +23,20 @@ internal static class ProcessRunner
         string arguments,
         IOutputSink output,
         bool treatStderrAsError,
+        CancellationToken ct = default) =>
+        await RunAsync(fileName, arguments, output, treatStderrAsError, workingDirectory: null, ct);
+
+    /// <summary>
+    /// Same as the other overload, plus an explicit working directory -- for tools invoked by
+    /// convention relative to a project root (npm, npx, gradlew) rather than by full path
+    /// arguments the way MSBuild/git/appcmd are called elsewhere in this codebase.
+    /// </summary>
+    public static async Task<int> RunAsync(
+        string fileName,
+        string arguments,
+        IOutputSink output,
+        bool treatStderrAsError,
+        string? workingDirectory,
         CancellationToken ct = default)
     {
         var psi = new ProcessStartInfo(fileName, arguments)
@@ -32,6 +46,11 @@ internal static class ProcessRunner
             UseShellExecute = false,
             CreateNoWindow = true,
         };
+
+        if (!string.IsNullOrWhiteSpace(workingDirectory))
+        {
+            psi.WorkingDirectory = workingDirectory;
+        }
 
         using var process = new Process { StartInfo = psi, EnableRaisingEvents = true };
         process.OutputDataReceived += (_, e) => { if (e.Data is not null) output.Info(e.Data); };

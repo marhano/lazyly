@@ -3,6 +3,7 @@ using System.ComponentModel;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
+using System.Reflection;
 using System.Security.Principal;
 using System.Text;
 using System.Text.Json;
@@ -17,6 +18,7 @@ using PublishTool.Core;
 using PublishTool.Core.Models;
 using PublishTool.Core.Services;
 using PublishTool.Core.Services.AppConfig;
+using PublishTool.Core.Services.BuildRunners;
 using Wpf.Ui.Appearance;
 
 namespace PublishTool.Gui;
@@ -32,10 +34,22 @@ public partial class MainWindow : Wpf.Ui.Controls.FluentWindow
     private readonly GuiOutputSink _output;
     private readonly System.Windows.Forms.NotifyIcon _notifyIcon;
     private readonly ObservableCollection<AppConfigSettingRow> _appConfigSettings = new();
+
+    /// <summary>Set whenever the config file being edited on the Publish tab was found
+    /// automatically (the project has no fixed AppConfigPath) rather than being the project's own
+    /// fixed path -- passed through to Publish as an explicit --app-config-path override so the
+    /// exact same file that's shown here is the one actually written to. Null means "use the
+    /// project's own AppConfigPath as-is" (or app config isn't in use at all).</summary>
+    private string? _resolvedAppConfigPath;
     private readonly HashSet<string> _currentProjectVersions = new(StringComparer.OrdinalIgnoreCase);
     private readonly HashSet<string> _currentProjectBranches = new(StringComparer.OrdinalIgnoreCase);
     private bool _isBusy;
     private bool _isExiting;
+    // Set once a background update check finds and finishes downloading a new version. Applied
+    // immediately if the user picks "Restart Now" in UpdateAvailableDialog, or on the next real
+    // exit (ExitFromTray) if they picked "Later" -- never during a tray-hide.
+    private Velopack.UpdateManager? _pendingUpdateManager;
+    private Velopack.UpdateInfo? _pendingUpdateInfo;
     private string? _lastSelectedProjectForForm;
     private GridLength _savedOutputColumnWidth = new(380);
     private readonly List<EventLogRowViewModel> _eventLogRows = new();
@@ -77,7 +91,7 @@ public partial class MainWindow : Wpf.Ui.Controls.FluentWindow
         Closing += MainWindow_Closing;
 
         AppConfigDataGrid.ItemsSource = _appConfigSettings;
-        ElevationInfoBar.IsOpen = !IsRunningAsAdministrator();
+        UpdateElevationBanner();
         AppVersionTextBlock.Text = $"PublishTool v{GetAppVersion()}";
 
         _output = new GuiOutputSink(OutputLogBox, StatusTextBlock, _notifyIcon);
@@ -90,6 +104,7 @@ public partial class MainWindow : Wpf.Ui.Controls.FluentWindow
             await RefreshProjectsAsync();
             await RefreshEnvironmentsAsync();
             await RefreshDependenciesAsync(showDialogIfMissing: true);
+            await CheckForUpdatesAsync();
         };
     }
 
@@ -99,6 +114,14 @@ public partial class MainWindow : Wpf.Ui.Controls.FluentWindow
         var principal = new WindowsPrincipal(identity);
         return principal.IsInRole(WindowsBuiltInRole.Administrator);
     }
+
+    /// <summary>The IIS/Firewall tabs operate entirely against the dev server (over HTTP, via
+    /// <see cref="RemoteHostingClient"/>) while remote mode is on -- they never touch this
+    /// machine's own appcmd/netsh in that mode, so there's nothing to warn about here then. Only
+    /// local mode's IIS/Firewall tabs need this machine elevated. A "Local" deploy target on the
+    /// Publish tab is a separate, narrower warning (see <see cref="UpdateLocalDeployElevationWarning"/>)
+    /// since that can still need elevation even while remote mode is globally on.</summary>
+    private void UpdateElevationBanner() => ElevationInfoBar.IsOpen = !IsRunningAsAdministrator() && !IsRemoteModeActive(out _);
 
     private static string GetAppVersion()
     {
@@ -148,34 +171,234 @@ public partial class MainWindow : Wpf.Ui.Controls.FluentWindow
 
     private void ExitFromTray()
     {
+        // Apply any update that was downloaded and deferred (user picked "Later" in
+        // UpdateAvailableDialog) now, since this is a real exit and not just a tray-hide.
+        if (_pendingUpdateManager is not null && _pendingUpdateInfo is not null)
+        {
+            _pendingUpdateManager.WaitExitThenApplyUpdates(_pendingUpdateInfo.TargetFullRelease);
+        }
+
         _isExiting = true;
         Close();
     }
 
-    private const string StartupRegistryKeyPath = @"Software\Microsoft\Windows\CurrentVersion\Run";
-    private const string StartupValueName = "PublishTool";
+    // Runs unattended on every launch: silent if there's nothing new, and still silent while
+    // downloading (aside from the status bar) once something is found -- the only thing the user
+    // actually sees is UpdateAvailableDialog, and only once a new version is fully staged and
+    // ready to go.
+    // GitHub's unauthenticated API rate limit is 60 requests/hour *per IP* -- fine for one
+    // person, but a whole team behind the same office NAT (especially if everyone's machine
+    // launches PublishTool around the same time via "Start on Windows startup") can exhaust that
+    // shared budget easily, since it's also shared with every other unrelated tool on that
+    // network hitting GitHub. Two cheap, no-tradeoff mitigations: don't check more than once per
+    // UpdateCheckIntervalHours per machine (regardless of how many times the app is launched --
+    // even a *failed* check still counts, so a rate-limit error doesn't just get retried on the
+    // next launch minutes later), and spread out exactly when each machine checks so a bunch of
+    // simultaneous morning launches don't all land in the same instant.
+    private const int UpdateCheckIntervalHours = 6;
 
+    private static string LastUpdateCheckPath => Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "PublishTool", "last-update-check.txt");
+
+    private static bool ShouldCheckForUpdates()
+    {
+        try
+        {
+            if (!File.Exists(LastUpdateCheckPath))
+            {
+                return true;
+            }
+
+            var lastCheck = DateTimeOffset.Parse(File.ReadAllText(LastUpdateCheckPath), System.Globalization.CultureInfo.InvariantCulture);
+            return DateTimeOffset.UtcNow - lastCheck >= TimeSpan.FromHours(UpdateCheckIntervalHours);
+        }
+        catch
+        {
+            // Can't tell when we last checked (missing/corrupt file) -- default to checking rather
+            // than silently never checking again.
+            return true;
+        }
+    }
+
+    private static void RecordUpdateCheckNow()
+    {
+        try
+        {
+            var dir = Path.GetDirectoryName(LastUpdateCheckPath);
+            if (!string.IsNullOrEmpty(dir))
+            {
+                Directory.CreateDirectory(dir);
+            }
+
+            File.WriteAllText(LastUpdateCheckPath, DateTimeOffset.UtcNow.ToString("O", System.Globalization.CultureInfo.InvariantCulture));
+        }
+        catch
+        {
+            // Best-effort -- worst case this machine just checks again next launch instead of
+            // waiting out the interval, same as before this existed.
+        }
+    }
+
+    private async void CheckForUpdatesButton_Click(object sender, RoutedEventArgs e)
+    {
+        CheckForUpdatesButton.IsEnabled = false;
+        try
+        {
+            await CheckForUpdatesAsync(interactive: true);
+        }
+        finally
+        {
+            CheckForUpdatesButton.IsEnabled = true;
+        }
+    }
+
+    /// <summary>Read-only GitHub token baked in at build time (see the
+    /// <c>GithubUpdateToken</c>/<c>AssemblyMetadata</c> entry in PublishTool.Gui.csproj) -- raises
+    /// the update check's rate limit from 60/hour (unauthenticated) to 5000/hour. Null for a local
+    /// build with no token supplied, which just means the check stays unauthenticated, same as
+    /// before this existed.</summary>
+    private static readonly string? GithubUpdateToken = Assembly.GetExecutingAssembly()
+        .GetCustomAttributes<AssemblyMetadataAttribute>()
+        .FirstOrDefault(a => a.Key == "GithubUpdateToken") is { Value.Length: > 0 } attribute
+            ? attribute.Value
+            : null;
+
+    /// <param name="interactive">True from the Help tab's "Check for updates" button -- always
+    /// actually checks (skips the throttle/jitter below, both meant only to keep the automatic
+    /// background check from hammering GitHub) and reports the outcome via a message box even when
+    /// there's nothing new, instead of staying silent the way the automatic per-launch check does.</param>
+    private async Task CheckForUpdatesAsync(bool interactive = false)
+    {
+        try
+        {
+            var mgr = new Velopack.UpdateManager(new Velopack.Sources.GithubSource("https://github.com/marhano/lazyly", GithubUpdateToken, false));
+            if (!mgr.IsInstalled)
+            {
+                // Running from `dotnet run`/a loose build rather than a Velopack-installed copy --
+                // there's no installed app for an update to apply to.
+                if (interactive)
+                {
+                    MessageBox.Show(
+                        "This copy of PublishTool wasn't installed via the updater (e.g. a dev build) -- there's nothing to check.",
+                        "PublishTool", MessageBoxButton.OK, MessageBoxImage.Information);
+                }
+
+                return;
+            }
+
+            if (!interactive && !ShouldCheckForUpdates())
+            {
+                return;
+            }
+
+            // Recorded before the network call itself (not just on success) so a rate-limited or
+            // otherwise failed check still backs off for the full interval instead of being retried
+            // on the very next launch.
+            RecordUpdateCheckNow();
+            if (!interactive)
+            {
+                await Task.Delay(TimeSpan.FromSeconds(Random.Shared.Next(0, 180)));
+            }
+
+            var newVersion = await mgr.CheckForUpdatesAsync();
+            if (newVersion is null)
+            {
+                if (interactive)
+                {
+                    MessageBox.Show("You're on the latest version.", "PublishTool", MessageBoxButton.OK, MessageBoxImage.Information);
+                }
+
+                return;
+            }
+
+            var previousStatus = StatusTextBlock.Text;
+            PublishProgressBar.Visibility = Visibility.Visible;
+            StatusTextBlock.Text = "Downloading update...";
+            try
+            {
+                await mgr.DownloadUpdatesAsync(newVersion);
+            }
+            finally
+            {
+                PublishProgressBar.Visibility = Visibility.Collapsed;
+                StatusTextBlock.Text = previousStatus;
+            }
+
+            _pendingUpdateManager = mgr;
+            _pendingUpdateInfo = newVersion;
+
+            var versionText = newVersion.TargetFullRelease.Version.ToString();
+            var releaseNotes = newVersion.TargetFullRelease.NotesMarkdown;
+            var dialog = new UpdateAvailableDialog(versionText, releaseNotes) { Owner = this };
+            if (dialog.ShowDialog() == true)
+            {
+                mgr.ApplyUpdatesAndRestart(newVersion.TargetFullRelease);
+            }
+        }
+        catch (Exception ex)
+        {
+            if (interactive)
+            {
+                MessageBox.Show($"Couldn't check for updates: {ex.Message}", "PublishTool", MessageBoxButton.OK, MessageBoxImage.Warning);
+            }
+            else
+            {
+                // The automatic background check is best-effort -- a network hiccup or an
+                // unreachable/still-private repo shouldn't interrupt anything the user is doing.
+                _output.Info($"Update check failed: {ex.Message}");
+            }
+        }
+    }
+
+    private const string StartupTaskName = "PublishTool";
+
+    // PublishTool requires Administrator (see app.manifest), which rules out the classic
+    // HKCU...\Run registry approach for "start at login" -- Windows deliberately never elevates
+    // anything launched from that key, so an admin-required exe placed there would just silently
+    // fail to start with no error shown anywhere. A Scheduled Task with "run with highest
+    // privileges" is the standard workaround: for an account that's already an administrator, it
+    // launches elevated at logon without a UAC prompt.
     private static bool IsStartupEnabled()
     {
-        using var key = Registry.CurrentUser.OpenSubKey(StartupRegistryKeyPath, writable: false);
-        return key?.GetValue(StartupValueName) is not null;
+        var (exitCode, _) = RunSchtasks("/Query", "/TN", StartupTaskName);
+        return exitCode == 0;
     }
 
     private static void SetStartupEnabled(bool enabled)
     {
-        using var key = Registry.CurrentUser.CreateSubKey(StartupRegistryKeyPath);
-
         if (!enabled)
         {
-            key.DeleteValue(StartupValueName, throwOnMissingValue: false);
+            RunSchtasks("/Delete", "/TN", StartupTaskName, "/F");
             return;
         }
 
         var exePath = Process.GetCurrentProcess().MainModule?.FileName;
-        if (exePath is not null)
+        if (exePath is null)
         {
-            key.SetValue(StartupValueName, $"\"{exePath}\"");
+            return;
         }
+
+        RunSchtasks("/Create", "/TN", StartupTaskName, "/TR", $"\"{exePath}\"", "/SC", "ONLOGON", "/RL", "HIGHEST", "/F");
+    }
+
+    private static (int ExitCode, string Output) RunSchtasks(params string[] arguments)
+    {
+        var psi = new ProcessStartInfo("schtasks.exe")
+        {
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+            CreateNoWindow = true,
+        };
+        foreach (var arg in arguments)
+        {
+            psi.ArgumentList.Add(arg);
+        }
+
+        using var process = Process.Start(psi)!;
+        var output = process.StandardOutput.ReadToEnd() + process.StandardError.ReadToEnd();
+        process.WaitForExit();
+        return (process.ExitCode, output);
     }
 
     private void StartOnStartupToggle_Toggled(object sender, RoutedEventArgs e)
@@ -389,6 +612,7 @@ public partial class MainWindow : Wpf.Ui.Controls.FluentWindow
         settings.Save(AppSettings.DefaultPath);
         RemoteHostingApiKeyBox.Password = string.Empty;
         RemoteHostingStatusTextBlock.Text = "Saved.";
+        _output.Info("Saved Remote Build Hosting settings.");
         LoadSettingsIntoForm();
     }
 
@@ -437,11 +661,14 @@ public partial class MainWindow : Wpf.Ui.Controls.FluentWindow
         settings.UseRemoteMode = UseRemoteModeToggle.IsChecked == true;
         settings.Save(AppSettings.DefaultPath);
 
-        // Projects tab, IIS tab, and the environment list now read from a different source --
-        // refresh all three immediately so the switch is visible right away instead of on the
-        // next unrelated action. The Publish tab's "Remote" deploy option also depends on this.
+        // Projects tab, IIS tab, Firewall tab, and the environment list now read from a
+        // different source -- refresh all of them immediately so the switch is visible right
+        // away instead of on the next unrelated action. The Publish tab's "Remote" deploy option
+        // also depends on this.
+        UpdateElevationBanner();
         await RefreshProjectsAsync();
         await RefreshIisStatusAsync();
+        await RefreshFirewallStatusAsync();
         await RefreshEnvironmentsAsync();
         await LoadDeployTargetOptionsForSelectedProjectAsync();
     }
@@ -479,6 +706,7 @@ public partial class MainWindow : Wpf.Ui.Controls.FluentWindow
         settings.Names.Add(name);
         settings.DefaultName ??= name;
         await registry.SaveAsync(settings);
+        _output.Info($"Added deployment environment '{name}'.");
 
         NewEnvironmentNameTextBox.Clear();
         await RefreshEnvironmentsAsync();
@@ -502,6 +730,7 @@ public partial class MainWindow : Wpf.Ui.Controls.FluentWindow
         }
 
         await registry.SaveAsync(settings);
+        _output.Info($"Removed deployment environment '{name}'.");
         await RefreshEnvironmentsAsync();
     }
 
@@ -515,8 +744,10 @@ public partial class MainWindow : Wpf.Ui.Controls.FluentWindow
 
         var registry = EnvironmentRegistryFactory.Create();
         var settings = await registry.GetAsync();
-        settings.DefaultName = StripDefaultSuffix(selected);
+        var name = StripDefaultSuffix(selected);
+        settings.DefaultName = name;
         await registry.SaveAsync(settings);
+        _output.Info($"Made '{name}' the default deployment environment.");
         await RefreshEnvironmentsAsync();
     }
 
@@ -535,13 +766,30 @@ public partial class MainWindow : Wpf.Ui.Controls.FluentWindow
         }
         else
         {
-            OutputColumnDefinition.MinWidth = 260;
-            OutputColumnDefinition.Width = _savedOutputColumnWidth;
+            ShowOutputPanel();
+            return;
         }
 
-        OutputPanel.Visibility = isCurrentlyVisible ? Visibility.Collapsed : Visibility.Visible;
-        OutputSplitter.Visibility = isCurrentlyVisible ? Visibility.Collapsed : Visibility.Visible;
-        ToggleOutputButton.Content = isCurrentlyVisible ? "Show output" : "Hide output";
+        OutputPanel.Visibility = Visibility.Collapsed;
+        OutputSplitter.Visibility = Visibility.Collapsed;
+        ToggleOutputButton.Content = "Show output";
+    }
+
+    /// <summary>Expands the Output panel if it's currently collapsed -- a no-op otherwise. Used by
+    /// the toggle button itself and, separately, to make sure a Projects-tab deploy's progress is
+    /// actually visible without the user having to remember they hid it earlier.</summary>
+    private void ShowOutputPanel()
+    {
+        if (OutputPanel.Visibility == Visibility.Visible)
+        {
+            return;
+        }
+
+        OutputColumnDefinition.MinWidth = 260;
+        OutputColumnDefinition.Width = _savedOutputColumnWidth;
+        OutputPanel.Visibility = Visibility.Visible;
+        OutputSplitter.Visibility = Visibility.Visible;
+        ToggleOutputButton.Content = "Hide output";
     }
 
     private async void MainTabControl_SelectionChanged(object sender, SelectionChangedEventArgs e)
@@ -560,9 +808,17 @@ public partial class MainWindow : Wpf.Ui.Controls.FluentWindow
         {
             await RefreshIisStatusAsync();
         }
+        else if (MainTabControl.SelectedItem is TabItem { Header: "Firewall" })
+        {
+            await RefreshFirewallStatusAsync();
+        }
         else if (MainTabControl.SelectedItem is TabItem { Header: "Help" })
         {
             await RefreshDependenciesAsync();
+        }
+        else if (MainTabControl.SelectedItem is TabItem { Header: "Audit Logs" })
+        {
+            await RefreshCombinedAuditAsync();
         }
     }
 
@@ -590,6 +846,96 @@ public partial class MainWindow : Wpf.Ui.Controls.FluentWindow
                        "\n\nSee the Help tab for details.";
 
         MessageBox.Show(message, "PublishTool - Missing Dependencies", MessageBoxButton.OK, MessageBoxImage.Warning);
+    }
+
+    private System.ComponentModel.ICollectionView? _combinedAuditView;
+
+    private async void RefreshCombinedAuditButton_Click(object sender, RoutedEventArgs e) => await RefreshCombinedAuditAsync();
+
+    private void CombinedAuditSearchTextBox_TextChanged(object sender, TextChangedEventArgs e) => _combinedAuditView?.Refresh();
+
+    /// <summary>Merges the Projects/Firewall/IIS audit trails into one combined, newest-first view --
+    /// each source keeps its own real store; this is a pure GUI-side aggregation, re-fetched fresh
+    /// every time the tab is opened or Refresh is clicked (no local caching, same as every other
+    /// tab's own Refresh). A source an old dev server predates (see RemoteFeatureNotAvailableException)
+    /// is silently skipped rather than failing the whole view -- partial history beats none.</summary>
+    private async Task RefreshCombinedAuditAsync()
+    {
+        var rows = new List<CombinedAuditRow>();
+        var remoteMode = IsRemoteModeActive(out var settings);
+        var apiKey = remoteMode ? DecryptRemoteHostingApiKey(settings) : null;
+
+        async Task AddSourceAsync<TEntry>(string category, Func<Task<IReadOnlyList<TEntry>>> fetch, Func<TEntry, CombinedAuditRow> map)
+        {
+            try
+            {
+                var entries = await fetch();
+                rows.AddRange(entries.Select(map));
+            }
+            catch (RemoteFeatureNotAvailableException)
+            {
+                // Silently skipped -- see remarks above.
+            }
+            catch (Exception ex)
+            {
+                _output.Warn($"Couldn't load {category} audit history: {ex.Message}");
+            }
+        }
+
+        await AddSourceAsync<ProjectAuditEntry>(
+            "Project",
+            () => remoteMode
+                ? new RemoteHostingClient().GetRemoteProjectAuditAsync(settings.RemoteHostingUrl!, apiKey)
+                : new ProjectAuditStore().GetHistoryAsync(ProjectAuditStore.DefaultRoot),
+            entry => new CombinedAuditRow
+            {
+                Category = "Project", PerformedAtUtc = entry.PerformedAtUtc, Action = entry.Action,
+                Subject = entry.ProjectName, Details = entry.Details, PerformedBy = entry.PerformedBy,
+            });
+
+        await AddSourceAsync<FirewallAuditEntry>(
+            "Firewall",
+            () => remoteMode
+                ? new RemoteHostingClient().GetRemoteFirewallAuditAsync(settings.RemoteHostingUrl!, apiKey)
+                : new FirewallManager(_output).GetAuditHistoryAsync(),
+            entry => new CombinedAuditRow
+            {
+                Category = "Firewall", PerformedAtUtc = entry.PerformedAtUtc, Action = entry.Action,
+                Subject = entry.RuleName, Details = $"{entry.Protocol} {entry.Ports}", PerformedBy = entry.PerformedBy,
+            });
+
+        await AddSourceAsync<IisAuditEntry>(
+            "IIS",
+            () => remoteMode
+                ? new RemoteHostingClient().GetRemoteIisAuditAsync(settings.RemoteHostingUrl!, apiKey)
+                : new IisSiteManager(_output).GetAuditHistoryAsync(),
+            entry => new CombinedAuditRow
+            {
+                Category = "IIS", PerformedAtUtc = entry.PerformedAtUtc, Action = $"{entry.EntityType} {entry.Action}",
+                Subject = entry.EntityName, Details = entry.Details, PerformedBy = entry.PerformedBy,
+            });
+
+        var sorted = rows.OrderByDescending(r => r.PerformedAtUtc).ToList();
+        CombinedAuditDataGrid.ItemsSource = sorted;
+        _combinedAuditView = System.Windows.Data.CollectionViewSource.GetDefaultView(sorted);
+        _combinedAuditView.Filter = FilterCombinedAuditRow;
+
+        _output.Info($"Loaded {sorted.Count} combined audit log entr{(sorted.Count == 1 ? "y" : "ies")}.");
+    }
+
+    private bool FilterCombinedAuditRow(object item)
+    {
+        var query = CombinedAuditSearchTextBox.Text?.Trim();
+        if (string.IsNullOrEmpty(query) || item is not CombinedAuditRow row)
+        {
+            return true;
+        }
+
+        return row.Category.Contains(query, StringComparison.OrdinalIgnoreCase) ||
+               row.Subject.Contains(query, StringComparison.OrdinalIgnoreCase) ||
+               row.Action.Contains(query, StringComparison.OrdinalIgnoreCase) ||
+               (row.Details?.Contains(query, StringComparison.OrdinalIgnoreCase) ?? false) ||
+               row.PerformedBy.Contains(query, StringComparison.OrdinalIgnoreCase);
     }
 
     private async void RefreshIisButton_Click(object sender, RoutedEventArgs e) => await RefreshIisStatusAsync();
@@ -626,6 +972,8 @@ public partial class MainWindow : Wpf.Ui.Controls.FluentWindow
                 IisSitesDataGrid.ItemsSource = await manager.ListSitesAsync();
                 IisAppPoolsDataGrid.ItemsSource = await manager.ListAppPoolsAsync();
             }
+
+            ApplyIisSiteStateFilter();
         }
         catch (Exception ex)
         {
@@ -633,21 +981,53 @@ public partial class MainWindow : Wpf.Ui.Controls.FluentWindow
         }
     }
 
-    private async void StartSiteButton_Click(object sender, RoutedEventArgs e)
+    private void IisSiteStateFilterComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e) => ApplyIisSiteStateFilter();
+
+    /// <summary>Client-side filter over whatever's currently loaded -- same pattern as the Event
+    /// Logs tab's Level/Method/Type filters, just one combo instead of three.</summary>
+    private void ApplyIisSiteStateFilter()
     {
-        if (IisSitesDataGrid.SelectedItem is not IisSiteStatus site)
+        // IisSiteStateFilterComboBox's SelectedIndex="0" (set in XAML) fires SelectionChanged
+        // during InitializeComponent() itself, before IisSitesDataGrid -- declared later in the
+        // same XAML tree -- has been assigned yet, so this can run with either field still null.
+        if (IisSitesDataGrid is null || IisSitesDataGrid.ItemsSource is null)
         {
-            MessageBox.Show("Select a site first.", "PublishTool", MessageBoxButton.OK, MessageBoxImage.Warning);
             return;
         }
 
-        if (IsRemoteModeActive(out var settings))
+        var view = System.Windows.Data.CollectionViewSource.GetDefaultView(IisSitesDataGrid.ItemsSource);
+        var selection = (IisSiteStateFilterComboBox.SelectedItem as ComboBoxItem)?.Content as string;
+        view.Filter = selection switch
         {
-            await new RemoteHostingClient().StartRemoteSiteAsync(settings.RemoteHostingUrl!, DecryptRemoteHostingApiKey(settings), site.Name);
+            "Started" => item => item is IisSiteStatus site && string.Equals(site.State, "Started", StringComparison.OrdinalIgnoreCase),
+            "Stopped" => item => item is IisSiteStatus site && string.Equals(site.State, "Stopped", StringComparison.OrdinalIgnoreCase),
+            _ => null,
+        };
+    }
+
+    private async void StartSiteButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (((FrameworkElement)sender).DataContext is not IisSiteStatus site)
+        {
+            return;
         }
-        else
+
+        try
         {
-            await RunAsync(new[] { "iis-start-site", "--name", site.Name });
+            if (IsRemoteModeActive(out var settings))
+            {
+                await RunGuiActionAsync($"Starting IIS site '{site.Name}' on the dev server", () =>
+                    new RemoteHostingClient().StartRemoteSiteAsync(settings.RemoteHostingUrl!, DecryptRemoteHostingApiKey(settings), site.Name, Environment.UserName));
+            }
+            else
+            {
+                await RunGuiActionAsync($"Starting IIS site '{site.Name}'", () =>
+                    new IisSiteManager(_output).StartSiteAsync(site.Name, Environment.UserName));
+            }
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show($"Couldn't start '{site.Name}': {ex.Message}", "PublishTool", MessageBoxButton.OK, MessageBoxImage.Error);
         }
 
         await RefreshIisStatusAsync();
@@ -655,19 +1035,63 @@ public partial class MainWindow : Wpf.Ui.Controls.FluentWindow
 
     private async void StopSiteButton_Click(object sender, RoutedEventArgs e)
     {
-        if (IisSitesDataGrid.SelectedItem is not IisSiteStatus site)
+        if (((FrameworkElement)sender).DataContext is not IisSiteStatus site)
         {
-            MessageBox.Show("Select a site first.", "PublishTool", MessageBoxButton.OK, MessageBoxImage.Warning);
             return;
         }
 
-        if (IsRemoteModeActive(out var settings))
+        try
         {
-            await new RemoteHostingClient().StopRemoteSiteAsync(settings.RemoteHostingUrl!, DecryptRemoteHostingApiKey(settings), site.Name);
+            if (IsRemoteModeActive(out var settings))
+            {
+                await RunGuiActionAsync($"Stopping IIS site '{site.Name}' on the dev server", () =>
+                    new RemoteHostingClient().StopRemoteSiteAsync(settings.RemoteHostingUrl!, DecryptRemoteHostingApiKey(settings), site.Name, Environment.UserName));
+            }
+            else
+            {
+                await RunGuiActionAsync($"Stopping IIS site '{site.Name}'", () =>
+                    new IisSiteManager(_output).StopSiteAsync(site.Name, Environment.UserName));
+            }
         }
-        else
+        catch (Exception ex)
         {
-            await RunAsync(new[] { "iis-stop-site", "--name", site.Name });
+            MessageBox.Show($"Couldn't stop '{site.Name}': {ex.Message}", "PublishTool", MessageBoxButton.OK, MessageBoxImage.Error);
+        }
+
+        await RefreshIisStatusAsync();
+    }
+
+    private async void RemoveSiteButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (((FrameworkElement)sender).DataContext is not IisSiteStatus site)
+        {
+            return;
+        }
+
+        var confirm = MessageBox.Show(
+            $"Remove IIS site '{site.Name}'? This also removes its dedicated application pool, if it has one (PublishTool always creates sites with a matching pool name). The site's files on disk are untouched.",
+            "PublishTool", MessageBoxButton.YesNo, MessageBoxImage.Warning);
+        if (confirm != MessageBoxResult.Yes)
+        {
+            return;
+        }
+
+        try
+        {
+            if (IsRemoteModeActive(out var settings))
+            {
+                await RunGuiActionAsync($"Removing IIS site '{site.Name}' on the dev server", () =>
+                    new RemoteHostingClient().DeleteRemoteSiteAsync(settings.RemoteHostingUrl!, DecryptRemoteHostingApiKey(settings), site.Name, Environment.UserName));
+            }
+            else
+            {
+                await RunGuiActionAsync($"Removing IIS site '{site.Name}'", () =>
+                    new IisSiteManager(_output).DeleteSiteAsync(site.Name, Environment.UserName));
+            }
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show($"Couldn't remove '{site.Name}': {ex.Message}", "PublishTool", MessageBoxButton.OK, MessageBoxImage.Error);
         }
 
         await RefreshIisStatusAsync();
@@ -675,13 +1099,20 @@ public partial class MainWindow : Wpf.Ui.Controls.FluentWindow
 
     private void BrowseSiteButton_Click(object sender, RoutedEventArgs e)
     {
-        if (IisSitesDataGrid.SelectedItem is not IisSiteStatus site)
+        if (((FrameworkElement)sender).DataContext is not IisSiteStatus site)
         {
-            MessageBox.Show("Select a site first.", "PublishTool", MessageBoxButton.OK, MessageBoxImage.Warning);
             return;
         }
 
-        var url = BuildBrowseUrl(site.Bindings);
+        // A wildcard/no-hostname binding is ambiguous -- "localhost" is right for this machine's
+        // own IIS, but wrong when the site being browsed lives on the *remote* dev server instead.
+        // Use the dev server's own hostname (its Remote Build Hosting URL, minus the port -- the
+        // site has its own port from its own binding) in that case.
+        var fallbackHost = IsRemoteModeActive(out var settings) && Uri.TryCreate(settings.RemoteHostingUrl, UriKind.Absolute, out var hostingUri)
+            ? hostingUri.Host
+            : "localhost";
+
+        var url = BuildBrowseUrl(site.Bindings, fallbackHost);
         if (url is null)
         {
             MessageBox.Show(
@@ -695,8 +1126,8 @@ public partial class MainWindow : Wpf.Ui.Controls.FluentWindow
 
     // Bindings come from appcmd as comma-separated "protocol/ip:port:hostname" segments (see
     // IisSiteManager.FormatBinding). Picks the first one -- good enough for "open this site" --
-    // and falls back to localhost when the binding's IP is "*" (all unassigned) with no hostname.
-    private static string? BuildBrowseUrl(string bindingsRaw)
+    // and falls back to fallbackHost when the binding's IP is "*" (all unassigned) with no hostname.
+    private static string? BuildBrowseUrl(string bindingsRaw, string fallbackHost)
     {
         var firstBinding = bindingsRaw.Split(',', StringSplitOptions.RemoveEmptyEntries).FirstOrDefault();
         if (firstBinding is null)
@@ -720,27 +1151,68 @@ public partial class MainWindow : Wpf.Ui.Controls.FluentWindow
         var port = addressParts[1];
         var hostname = addressParts.Length > 2 && !string.IsNullOrWhiteSpace(addressParts[2])
             ? addressParts[2]
-            : "localhost";
+            : fallbackHost;
 
         var isDefaultPort = (protocol == "http" && port == "80") || (protocol == "https" && port == "443");
         return isDefaultPort ? $"{protocol}://{hostname}/" : $"{protocol}://{hostname}:{port}/";
     }
 
-    private async void StartAppPoolButton_Click(object sender, RoutedEventArgs e)
+    private async void SiteHistoryButton_Click(object sender, RoutedEventArgs e)
     {
-        if (IisAppPoolsDataGrid.SelectedItem is not IisAppPoolStatus pool)
+        if (((FrameworkElement)sender).DataContext is not IisSiteStatus site)
         {
-            MessageBox.Show("Select an application pool first.", "PublishTool", MessageBoxButton.OK, MessageBoxImage.Warning);
             return;
         }
 
-        if (IsRemoteModeActive(out var settings))
+        try
         {
-            await new RemoteHostingClient().StartRemoteAppPoolAsync(settings.RemoteHostingUrl!, DecryptRemoteHostingApiKey(settings), pool.Name);
+            IReadOnlyList<SiteDeploymentRecord> history;
+            if (IsRemoteModeActive(out var settings))
+            {
+                history = await new RemoteHostingClient().GetRemoteSiteDeploymentHistoryAsync(
+                    settings.RemoteHostingUrl!, DecryptRemoteHostingApiKey(settings), site.Name);
+            }
+            else
+            {
+                history = await new IisSiteManager(_output).GetDeploymentHistoryAsync(site.Name);
+            }
+
+            _output.Info($"Opened deployment history for '{site.Name}' ({history.Count} entr{(history.Count == 1 ? "y" : "ies")}).");
+            new DeploymentHistoryDialog(site.Name, history) { Owner = this }.ShowDialog();
         }
-        else
+        catch (RemoteFeatureNotAvailableException ex)
         {
-            await RunAsync(new[] { "iis-start-apppool", "--name", pool.Name });
+            MessageBox.Show(ex.Message, "PublishTool", MessageBoxButton.OK, MessageBoxImage.Information);
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show($"Couldn't load deployment history: {ex.Message}", "PublishTool", MessageBoxButton.OK, MessageBoxImage.Error);
+        }
+    }
+
+    private async void StartAppPoolButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (((FrameworkElement)sender).DataContext is not IisAppPoolStatus pool)
+        {
+            return;
+        }
+
+        try
+        {
+            if (IsRemoteModeActive(out var settings))
+            {
+                await RunGuiActionAsync($"Starting application pool '{pool.Name}' on the dev server", () =>
+                    new RemoteHostingClient().StartRemoteAppPoolAsync(settings.RemoteHostingUrl!, DecryptRemoteHostingApiKey(settings), pool.Name, Environment.UserName));
+            }
+            else
+            {
+                await RunGuiActionAsync($"Starting application pool '{pool.Name}'", () =>
+                    new IisSiteManager(_output).StartAppPoolAsync(pool.Name, Environment.UserName));
+            }
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show($"Couldn't start '{pool.Name}': {ex.Message}", "PublishTool", MessageBoxButton.OK, MessageBoxImage.Error);
         }
 
         await RefreshIisStatusAsync();
@@ -748,19 +1220,27 @@ public partial class MainWindow : Wpf.Ui.Controls.FluentWindow
 
     private async void StopAppPoolButton_Click(object sender, RoutedEventArgs e)
     {
-        if (IisAppPoolsDataGrid.SelectedItem is not IisAppPoolStatus pool)
+        if (((FrameworkElement)sender).DataContext is not IisAppPoolStatus pool)
         {
-            MessageBox.Show("Select an application pool first.", "PublishTool", MessageBoxButton.OK, MessageBoxImage.Warning);
             return;
         }
 
-        if (IsRemoteModeActive(out var settings))
+        try
         {
-            await new RemoteHostingClient().StopRemoteAppPoolAsync(settings.RemoteHostingUrl!, DecryptRemoteHostingApiKey(settings), pool.Name);
+            if (IsRemoteModeActive(out var settings))
+            {
+                await RunGuiActionAsync($"Stopping application pool '{pool.Name}' on the dev server", () =>
+                    new RemoteHostingClient().StopRemoteAppPoolAsync(settings.RemoteHostingUrl!, DecryptRemoteHostingApiKey(settings), pool.Name, Environment.UserName));
+            }
+            else
+            {
+                await RunGuiActionAsync($"Stopping application pool '{pool.Name}'", () =>
+                    new IisSiteManager(_output).StopAppPoolAsync(pool.Name, Environment.UserName));
+            }
         }
-        else
+        catch (Exception ex)
         {
-            await RunAsync(new[] { "iis-stop-apppool", "--name", pool.Name });
+            MessageBox.Show($"Couldn't stop '{pool.Name}': {ex.Message}", "PublishTool", MessageBoxButton.OK, MessageBoxImage.Error);
         }
 
         await RefreshIisStatusAsync();
@@ -768,27 +1248,341 @@ public partial class MainWindow : Wpf.Ui.Controls.FluentWindow
 
     private async void RecycleAppPoolButton_Click(object sender, RoutedEventArgs e)
     {
-        if (IisAppPoolsDataGrid.SelectedItem is not IisAppPoolStatus pool)
+        if (((FrameworkElement)sender).DataContext is not IisAppPoolStatus pool)
         {
-            MessageBox.Show("Select an application pool first.", "PublishTool", MessageBoxButton.OK, MessageBoxImage.Warning);
             return;
         }
 
-        if (IsRemoteModeActive(out var settings))
+        try
         {
-            await new RemoteHostingClient().RecycleRemoteAppPoolAsync(settings.RemoteHostingUrl!, DecryptRemoteHostingApiKey(settings), pool.Name);
+            if (IsRemoteModeActive(out var settings))
+            {
+                await RunGuiActionAsync($"Recycling application pool '{pool.Name}' on the dev server", () =>
+                    new RemoteHostingClient().RecycleRemoteAppPoolAsync(settings.RemoteHostingUrl!, DecryptRemoteHostingApiKey(settings), pool.Name, Environment.UserName));
+            }
+            else
+            {
+                await RunGuiActionAsync($"Recycling application pool '{pool.Name}'", () =>
+                    new IisSiteManager(_output).RecycleAppPoolAsync(pool.Name, Environment.UserName));
+            }
         }
-        else
+        catch (Exception ex)
         {
-            await RunAsync(new[] { "iis-recycle-apppool", "--name", pool.Name });
+            MessageBox.Show($"Couldn't recycle '{pool.Name}': {ex.Message}", "PublishTool", MessageBoxButton.OK, MessageBoxImage.Error);
         }
 
         await RefreshIisStatusAsync();
     }
 
-    private async void RefreshProjectsButton_Click(object sender, RoutedEventArgs e) => await RefreshProjectsAsync();
+    private async void IisHistoryButton_Click(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            IReadOnlyList<IisAuditEntry> history;
+            if (IsRemoteModeActive(out var settings))
+            {
+                history = await new RemoteHostingClient().GetRemoteIisAuditAsync(settings.RemoteHostingUrl!, DecryptRemoteHostingApiKey(settings));
+            }
+            else
+            {
+                history = await new IisSiteManager(_output).GetAuditHistoryAsync();
+            }
 
-    private async Task RefreshProjectsAsync()
+            _output.Info($"Opened IIS audit trail ({history.Count} entr{(history.Count == 1 ? "y" : "ies")}).");
+            new IisAuditDialog(history) { Owner = this }.ShowDialog();
+        }
+        catch (RemoteFeatureNotAvailableException ex)
+        {
+            MessageBox.Show(ex.Message, "PublishTool", MessageBoxButton.OK, MessageBoxImage.Information);
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show($"Couldn't load the IIS audit trail: {ex.Message}", "PublishTool", MessageBoxButton.OK, MessageBoxImage.Error);
+        }
+    }
+
+    private async void ManualDeployButton_Click(object sender, RoutedEventArgs e)
+    {
+        var siteNames = (IisSitesDataGrid.ItemsSource as IEnumerable<IisSiteStatus>)?.Select(s => s.Name) ?? Enumerable.Empty<string>();
+        var preselected = (IisSitesDataGrid.SelectedItem as IisSiteStatus)?.Name;
+
+        var dialog = new ManualDeployDialog(siteNames, preselected, _output) { Owner = this };
+        if (dialog.ShowDialog() == true)
+        {
+            await RefreshIisStatusAsync();
+        }
+    }
+
+    private async void RefreshFirewallButton_Click(object sender, RoutedEventArgs e) => await RefreshFirewallStatusAsync();
+
+    private async void ShowAllFirewallRulesToggle_Toggled(object sender, RoutedEventArgs e) => await RefreshFirewallStatusAsync();
+
+    private async Task RefreshFirewallStatusAsync()
+    {
+        try
+        {
+            var includeAllRules = ShowAllFirewallRulesToggle.IsChecked == true;
+            if (IsRemoteModeActive(out var settings))
+            {
+                FirewallRulesDataGrid.ItemsSource = await new RemoteHostingClient().ListRemoteFirewallRulesAsync(
+                    settings.RemoteHostingUrl!, DecryptRemoteHostingApiKey(settings), includeAllRules);
+            }
+            else
+            {
+                FirewallRulesDataGrid.ItemsSource = await new FirewallManager(_output).ListRulesAsync(includeAllRules);
+            }
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(ex.Message, "PublishTool", MessageBoxButton.OK, MessageBoxImage.Warning);
+        }
+    }
+
+    private async void AddFirewallRuleButton_Click(object sender, RoutedEventArgs e)
+    {
+        var label = FirewallRuleLabelTextBox.Text?.Trim();
+        if (string.IsNullOrWhiteSpace(label))
+        {
+            MessageBox.Show("Enter a label for the rule first.", "PublishTool", MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
+        }
+
+        var ports = FirewallRulePortTextBox.Text?.Trim() ?? string.Empty;
+        try
+        {
+            FirewallManager.ValidatePortSpec(ports);
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(ex.Message, "PublishTool", MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
+        }
+
+        var protocol = (FirewallRuleProtocolComboBox.SelectedItem as ComboBoxItem)?.Content as string ?? "TCP";
+        var performedBy = Environment.UserName;
+
+        try
+        {
+            await RunGuiActionAsync($"Adding firewall rule '{label}'", () => IsRemoteModeActive(out var settings)
+                ? new RemoteHostingClient().AddRemoteFirewallRuleAsync(
+                    settings.RemoteHostingUrl!, DecryptRemoteHostingApiKey(settings), label, ports, protocol, performedBy)
+                : new FirewallManager(_output).AddInboundRuleAsync(label, ports, protocol, performedBy));
+
+            FirewallRuleLabelTextBox.Clear();
+            FirewallRulePortTextBox.Clear();
+            await RefreshFirewallStatusAsync();
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show($"Couldn't add the firewall rule: {ex.Message}", "PublishTool", MessageBoxButton.OK, MessageBoxImage.Error);
+        }
+    }
+
+    /// <summary>True (and shows the guard message) for a row that isn't one of PublishTool's own
+    /// rules -- only reachable when "Show all rules" is on, since the grid is filtered otherwise.</summary>
+    private static bool WarnIfNotOwnRule(FirewallRuleStatus rule)
+    {
+        if (rule.Name.StartsWith(FirewallManager.RuleNamePrefix, StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        MessageBox.Show(
+            "Only rules PublishTool created can be edited/removed here.",
+            "PublishTool", MessageBoxButton.OK, MessageBoxImage.Warning);
+        return true;
+    }
+
+    private async void EditFirewallRuleButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (FirewallRulesDataGrid.SelectedItem is not FirewallRuleStatus rule)
+        {
+            MessageBox.Show("Select a rule first.", "PublishTool", MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
+        }
+
+        if (WarnIfNotOwnRule(rule))
+        {
+            return;
+        }
+
+        var currentLabel = rule.Name[FirewallManager.RuleNamePrefix.Length..];
+        var dialog = new EditFirewallRuleDialog(currentLabel, rule.Port, rule.Protocol) { Owner = this };
+        if (dialog.ShowDialog() != true)
+        {
+            return;
+        }
+
+        var performedBy = Environment.UserName;
+        try
+        {
+            await RunGuiActionAsync($"Updating firewall rule '{rule.Name}'", () => IsRemoteModeActive(out var settings)
+                ? new RemoteHostingClient().EditRemoteFirewallRuleAsync(
+                    settings.RemoteHostingUrl!, DecryptRemoteHostingApiKey(settings),
+                    rule.Name, dialog.Label, dialog.Ports, dialog.Protocol, performedBy)
+                : new FirewallManager(_output).EditRuleAsync(rule.Name, dialog.Label, dialog.Ports, dialog.Protocol, performedBy));
+
+            await RefreshFirewallStatusAsync();
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show($"Couldn't update the firewall rule: {ex.Message}", "PublishTool", MessageBoxButton.OK, MessageBoxImage.Error);
+        }
+    }
+
+    private async void RemoveFirewallRuleButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (FirewallRulesDataGrid.SelectedItem is not FirewallRuleStatus rule)
+        {
+            MessageBox.Show("Select a rule first.", "PublishTool", MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
+        }
+
+        if (WarnIfNotOwnRule(rule))
+        {
+            return;
+        }
+
+        var confirm = MessageBox.Show(
+            $"Remove the firewall rule '{rule.Name}'? Anything relying on that port being open from outside will stop being reachable.",
+            "PublishTool", MessageBoxButton.YesNo, MessageBoxImage.Question);
+        if (confirm != MessageBoxResult.Yes)
+        {
+            return;
+        }
+
+        var performedBy = Environment.UserName;
+        try
+        {
+            await RunGuiActionAsync($"Removing firewall rule '{rule.Name}'", () => IsRemoteModeActive(out var settings)
+                ? new RemoteHostingClient().DeleteRemoteFirewallRuleAsync(
+                    settings.RemoteHostingUrl!, DecryptRemoteHostingApiKey(settings), rule.Name, performedBy)
+                : new FirewallManager(_output).DeleteRuleAsync(rule.Name, performedBy));
+
+            await RefreshFirewallStatusAsync();
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show($"Couldn't remove the firewall rule: {ex.Message}", "PublishTool", MessageBoxButton.OK, MessageBoxImage.Error);
+        }
+    }
+
+    private async void FirewallHistoryButton_Click(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            IReadOnlyList<FirewallAuditEntry> history;
+            if (IsRemoteModeActive(out var settings))
+            {
+                history = await new RemoteHostingClient().GetRemoteFirewallAuditAsync(settings.RemoteHostingUrl!, DecryptRemoteHostingApiKey(settings));
+            }
+            else
+            {
+                history = await new FirewallManager(_output).GetAuditHistoryAsync();
+            }
+
+            _output.Info($"Opened firewall audit trail ({history.Count} entr{(history.Count == 1 ? "y" : "ies")}).");
+            new FirewallAuditDialog(history) { Owner = this }.ShowDialog();
+        }
+        catch (RemoteFeatureNotAvailableException ex)
+        {
+            MessageBox.Show(ex.Message, "PublishTool", MessageBoxButton.OK, MessageBoxImage.Information);
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show($"Couldn't load the firewall audit trail: {ex.Message}", "PublishTool", MessageBoxButton.OK, MessageBoxImage.Error);
+        }
+    }
+
+    private async void ProjectHistoryButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (RegisteredProjectsListBox.SelectedItem is not ProjectConfig project)
+        {
+            MessageBox.Show("Select a project in the list first.", "PublishTool", MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
+        }
+
+        await ShowProjectAuditDialogAsync(project.Name);
+    }
+
+    private async void AllProjectsHistoryButton_Click(object sender, RoutedEventArgs e) => await ShowProjectAuditDialogAsync(projectNameFilter: null);
+
+    private async Task ShowProjectAuditDialogAsync(string? projectNameFilter)
+    {
+        try
+        {
+            IReadOnlyList<ProjectAuditEntry> history;
+            if (IsRemoteModeActive(out var settings))
+            {
+                history = await new RemoteHostingClient().GetRemoteProjectAuditAsync(settings.RemoteHostingUrl!, DecryptRemoteHostingApiKey(settings));
+            }
+            else
+            {
+                history = await new ProjectAuditStore().GetHistoryAsync(ProjectAuditStore.DefaultRoot);
+            }
+
+            _output.Info(projectNameFilter is null
+                ? $"Opened project audit trail ({history.Count} entr{(history.Count == 1 ? "y" : "ies")})."
+                : $"Opened audit trail for '{projectNameFilter}' ({history.Count(e => string.Equals(e.ProjectName, projectNameFilter, StringComparison.OrdinalIgnoreCase))} entries).");
+            new ProjectAuditDialog(history, projectNameFilter) { Owner = this }.ShowDialog();
+        }
+        catch (RemoteFeatureNotAvailableException ex)
+        {
+            MessageBox.Show(ex.Message, "PublishTool", MessageBoxButton.OK, MessageBoxImage.Information);
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show($"Couldn't load the project audit trail: {ex.Message}", "PublishTool", MessageBoxButton.OK, MessageBoxImage.Error);
+        }
+    }
+
+    /// <summary>Best-effort, fire-and-forget from the caller's perspective -- mirrors
+    /// <see cref="FirewallManager"/>'s own <c>TryRecordAuditAsync</c> philosophy: never fail (or
+    /// even visibly interrupt) an otherwise-successful project action just because logging it
+    /// didn't work. Unlike the Firewall/deployment audit trails, there's no Core service class
+    /// wrapping a real mutation to hang this off of -- these are GUI-level actions (add/remove/edit
+    /// a project, publish, deploy an existing build, delete a build, mark one latest), so this is
+    /// called directly from each action's own success path instead.</summary>
+    private async Task RecordProjectAuditAsync(string action, string projectName, string? details = null)
+    {
+        var entry = new ProjectAuditEntry
+        {
+            Action = action,
+            ProjectName = projectName,
+            Details = details,
+            PerformedAtUtc = DateTimeOffset.UtcNow,
+            PerformedBy = Environment.UserName,
+        };
+
+        try
+        {
+            if (IsRemoteModeActive(out var settings))
+            {
+                await new RemoteHostingClient().RecordRemoteProjectAuditAsync(settings.RemoteHostingUrl!, DecryptRemoteHostingApiKey(settings), entry);
+            }
+            else
+            {
+                await new ProjectAuditStore().AppendAsync(ProjectAuditStore.DefaultRoot, entry);
+            }
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _output.Warn($"'{projectName}': {action} succeeded, but couldn't record it in the project audit trail: {ex.Message}");
+        }
+    }
+
+    private async void RefreshProjectsButton_Click(object sender, RoutedEventArgs e) => await RefreshProjectsAsync(forceReloadSelectedProject: true);
+
+    private async void RefreshRegisteredProjectsButton_Click(object sender, RoutedEventArgs e) => await RefreshProjectsAsync(forceReloadSelectedProject: true);
+
+    /// <param name="forceReloadSelectedProject">Every call site reloads the project name/list
+    /// controls themselves, but by default leaves the Publish tab's App Config grid and deploy
+    /// target options alone if the same project is still selected afterward -- otherwise the
+    /// silent re-selection this causes after every command (see below) would wipe out App Config
+    /// edits or release notes someone's still typing. Explicit user-clicked refresh buttons pass
+    /// true instead, since the whole point of clicking one is to pick up a teammate's changes to
+    /// the currently-selected project too, not just notice a project that's new or gone.</param>
+    private async Task RefreshProjectsAsync(bool forceReloadSelectedProject = false)
     {
         var registry = ProjectRegistryFactory.Create();
         var projects = await registry.GetProjectsAsync();
@@ -800,7 +1594,12 @@ public partial class MainWindow : Wpf.Ui.Controls.FluentWindow
             ProjectComboBox.SelectedItem = selectedInCombo;
         }
 
+        var selectedInList = (RegisteredProjectsListBox.SelectedItem as ProjectConfig)?.Name;
         RegisteredProjectsListBox.ItemsSource = projects;
+        if (selectedInList is not null)
+        {
+            RegisteredProjectsListBox.SelectedItem = projects.FirstOrDefault(p => string.Equals(p.Name, selectedInList, StringComparison.OrdinalIgnoreCase));
+        }
 
         // All projects, not just ones with Event Logs already enabled -- filtering the list down
         // used to leave this combo silently empty with no explanation for anyone who hadn't yet
@@ -811,6 +1610,12 @@ public partial class MainWindow : Wpf.Ui.Controls.FluentWindow
         if (selectedInEventLogCombo is not null)
         {
             EventLogProjectComboBox.SelectedItem = selectedInEventLogCombo;
+        }
+
+        if (forceReloadSelectedProject && selectedInCombo is not null)
+        {
+            await LoadAppConfigForSelectedProjectAsync();
+            await LoadDeployTargetOptionsForSelectedProjectAsync();
         }
     }
 
@@ -833,6 +1638,7 @@ public partial class MainWindow : Wpf.Ui.Controls.FluentWindow
             FixesEditor.Clear();
             OtherUpdatesEditor.Clear();
             BacklogItemsEditor.Clear();
+            ListInHostingToggle.IsChecked = true;
             await LoadAppConfigForSelectedProjectAsync();
             await LoadDeployTargetOptionsForSelectedProjectAsync();
         }
@@ -848,6 +1654,16 @@ public partial class MainWindow : Wpf.Ui.Controls.FluentWindow
     {
         var projectName = ProjectComboBox.SelectedItem as string;
         var project = string.IsNullOrWhiteSpace(projectName) ? null : await ProjectRegistryFactory.Create().GetAsync(projectName);
+
+        // Build variant/artifact type only mean anything for Android -- reset to their defaults
+        // every time the selected project changes, same reasoning as ListInHostingToggle above.
+        var isAndroid = project?.ProjectType == ProjectType.Android;
+        AndroidBuildOptionsPanel.Visibility = isAndroid ? Visibility.Visible : Visibility.Collapsed;
+        AndroidArtifactTypeComboBox.SelectedIndex = 0;
+        AndroidBuildVariantComboBox.IsEnabled = true;
+        AndroidBuildVariantComboBox.SelectedIndex = 0;
+
+        await LoadAndroidConfigForSelectedProjectAsync(isAndroid ? project : null);
 
         var targets = new List<string>();
         if (project?.LocalIisEnabled == true)
@@ -865,17 +1681,102 @@ public partial class MainWindow : Wpf.Ui.Controls.FluentWindow
             DeploySelectionPanel.Visibility = Visibility.Collapsed;
             DeployTargetComboBox.ItemsSource = null;
             DeployEnvironmentComboBox.ItemsSource = null;
+            UpdateLocalDeployElevationWarning();
             return;
         }
 
         DeploySelectionPanel.Visibility = Visibility.Visible;
         DeployTargetComboBox.ItemsSource = targets;
         DeployTargetComboBox.SelectedIndex = 0;
+        UpdateLocalDeployElevationWarning();
         await PopulateDeployEnvironmentComboBoxAsync();
     }
 
-    private async void DeployTargetComboBox_SelectionChanged(object sender, System.Windows.Controls.SelectionChangedEventArgs e) =>
+    private async void DeployTargetComboBox_SelectionChanged(object sender, System.Windows.Controls.SelectionChangedEventArgs e)
+    {
+        UpdateLocalDeployElevationWarning();
         await PopulateDeployEnvironmentComboBoxAsync();
+    }
+
+    /// <summary>A "Local" deploy target always deploys to this machine's own IIS regardless of
+    /// whether remote mode is globally on -- a project can have both a Local and a Remote
+    /// environment, and picking Local here always needs this machine elevated, independent of
+    /// <see cref="UpdateElevationBanner"/> above.</summary>
+    private void UpdateLocalDeployElevationWarning()
+    {
+        var isLocalTarget = string.Equals(DeployTargetComboBox.SelectedItem as string, "Local", StringComparison.OrdinalIgnoreCase);
+        LocalDeployElevationInfoBar.IsOpen = isLocalTarget && !IsRunningAsAdministrator();
+    }
+
+    /// <summary>An AAB upload only ever makes sense as a release artifact -- Play Store doesn't
+    /// take debug bundles -- so picking AAB pins the variant to "release" and locks the control;
+    /// picking APK (which supports either) unlocks it again.</summary>
+    private void AndroidArtifactTypeComboBox_SelectionChanged(object sender, System.Windows.Controls.SelectionChangedEventArgs e)
+    {
+        if (AndroidBuildVariantComboBox is null)
+        {
+            // Fires during InitializeComponent itself -- AndroidArtifactTypeComboBox's SelectedIndex="0"
+            // in XAML raises SelectionChanged as soon as it's parsed, which is before
+            // AndroidBuildVariantComboBox (declared later in the same panel) has been assigned yet.
+            return;
+        }
+
+        var isAab = (AndroidArtifactTypeComboBox.SelectedItem as ComboBoxItem)?.Tag as string == "Aab";
+        if (isAab)
+        {
+            AndroidBuildVariantComboBox.SelectedIndex = 0; // "release"
+        }
+
+        AndroidBuildVariantComboBox.IsEnabled = !isAab;
+    }
+
+    /// <summary>Populates the Publish tab's "Android Config" accordion by reading whatever the
+    /// detected Capacitor/Cordova wrapper's own files currently say -- best-effort, so a field
+    /// PublishTool couldn't find just comes back blank (left untouched on publish) rather than
+    /// blocking anything. Hidden entirely for non-Android projects.</summary>
+    private async Task LoadAndroidConfigForSelectedProjectAsync(ProjectConfig? project)
+    {
+        var rootPath = project?.Android?.ProjectRootPath;
+        if (string.IsNullOrWhiteSpace(rootPath))
+        {
+            AndroidConfigExpander.Visibility = Visibility.Collapsed;
+            AndroidBundleIdTextBox.Text = string.Empty;
+            AndroidDisplayNameTextBox.Text = string.Empty;
+            AndroidVersionNumberTextBox.Text = string.Empty;
+            AndroidBuildNumberTextBox.Text = string.Empty;
+            return;
+        }
+
+        AndroidConfigExpander.Visibility = Visibility.Visible;
+
+        var metadata = await Task.Run(() => AndroidWrapperStrategyRegistry.Detect(rootPath)?.ReadAppMetadata(rootPath));
+        AndroidBundleIdTextBox.Text = metadata?.BundleId ?? string.Empty;
+        AndroidDisplayNameTextBox.Text = metadata?.DisplayName ?? string.Empty;
+        AndroidVersionNumberTextBox.Text = metadata?.VersionNumber ?? string.Empty;
+        AndroidBuildNumberTextBox.Text = metadata?.BuildNumber ?? string.Empty;
+    }
+
+    /// <summary>Synchronous counterpart to <see cref="LoadDeployTargetOptionsForSelectedProjectAsync"/>
+    /// for the Projects tab, which already has the full <see cref="ProjectConfig"/> in hand (no
+    /// need to reload it). Applies the identical two gating conditions -- Local always available
+    /// when enabled, Remote only when enabled *and* remote mode is on -- so a project's "Deploy
+    /// this version" button (gated on this being non-empty) never offers a target the Publish tab
+    /// itself wouldn't.</summary>
+    private static IReadOnlyDictionary<string, IReadOnlyList<string>> GetAvailableDeployTargets(ProjectConfig project)
+    {
+        var targets = new Dictionary<string, IReadOnlyList<string>>();
+        if (project.LocalIisEnabled)
+        {
+            targets["Local"] = project.LocalEnvironments.Select(env => env.Name).ToList();
+        }
+
+        if (project.RemoteIisEnabled && AppSettings.Load(AppSettings.DefaultPath).UseRemoteMode)
+        {
+            targets["Remote"] = project.RemoteEnvironments.Select(env => env.Name).ToList();
+        }
+
+        return targets;
+    }
 
     /// <summary>Populates the "Deploy to" select with the environment names configured on whichever
     /// side "Deploy target" currently has selected, defaulting to the Settings-tab default
@@ -919,6 +1820,9 @@ public partial class MainWindow : Wpf.Ui.Controls.FluentWindow
     private async Task LoadAppConfigForSelectedProjectAsync()
     {
         _appConfigSettings.Clear();
+        _resolvedAppConfigPath = null;
+        AppConfigCandidatePanel.Visibility = Visibility.Collapsed;
+        AppConfigCandidatePathComboBox.ItemsSource = null;
 
         var projectName = ProjectComboBox.SelectedItem as string;
         var project = string.IsNullOrWhiteSpace(projectName) ? null : await ProjectRegistryFactory.Create().GetAsync(projectName);
@@ -930,16 +1834,71 @@ public partial class MainWindow : Wpf.Ui.Controls.FluentWindow
         }
 
         AppConfigExpander.Visibility = Visibility.Visible;
-        AppConfigDescriptionTextBlock.Text = $"Editing {provider.DisplayName} at {project.AppConfigPath}";
 
-        if (string.IsNullOrWhiteSpace(project.AppConfigPath) || !File.Exists(project.AppConfigPath))
+        if (!string.IsNullOrWhiteSpace(project.AppConfigPath))
+        {
+            AppConfigDescriptionTextBlock.Text = $"Editing {provider.DisplayName} at {project.AppConfigPath}";
+            await LoadAppConfigSettingsFromPathAsync(provider, project.AppConfigPath);
+            return;
+        }
+
+        // No fixed path on the project -- look for one automatically under its own source root,
+        // same search Publisher itself falls back to (see Publisher.ResolveAppConfigPath).
+        var sourceRoot = string.IsNullOrWhiteSpace(project.SourceRootPath) ? null : Path.GetDirectoryName(project.SourceRootPath);
+        var candidates = string.IsNullOrWhiteSpace(sourceRoot) ? Array.Empty<string>() : provider.FindCandidateConfigPaths(sourceRoot).ToArray();
+
+        if (candidates.Length == 0)
+        {
+            AppConfigDescriptionTextBlock.Text =
+                $"No {provider.DisplayName} file found automatically under this project's folder -- " +
+                "set a path in the project's Edit dialog, or make sure the file exists there.";
+            return;
+        }
+
+        if (candidates.Length == 1)
+        {
+            AppConfigDescriptionTextBlock.Text = $"Editing {provider.DisplayName} at {candidates[0]} (found automatically)";
+            _resolvedAppConfigPath = candidates[0];
+            await LoadAppConfigSettingsFromPathAsync(provider, candidates[0]);
+            return;
+        }
+
+        AppConfigDescriptionTextBlock.Text = $"Found more than one {provider.DisplayName} file -- pick which one to edit for this publish:";
+        AppConfigCandidatePanel.Visibility = Visibility.Visible;
+        AppConfigCandidatePathComboBox.ItemsSource = candidates;
+        AppConfigCandidatePathComboBox.SelectedIndex = 0;
+    }
+
+    private async void AppConfigCandidatePathComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (AppConfigCandidatePathComboBox.SelectedItem is not string path)
+        {
+            return;
+        }
+
+        _resolvedAppConfigPath = path;
+
+        var projectName = ProjectComboBox.SelectedItem as string;
+        var project = string.IsNullOrWhiteSpace(projectName) ? null : await ProjectRegistryFactory.Create().GetAsync(projectName);
+        if (project is null || AppConfigProviderRegistry.Get(project.AppConfigType) is not { } provider)
+        {
+            return;
+        }
+
+        await LoadAppConfigSettingsFromPathAsync(provider, path);
+    }
+
+    private async Task LoadAppConfigSettingsFromPathAsync(IAppConfigProvider provider, string path)
+    {
+        _appConfigSettings.Clear();
+        if (!File.Exists(path))
         {
             return;
         }
 
         try
         {
-            foreach (var (key, value) in provider.ReadSettings(project.AppConfigPath))
+            foreach (var (key, value) in provider.ReadSettings(path))
             {
                 _appConfigSettings.Add(new AppConfigSettingRow { Key = key, Value = value });
             }
@@ -1020,7 +1979,7 @@ public partial class MainWindow : Wpf.Ui.Controls.FluentWindow
 
         var registry = ProjectRegistryFactory.Create();
         var project = await registry.GetAsync(projectName);
-        if (project is null)
+        if (project is null || string.IsNullOrWhiteSpace(project.SourceRootPath))
         {
             return;
         }
@@ -1028,7 +1987,7 @@ public partial class MainWindow : Wpf.Ui.Controls.FluentWindow
         GitBranchInfo? info;
         try
         {
-            info = await new GitService(_output).ListBranchesAsync(project.CsprojPath);
+            info = await new GitService(_output).ListBranchesAsync(project.SourceRootPath);
         }
         catch
         {
@@ -1111,12 +2070,20 @@ public partial class MainWindow : Wpf.Ui.Controls.FluentWindow
 
     private async Task CheckoutBranchAsync(ProjectConfig project, string branch)
     {
+        if (string.IsNullOrWhiteSpace(project.SourceRootPath))
+        {
+            MessageBox.Show(
+                $"'{project.Name}' has no project source configured -- set one in the project's Edit dialog first.",
+                "PublishTool", MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
+        }
+
         var git = new GitService(_output);
 
         // No-op if we're already there -- CheckoutAsync would also catch this, but checking here
         // first avoids bothering the user with the uncommitted-changes prompt below for a checkout
         // that isn't actually going to change anything.
-        var currentBranch = await git.GetCurrentBranchAsync(project.CsprojPath);
+        var currentBranch = await git.GetCurrentBranchAsync(project.SourceRootPath);
         if (string.Equals(currentBranch, branch, StringComparison.OrdinalIgnoreCase))
         {
             _output.Info($"Already on branch '{branch}'.");
@@ -1129,7 +2096,7 @@ public partial class MainWindow : Wpf.Ui.Controls.FluentWindow
         IReadOnlyList<string> uncommittedFiles;
         try
         {
-            uncommittedFiles = await git.GetUncommittedChangesAsync(project.CsprojPath);
+            uncommittedFiles = await git.GetUncommittedChangesAsync(project.SourceRootPath);
         }
         catch (Exception ex)
         {
@@ -1158,7 +2125,7 @@ public partial class MainWindow : Wpf.Ui.Controls.FluentWindow
 
         try
         {
-            await git.CheckoutAsync(project.CsprojPath, branch);
+            await git.CheckoutAsync(project.SourceRootPath, branch);
             _output.Stage("Checkout complete.");
             return;
         }
@@ -1181,7 +2148,7 @@ public partial class MainWindow : Wpf.Ui.Controls.FluentWindow
 
             try
             {
-                await git.CheckoutAsync(project.CsprojPath, branch);
+                await git.CheckoutAsync(project.SourceRootPath, branch);
                 _output.Stage("Checkout complete.");
             }
             catch (Exception ex)
@@ -1197,7 +2164,9 @@ public partial class MainWindow : Wpf.Ui.Controls.FluentWindow
 
     /// <summary>Applies a Discard/Stash/Commit resolution chosen in <see cref="GitConflictDialog"/>
     /// to exactly the given files. Returns false (having already logged the error) on failure, so
-    /// callers can bail out of whatever checkout attempt was waiting on it.</summary>
+    /// callers can bail out of whatever checkout attempt was waiting on it. Only ever called from
+    /// <see cref="CheckoutBranchAsync"/>, which has already confirmed <paramref name="project"/>
+    /// has a project source configured before it does any of this.</summary>
     private async Task<bool> ApplyGitResolutionAsync(
         GitService git, ProjectConfig project, string branch, GitConflictResolution resolution, IReadOnlyList<string> files, string commitMessage)
     {
@@ -1206,13 +2175,13 @@ public partial class MainWindow : Wpf.Ui.Controls.FluentWindow
             switch (resolution)
             {
                 case GitConflictResolution.Discard:
-                    await git.DiscardChangesAsync(project.CsprojPath, files);
+                    await git.DiscardChangesAsync(project.SourceRootPath!, files);
                     break;
                 case GitConflictResolution.Stash:
-                    await git.StashChangesAsync(project.CsprojPath, files, $"PublishTool: before checkout to {branch}");
+                    await git.StashChangesAsync(project.SourceRootPath!, files, $"PublishTool: before checkout to {branch}");
                     break;
                 case GitConflictResolution.Commit:
-                    await git.CommitChangesAsync(project.CsprojPath, files, commitMessage);
+                    await git.CommitChangesAsync(project.SourceRootPath!, files, commitMessage);
                     break;
             }
 
@@ -1402,10 +2371,14 @@ public partial class MainWindow : Wpf.Ui.Controls.FluentWindow
             args.Add(branch);
         }
 
+        string? publishDeployTarget = null;
+        string? publishDeployEnvironment = null;
         if (DeploySelectionPanel.Visibility == Visibility.Visible &&
             DeployTargetComboBox.SelectedItem is string deployTarget &&
             DeployEnvironmentComboBox.SelectedItem is string deployEnvironment)
         {
+            publishDeployTarget = deployTarget;
+            publishDeployEnvironment = deployEnvironment;
             args.Add("--deploy-target");
             args.Add(deployTarget.ToLowerInvariant());
             args.Add("--environment");
@@ -1422,8 +2395,66 @@ public partial class MainWindow : Wpf.Ui.Controls.FluentWindow
             args.Add("--mark-latest");
         }
 
+        if (ListInHostingToggle.IsChecked != true)
+        {
+            args.Add("--list-in-hosting");
+            args.Add("false");
+        }
+
+        if (AndroidBuildOptionsPanel.Visibility == Visibility.Visible)
+        {
+            var variant = (AndroidBuildVariantComboBox.SelectedItem as ComboBoxItem)?.Content as string ?? "release";
+            args.Add("--android-build-variant");
+            args.Add(variant);
+
+            var artifactType = (AndroidArtifactTypeComboBox.SelectedItem as ComboBoxItem)?.Tag as string ?? "Apk";
+            args.Add("--android-artifact-type");
+            args.Add(artifactType.ToLowerInvariant());
+
+            if (variant.Contains("release", StringComparison.OrdinalIgnoreCase)
+                && !await EnsureAndroidSigningConfiguredAsync(project))
+            {
+                return;
+            }
+        }
+
+        if (AndroidConfigExpander.Visibility == Visibility.Visible)
+        {
+            void AddIfSet(string flag, string text)
+            {
+                if (!string.IsNullOrWhiteSpace(text))
+                {
+                    args.Add(flag);
+                    args.Add(text.Trim());
+                }
+            }
+
+            AddIfSet("--android-bundle-id", AndroidBundleIdTextBox.Text);
+            AddIfSet("--android-display-name", AndroidDisplayNameTextBox.Text);
+            AddIfSet("--android-version-number", AndroidVersionNumberTextBox.Text);
+            AddIfSet("--android-build-number", AndroidBuildNumberTextBox.Text);
+        }
+
         if (AppConfigExpander.Visibility == Visibility.Visible)
         {
+            // A cell/row still mid-edit (user typed a new value and clicked Publish directly,
+            // without tabbing or clicking elsewhere first) hasn't been pushed into the bound
+            // AppConfigSettingRow yet at this point -- CommitEdit needs calling twice (cell, then
+            // row) to flush both levels before _appConfigSettings is read below, or the edit is
+            // silently lost and the build publishes with the previous value.
+            AppConfigDataGrid.CommitEdit(DataGridEditingUnit.Cell, true);
+            AppConfigDataGrid.CommitEdit(DataGridEditingUnit.Row, true);
+
+            // Only set when the config path was found automatically (no fixed AppConfigPath on
+            // the project) -- see LoadAppConfigForSelectedProjectAsync. Passing it explicitly
+            // guarantees Publish writes to exactly the file shown here, not a fresh (and possibly
+            // different, if the search is ambiguous) auto-discovery result of its own.
+            if (_resolvedAppConfigPath is not null)
+            {
+                args.Add("--app-config-path");
+                args.Add(_resolvedAppConfigPath);
+            }
+
             foreach (var row in _appConfigSettings)
             {
                 if (string.IsNullOrWhiteSpace(row.Key))
@@ -1437,7 +2468,54 @@ public partial class MainWindow : Wpf.Ui.Controls.FluentWindow
         }
 
         await RunAsync(args.ToArray());
+
+        var publishDetails = publishDeployTarget is not null && publishDeployEnvironment is not null
+            ? $"v{version} -> {publishDeployTarget}/{publishDeployEnvironment}"
+            : $"v{version}";
+        await RecordProjectAuditAsync("Published", project, publishDetails);
+
         await LoadVersionsForSelectedProjectAsync();
+    }
+
+    /// <summary>A release-shaped Android publish needs a keystore -- if the project already has
+    /// one saved (see ProjectEditDialog's Android signing section), there's nothing to do here.
+    /// Otherwise, prompts once via the same <see cref="AndroidSigningDialog"/> used there and saves
+    /// whatever the user enters back to the project before the build runs, so it's there next time
+    /// too. Explicitly leaving all four fields blank (Clear) is a valid choice -- it means "sign
+    /// with the native project's own signingConfig, if any" -- only Cancel aborts the publish.
+    /// Returns false when the publish should be aborted.</summary>
+    private async Task<bool> EnsureAndroidSigningConfiguredAsync(string projectName)
+    {
+        var registry = ProjectRegistryFactory.Create();
+        var project = await registry.GetAsync(projectName);
+        if (project?.Android is null || !string.IsNullOrWhiteSpace(project.Android.KeystorePath))
+        {
+            return true;
+        }
+
+        var dialog = new AndroidSigningDialog(null, null, null, null) { Owner = this };
+        if (dialog.ShowDialog() != true)
+        {
+            return false;
+        }
+
+        if (!dialog.WasCleared)
+        {
+#pragma warning disable CA1416 // DPAPI is Windows-only; this whole GUI only ever runs on Windows.
+            project.Android.KeystorePath = dialog.KeystorePath;
+            project.Android.KeyAlias = dialog.KeyAlias;
+            project.Android.ProtectedKeystorePassword = dialog.KeystorePassword is { } keystorePassword
+                ? SecretProtector.Protect(keystorePassword, SecretProtector.AndroidSigningPurpose)
+                : null;
+            project.Android.ProtectedKeyPassword = dialog.KeyPassword is { } keyPassword
+                ? SecretProtector.Protect(keyPassword, SecretProtector.AndroidSigningPurpose)
+                : null;
+#pragma warning restore CA1416
+            await registry.AddOrUpdateAsync(project);
+            _output.Info($"Saved Android signing configuration for '{projectName}'.");
+        }
+
+        return true;
     }
 
     private async void AddProjectButton_Click(object sender, RoutedEventArgs e)
@@ -1446,6 +2524,8 @@ public partial class MainWindow : Wpf.Ui.Controls.FluentWindow
         var dialog = new ProjectEditDialog(null, remoteMode) { Owner = this };
         if (dialog.ShowDialog() == true)
         {
+            _output.Info($"Added project '{dialog.SavedProjectName}'.");
+            await RecordProjectAuditAsync("Added", dialog.SavedProjectName!);
             await RefreshProjectsAsync();
         }
     }
@@ -1462,6 +2542,8 @@ public partial class MainWindow : Wpf.Ui.Controls.FluentWindow
         var dialog = new ProjectEditDialog(project, remoteMode) { Owner = this };
         if (dialog.ShowDialog() == true)
         {
+            _output.Info($"Saved changes to project '{dialog.SavedProjectName}'.");
+            await RecordProjectAuditAsync("Settings Updated", dialog.SavedProjectName!);
             await RefreshProjectsAsync();
         }
     }
@@ -1490,6 +2572,7 @@ public partial class MainWindow : Wpf.Ui.Controls.FluentWindow
         }
 
         await RunAsync(new[] { "remove-project", "--name", project.Name });
+        await RecordProjectAuditAsync("Removed", project.Name);
         await RefreshProjectsAsync();
     }
 
@@ -1513,6 +2596,7 @@ public partial class MainWindow : Wpf.Ui.Controls.FluentWindow
         try
         {
             List<BuildHistoryRow> rows;
+            var canDeploy = GetAvailableDeployTargets(project).Count > 0;
 
             if (IsRemoteModeActive(out var settings))
             {
@@ -1526,6 +2610,8 @@ public partial class MainWindow : Wpf.Ui.Controls.FluentWindow
                     IsLatest = b.IsLatest,
                     ListInHosting = b.ListInHosting,
                     RemoteManifestPath = b.ManifestPath,
+                    RemoteZipPath = b.ZipPath,
+                    CanDeploy = canDeploy,
                 }).ToList();
             }
             else
@@ -1541,6 +2627,7 @@ public partial class MainWindow : Wpf.Ui.Controls.FluentWindow
                     ListInHosting = b.Manifest.ListInHosting,
                     ManifestPath = b.ManifestPath,
                     ZipPath = b.Manifest.ZipPath,
+                    CanDeploy = canDeploy,
                 }).ToList();
             }
 
@@ -1565,60 +2652,73 @@ public partial class MainWindow : Wpf.Ui.Controls.FluentWindow
             return;
         }
 
-        var iisEnabled = row.IsRemote ? project.RemoteIisEnabled : project.LocalIisEnabled;
-        if (!iisEnabled)
+        var targets = GetAvailableDeployTargets(project);
+        if (targets.Count == 0)
         {
             MessageBox.Show(
-                $"{(row.IsRemote ? "Remote" : "Local")} IIS isn't enabled for '{project.Name}' -- turn it on in the project's Edit dialog first.",
+                $"Neither Local nor Remote IIS is enabled for '{project.Name}' -- turn one on in the project's Edit dialog first.",
                 "PublishTool", MessageBoxButton.OK, MessageBoxImage.Warning);
             return;
         }
 
-        var environments = row.IsRemote ? project.RemoteEnvironments : project.LocalEnvironments;
-        if (environments.Count == 0)
+        string target;
+        string environmentName;
+        if (targets.Count == 1 && targets.Values.First().Count == 1)
         {
-            MessageBox.Show(
-                $"'{project.Name}' has no {(row.IsRemote ? "dev-server" : "local")} environments configured -- add one in the project's Edit dialog first.",
-                "PublishTool", MessageBoxButton.OK, MessageBoxImage.Warning);
-            return;
-        }
-
-        DeploymentEnvironment environment;
-        if (environments.Count == 1)
-        {
-            environment = environments[0];
+            target = targets.Keys.First();
+            environmentName = targets.Values.First()[0];
         }
         else
         {
-            var picker = new EnvironmentPickerDialog(project.Name, row.Version, environments.Select(env => env.Name).ToList()) { Owner = this };
-            if (picker.ShowDialog() != true || picker.SelectedEnvironment is not { } chosenName)
+            var picker = new EnvironmentPickerDialog(project.Name, row.Version, targets) { Owner = this };
+            if (picker.ShowDialog() != true || picker.SelectedTarget is not { } chosenTarget || picker.SelectedEnvironment is not { } chosenEnvironment)
             {
                 return;
             }
 
-            environment = environments.First(env => env.Name == chosenName);
+            target = chosenTarget;
+            environmentName = chosenEnvironment;
+        }
+
+        var environments = target == "Local" ? project.LocalEnvironments : project.RemoteEnvironments;
+        var environment = environments.FirstOrDefault(env => string.Equals(env.Name, environmentName, StringComparison.OrdinalIgnoreCase));
+        if (environment is null)
+        {
+            MessageBox.Show(
+                $"'{project.Name}' has no {(target == "Local" ? "local" : "dev-server")} environment named '{environmentName}' -- " +
+                "add it in the project's Edit dialog first.",
+                "PublishTool", MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
         }
 
         var confirm = MessageBox.Show(
-            $"Deploy {project.Name} v{row.Version} to '{environment.Name}' now? This overwrites whatever is currently live there.",
+            $"Deploy {project.Name} v{row.Version} to {target} '{environment.Name}' now? This overwrites whatever is currently live there.",
             "PublishTool", MessageBoxButton.YesNo, MessageBoxImage.Question);
         if (confirm != MessageBoxResult.Yes)
         {
             return;
         }
 
+        ShowOutputPanel();
+        _output.Stage($"Deploying {project.Name} v{row.Version} to {target} ({environment.Name})...");
+        SetBusy(true);
+        BuildHistoryDataGrid.IsEnabled = false;
         try
         {
-            if (row.IsRemote)
+            if (target == "Remote")
             {
-                if (!IsRemoteModeActive(out var settings))
+                if (!IsRemoteModeActive(out var settings) || row.RemoteManifestPath is null)
                 {
+                    MessageBox.Show(
+                        "Remote deploy needs remote mode configured in Settings and an already-uploaded build.",
+                        "PublishTool", MessageBoxButton.OK, MessageBoxImage.Warning);
                     return;
                 }
 
                 await new RemoteHostingClient().DeployAsync(
-                    settings.RemoteHostingUrl!, DecryptRemoteHostingApiKey(settings), row.RemoteManifestPath!, environment.Name);
+                    settings.RemoteHostingUrl!, DecryptRemoteHostingApiKey(settings), row.RemoteManifestPath, environment.Name, Environment.UserName);
                 _output.Info($"Deployed {project.Name} v{row.Version} to the dev server ({environment.Name}).");
+                await RecordProjectAuditAsync("Deployed", project.Name, $"v{row.Version} -> Remote/{environment.Name}");
             }
             else
             {
@@ -1633,12 +2733,52 @@ public partial class MainWindow : Wpf.Ui.Controls.FluentWindow
 
                 var tempDir = Path.Combine(Path.GetTempPath(), "PublishTool", Guid.NewGuid().ToString("N"));
                 Directory.CreateDirectory(tempDir);
+                string? downloadedZipPath = null;
                 try
                 {
-                    await Task.Run(() => System.IO.Compression.ZipFile.ExtractToDirectory(row.ZipPath!, tempDir));
+                    // This row's build only exists as an archive on the dev server (loaded while
+                    // remote mode was on) -- download it first so it can be deployed to THIS
+                    // machine's Local IIS. The reverse (local artifact, remote target) can't happen:
+                    // Remote never appears as a target unless remote mode is already on, in which
+                    // case every row is a remote one -- see GetAvailableDeployTargets.
+                    var zipPathToExtract = row.ZipPath;
+                    if (zipPathToExtract is null)
+                    {
+                        if (row.RemoteZipPath is null || !IsRemoteModeActive(out var remoteSettings))
+                        {
+                            MessageBox.Show(
+                                "Couldn't determine where to download this build's zip from.",
+                                "PublishTool", MessageBoxButton.OK, MessageBoxImage.Error);
+                            return;
+                        }
+
+                        downloadedZipPath = Path.Combine(Path.GetTempPath(), "PublishTool", $"{Guid.NewGuid():N}.zip");
+                        _output.Stage("Downloading build from dev server...");
+                        await new RemoteHostingClient().DownloadAsync(
+                            remoteSettings.RemoteHostingUrl!, DecryptRemoteHostingApiKey(remoteSettings), row.RemoteZipPath, downloadedZipPath);
+                        zipPathToExtract = downloadedZipPath;
+                    }
+
+                    await Task.Run(() => System.IO.Compression.ZipFile.ExtractToDirectory(zipPathToExtract, tempDir));
+
+                    var siteName = environment.ResolveSiteName(project.Name);
+                    var poolTemplate = project.ProjectType == ProjectType.Angular
+                        ? AppPoolRuntimeTemplate.NoManagedCode
+                        : AppPoolRuntimeTemplate.DotNetFramework;
                     await new BuildDeployer(_output).DeployAsync(
-                        environment.ResolveSiteName(project.Name), hostPath, environment.Bindings, environment.AutoCreateSite, tempDir);
+                        siteName, hostPath, environment.Bindings, environment.AutoCreateSite, tempDir,
+                        new SiteDeploymentRecord
+                        {
+                            SiteName = siteName,
+                            ProjectName = project.Name,
+                            Version = row.Version,
+                            EnvironmentName = environment.Name,
+                            DeployedAtUtc = DateTimeOffset.UtcNow,
+                            DeployedBy = Environment.UserName,
+                        },
+                        poolTemplate);
                     _output.Info($"Deployed {project.Name} v{row.Version} to local IIS ({environment.Name}).");
+                    await RecordProjectAuditAsync("Deployed", project.Name, $"v{row.Version} -> Local/{environment.Name}");
                 }
                 finally
                 {
@@ -1646,12 +2786,22 @@ public partial class MainWindow : Wpf.Ui.Controls.FluentWindow
                     {
                         Directory.Delete(tempDir, recursive: true);
                     }
+
+                    if (downloadedZipPath is not null && File.Exists(downloadedZipPath))
+                    {
+                        File.Delete(downloadedZipPath);
+                    }
                 }
             }
         }
         catch (Exception ex)
         {
             MessageBox.Show($"Deploy failed: {ex.Message}", "PublishTool", MessageBoxButton.OK, MessageBoxImage.Error);
+        }
+        finally
+        {
+            SetBusy(false);
+            BuildHistoryDataGrid.IsEnabled = true;
         }
     }
 
@@ -1663,6 +2813,8 @@ public partial class MainWindow : Wpf.Ui.Controls.FluentWindow
             return;
         }
 
+        SetBusy(true);
+        _output.Stage($"Marking {project.Name} v{row.Version} as latest...");
         try
         {
             if (row.IsRemote)
@@ -1688,7 +2840,12 @@ public partial class MainWindow : Wpf.Ui.Controls.FluentWindow
             MessageBox.Show($"Couldn't mark as latest: {ex.Message}", "PublishTool", MessageBoxButton.OK, MessageBoxImage.Error);
             return;
         }
+        finally
+        {
+            SetBusy(false);
+        }
 
+        await RecordProjectAuditAsync("Marked Latest", project.Name, $"v{row.Version}");
         await LoadBuildHistoryAsync();
     }
 
@@ -1708,6 +2865,8 @@ public partial class MainWindow : Wpf.Ui.Controls.FluentWindow
             return;
         }
 
+        SetBusy(true);
+        _output.Stage($"Deleting {project.Name} v{row.Version}...");
         try
         {
             if (row.IsRemote)
@@ -1731,7 +2890,12 @@ public partial class MainWindow : Wpf.Ui.Controls.FluentWindow
             MessageBox.Show($"Delete failed: {ex.Message}", "PublishTool", MessageBoxButton.OK, MessageBoxImage.Error);
             return;
         }
+        finally
+        {
+            SetBusy(false);
+        }
 
+        await RecordProjectAuditAsync("Build Deleted", project.Name, $"v{row.Version}");
         await LoadBuildHistoryAsync();
     }
 
@@ -2058,5 +3222,26 @@ public partial class MainWindow : Wpf.Ui.Controls.FluentWindow
         RunCommandButton.IsEnabled = !busy;
         RefreshIisButton.IsEnabled = !busy;
         CheckoutBranchButton.IsEnabled = !busy;
+    }
+
+    /// <summary>Gives a direct service/API call (no CLI command behind it, so it can't go through
+    /// <see cref="RunAsync"/>) the same busy indicator + output log every command-backed action
+    /// already gets for free -- mainly the remote-mode branches of IIS/Firewall/build actions,
+    /// which previously ran with no visible progress and no trace in the output log at all. Callers
+    /// keep their own try/catch around this for error display -- this only adds the "before"/"after"
+    /// bookend logging and lets the exception propagate.</summary>
+    private async Task RunGuiActionAsync(string description, Func<Task> action)
+    {
+        SetBusy(true);
+        _output.Stage($"{description}...");
+        try
+        {
+            await action();
+            _output.Info($"{description}: done.");
+        }
+        finally
+        {
+            SetBusy(false);
+        }
     }
 }

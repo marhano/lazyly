@@ -18,11 +18,46 @@ public sealed class ProjectConfig
     /// </summary>
     public int LastReleaseNotesSequence { get; set; }
 
-    public required string CsprojPath { get; set; }
+    /// <summary>What kind of project this is, and therefore which
+    /// <see cref="Services.BuildRunners.IBuildRunner"/> builds it. Defaults to <see cref="ProjectType.DotNet"/>
+    /// so every project registered before this field existed keeps behaving identically.</summary>
+    public ProjectType ProjectType { get; set; } = ProjectType.DotNet;
 
-    public required string PubxmlName { get; set; }
+    /// <summary>
+    /// Local to this machine, even for a shared project in remote mode -- each dev's checkout
+    /// lives at their own path. Optional: a project registered purely to deploy/monitor/manage
+    /// (redeploy an existing build, read its Event Log, manage its IIS site or firewall rules)
+    /// doesn't need one, since <see cref="Services.Publisher"/> is the only thing that requires it.
+    /// Only meaningful when <see cref="ProjectType"/> is <see cref="ProjectType.DotNet"/>.
+    /// </summary>
+    public string? CsprojPath { get; set; }
+
+    /// <summary>Only required when <see cref="ProjectType"/> is <see cref="ProjectType.DotNet"/> --
+    /// enforced by <see cref="Services.Publisher"/>/the CLI's add-project validation, not by this
+    /// model, so Angular/Android projects don't need to fake an MSBuild publish profile name.</summary>
+    public string? PubxmlName { get; set; }
 
     public string? AssemblyInfoPath { get; set; }
+
+    /// <summary>Build settings for an Angular project. Only populated when <see cref="ProjectType"/>
+    /// is <see cref="ProjectType.Angular"/>.</summary>
+    public AngularProjectSettings? Angular { get; set; }
+
+    /// <summary>Build settings for a hybrid Capacitor/Cordova Android project. Only populated when
+    /// <see cref="ProjectType"/> is <see cref="ProjectType.Android"/>.</summary>
+    public AndroidProjectSettings? Android { get; set; }
+
+    /// <summary>The one path <see cref="Services.Publisher"/> and git-checkout treat generically as
+    /// "where this project's source lives", regardless of <see cref="ProjectType"/>. Angular/Android
+    /// point at their root folder's package.json by convention rather than storing a separate file
+    /// path, which keeps <see cref="Services.GitService"/>'s directory-from-file resolution unchanged.</summary>
+    public string? SourceRootPath => ProjectType switch
+    {
+        ProjectType.DotNet => CsprojPath,
+        ProjectType.Angular => string.IsNullOrWhiteSpace(Angular?.ProjectRootPath) ? null : Path.Combine(Angular.ProjectRootPath, "package.json"),
+        ProjectType.Android => string.IsNullOrWhiteSpace(Android?.ProjectRootPath) ? null : Path.Combine(Android.ProjectRootPath, "package.json"),
+        _ => null,
+    };
 
     /// <summary>
     /// Extra MSBuild targets (semicolon-separated) to force alongside the default build/publish

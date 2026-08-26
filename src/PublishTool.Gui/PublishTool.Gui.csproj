@@ -15,6 +15,7 @@
   </ItemGroup>
   <ItemGroup>
     <PackageReference Include="WPF-UI" Version="4.3.0" />
+    <PackageReference Include="Velopack" Version="1.2.0" />
   </ItemGroup>
 
   <PropertyGroup>
@@ -25,11 +26,47 @@
     <UseWPF>true</UseWPF>
     <ApplicationIcon>Assets\app.ico</ApplicationIcon>
     <!-- The app's own version, shown in the Help tab: bump this by hand on notable releases. -->
-    <Version>1.1.0</Version>
+    <Version>1.4.0</Version>
+  </PropertyGroup>
+
+  <!--
+    app.manifest now requests asInvoker (see the file itself for why: only local IIS/Firewall
+    management actually needs elevation, surfaced via contextual in-app warnings instead of
+    gating the whole app), so this conditional is no longer about avoiding a UAC prompt in Debug.
+    It's kept Release-only because app.manifest also declares longPathAware and the supported-OS
+    list that matter for the shipped build; Debug just uses the SDK's own default manifest for
+    faster iteration.
+  -->
+  <PropertyGroup Condition="'$(Configuration)'=='Release'">
+    <ApplicationManifest>app.manifest</ApplicationManifest>
   </PropertyGroup>
 
   <ItemGroup>
     <Resource Include="Assets\app.ico" />
+  </ItemGroup>
+
+  <!--
+    App.xaml normally compiles as ApplicationDefinition, which makes the SDK auto-generate a
+    Main() that constructs App and calls Run() before anything else gets a chance to run.
+    Velopack's own startup hook (VelopackApp.Build().Run() in Program.cs) has to execute before
+    that, so App.xaml is demoted to a plain Page here (still generates InitializeComponent,
+    just not a competing Main), and Program.cs supplies the real entry point instead.
+  -->
+  <ItemGroup>
+    <ApplicationDefinition Remove="App.xaml" />
+    <Page Include="App.xaml" />
+  </ItemGroup>
+
+  <!--
+    Read-only GitHub token for the update check, raising its rate limit from 60/hour
+    (unauthenticated) to 5000/hour. Passed in at build time via -p:GithubUpdateToken=... (the
+    release workflow supplies it from a repo secret); empty for an ordinary local build, which
+    just means update checks stay unauthenticated, same as before this existed. Embedded as
+    assembly metadata rather than a literal in source, so nothing here needs a real token
+    committed to get the app to build.
+  -->
+  <ItemGroup>
+    <AssemblyMetadata Include="GithubUpdateToken" Value="$(GithubUpdateToken)" />
   </ItemGroup>
 
 </Project>
