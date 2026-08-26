@@ -5,12 +5,17 @@ using PublishTool.Core.Services;
 namespace PublishTool.Hosting.Pages;
 
 /// <summary>
-/// View, download, and upload only -- this is the human-facing side of the build archive. Delete
-/// and update live exclusively behind the API (<c>/api/builds</c>), for the dev team's GUI to use;
+/// The landing page: a card per project (click through to <see cref="ProjectModel"/> for that
+/// project's full build list) and a short "Recent builds" preview across every project, with a
+/// "View all" link to <see cref="BuildsModel"/> for the full, filterable, sortable list. View,
+/// download, and upload only -- this is the human-facing side of the build archive. Delete and
+/// update live exclusively behind the API (<c>/api/builds</c>), for the dev team's GUI to use;
 /// intentionally not exposed here.
 /// </summary>
 public class IndexModel : PageModel
 {
+    private const int RecentBuildsCount = 10;
+
     private readonly IConfiguration _configuration;
     private readonly BuildRepository _buildRepository = new();
 
@@ -30,18 +35,12 @@ public class IndexModel : PageModel
 
     public string RunningAs { get; private set; } = Environment.UserName;
 
-    public IReadOnlyList<BuildManifest> Builds { get; private set; } = Array.Empty<BuildManifest>();
+    /// <summary>One card per project, ordered by most recently active first.</summary>
+    public IReadOnlyList<ProjectSummary> Projects { get; private set; } = Array.Empty<ProjectSummary>();
 
-    /// <summary>Distinct project names among <see cref="Builds"/>, for the project filter dropdown.</summary>
-    public IReadOnlyList<string> ProjectNames { get; private set; } = Array.Empty<string>();
-
-    /// <summary>
-    /// Release notes text keyed by each build's relative release-notes path (the same key used
-    /// in the "View" button's data attribute and the /download?path= query string), serialized
-    /// into the page for the modal to read client-side -- avoids a round trip per click.
-    /// </summary>
-    public IReadOnlyDictionary<string, ReleaseNotesModalEntry> ReleaseNotesByPath { get; private set; } =
-        new Dictionary<string, ReleaseNotesModalEntry>();
+    /// <summary>The most recent builds across every project, for the landing page's preview --
+    /// "View all" goes to <see cref="BuildsModel"/> for the complete, filterable list.</summary>
+    public BuildsTableViewModel? RecentBuilds { get; private set; }
 
     public void OnGet()
     {
@@ -59,68 +58,23 @@ public class IndexModel : PageModel
             return;
         }
 
-        Builds = _buildRepository.ListBuilds(BuildsRootPath)
+        var builds = _buildRepository.ListBuilds(BuildsRootPath)
             .Where(b => b.ListInHosting)
             .OrderByDescending(b => b.PublishedAtUtc)
             .ToList();
 
-        ProjectNames = Builds
-            .Select(b => b.ProjectName)
-            .Distinct(StringComparer.OrdinalIgnoreCase)
-            .OrderBy(name => name, StringComparer.OrdinalIgnoreCase)
+        Projects = builds
+            .GroupBy(b => b.ProjectName, StringComparer.OrdinalIgnoreCase)
+            .Select(g => new ProjectSummary(g.Key, g.Count(), g.OrderByDescending(b => b.PublishedAtUtc).First()))
+            .OrderByDescending(p => p.MostRecentBuild!.PublishedAtUtc)
             .ToList();
 
-        var releaseNotes = new Dictionary<string, ReleaseNotesModalEntry>();
-        foreach (var build in Builds)
+        var recent = builds.Take(RecentBuildsCount).ToList();
+        RecentBuilds = new BuildsTableViewModel
         {
-            if (build.ReleaseNotesPath is null || !System.IO.File.Exists(build.ReleaseNotesPath))
-            {
-                continue;
-            }
-
-            var key = RelativeReleaseNotesPath(build);
-            releaseNotes[key] = new ReleaseNotesModalEntry(
-                $"{build.ProjectName} v{build.Version}",
-                System.IO.File.ReadAllText(build.ReleaseNotesPath));
-        }
-
-        ReleaseNotesByPath = releaseNotes;
-    }
-
-    public string RelativeZipPath(BuildManifest build) => Path.GetRelativePath(BuildsRootPath, build.ZipPath);
-
-    public bool HasReleaseNotes(BuildManifest build) =>
-        build.ReleaseNotesPath is not null && System.IO.File.Exists(build.ReleaseNotesPath);
-
-    public string RelativeReleaseNotesPath(BuildManifest build) =>
-        Path.GetRelativePath(BuildsRootPath, build.ReleaseNotesPath!);
-
-    public static long GetFileSizeBytes(string zipPath)
-    {
-        // Fully qualified: PageModel has its own File(...) method, which shadows System.IO.File.
-        return System.IO.File.Exists(zipPath) ? new FileInfo(zipPath).Length : -1;
-    }
-
-    public static string FormatFileSize(string zipPath)
-    {
-        var bytes = GetFileSizeBytes(zipPath);
-        if (bytes < 0)
-        {
-            return "-";
-        }
-
-        double size = bytes;
-        string[] units = { "B", "KB", "MB", "GB" };
-        var unitIndex = 0;
-
-        while (size >= 1024 && unitIndex < units.Length - 1)
-        {
-            size /= 1024;
-            unitIndex++;
-        }
-
-        return $"{size:0.#} {units[unitIndex]}";
+            Builds = recent,
+            BuildsRootPath = BuildsRootPath,
+            ReleaseNotesByPath = BuildDisplayHelpers.BuildReleaseNotesMap(BuildsRootPath, recent),
+        };
     }
 }
-
-public sealed record ReleaseNotesModalEntry(string Title, string Text);

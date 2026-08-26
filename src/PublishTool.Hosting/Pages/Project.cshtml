@@ -1,0 +1,54 @@
+@page "{name}"
+@model ProjectModel
+@{
+    ViewData["Title"] = Model.ProjectName;
+}
+
+<div class="pt-header">
+    <div class="container pt-header-row">
+        <div>
+            <h1>@Model.ProjectName</h1>
+            <p>Builds published for this project.</p>
+        </div>
+        <div class="pt-actions">
+            <a href="/" class="pt-btn pt-btn-ghost">&larr; Projects</a>
+            <a href="/UploadBuild" class="pt-btn pt-btn-ghost">Upload build files</a>
+            <a href="/Upload" class="pt-btn pt-btn-primary">Upload a build</a>
+        </div>
+    </div>
+</div>
+
+<div class="pt-page">
+    @if (Model.BuildsRootNotConfigured)
+    {
+        <div class="pt-alert">
+            <strong>Builds root is not configured.</strong>
+            Set <code>BuildsRoot</code> in appsettings.json (or a <code>BuildsRoot</code> environment
+            variable, e.g. via web.config's <code>&lt;aspNetCore&gt;&lt;environmentVariables&gt;</code>)
+            to the same path PublishTool's publisher archives builds to.
+        </div>
+    }
+    else if (Model.BuildsRootNotAccessible)
+    {
+        <div class="pt-alert">
+            <strong>Builds root <code>@Model.BuildsRootPath</code> doesn't exist, or this process can't see it.</strong>
+            This site is currently running as <code>@Model.RunningAs</code>.
+        </div>
+    }
+    else
+    {
+        <div class="pt-card">
+            @await Html.PartialAsync("_BuildsTable", Model.Table)
+        </div>
+    }
+
+    <div class="pt-footer">Build Archive</div>
+</div>
+
+@section Scripts {
+    <script src="~/js/builds-table.js"></script>
+    <script>
+        var releaseNotesData = @Html.Raw(System.Text.Json.JsonSerializer.Serialize(Model.Table?.ReleaseNotesByPath ?? new Dictionary<string, PublishTool.Hosting.ReleaseNotesModalEntry>()));
+        PublishToolBuildsTable.init(releaseNotesData);
+    </script>
+}

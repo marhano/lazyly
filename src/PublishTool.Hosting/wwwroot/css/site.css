@@ -157,6 +157,78 @@ button.pt-btn {
   flex-wrap: wrap;
 }
 
+/* ---------- Project cards (landing page) ---------- */
+
+.pt-projects-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
+  gap: 1rem;
+  margin-bottom: 2rem;
+}
+
+.pt-project-card {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  background: var(--pt-surface);
+  border: 1px solid var(--pt-border);
+  border-radius: var(--pt-radius);
+  box-shadow: var(--pt-shadow);
+  padding: 1.1rem 1.25rem;
+  color: var(--pt-text);
+  transition: border-color 0.15s ease, transform 0.15s ease;
+}
+
+.pt-project-card:hover {
+  border-color: var(--pt-text-muted);
+  transform: translateY(-2px);
+  color: var(--pt-text);
+}
+
+.pt-project-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.pt-project-card-header h3 {
+  margin: 0;
+  font-size: 1.02rem;
+  font-weight: 700;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pt-project-card-body {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  font-size: 0.85rem;
+}
+
+.pt-project-card-footer {
+  font-size: 0.8rem;
+}
+
+/* ---------- Section header (e.g. "Recent builds" + View all) ---------- */
+
+.pt-section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 0.85rem;
+}
+
+.pt-section-header h2 {
+  margin: 0;
+  font-size: 1.1rem;
+  font-weight: 700;
+  color: var(--pt-text);
+}
+
 /* ---------- Table ---------- */
 
 .pt-table-wrap {
