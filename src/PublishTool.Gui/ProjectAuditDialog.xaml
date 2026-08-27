@@ -23,7 +23,7 @@
 
         <DataGrid Grid.Row="2" x:Name="AuditDataGrid" AutoGenerateColumns="False" IsReadOnly="True">
             <DataGrid.Columns>
-                <DataGridTextColumn Header="Time" Binding="{Binding PerformedAtUtc}" Width="160"/>
+                <DataGridTextColumn Header="Time" Binding="{Binding PerformedAtUtc, Converter={StaticResource UtcToPhTimeConverter}}" Width="160"/>
                 <DataGridTextColumn Header="Project" Binding="{Binding ProjectName}" Width="150"/>
                 <DataGridTextColumn Header="Action" Binding="{Binding Action}" Width="130"/>
                 <DataGridTextColumn Header="Details" Binding="{Binding Details}" Width="*"/>

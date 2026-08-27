@@ -1,5 +1,6 @@
 using System.Text.RegularExpressions;
 using System.Windows.Media;
+using PublishTool.Core;
 using PublishTool.Core.Models;
 
 namespace PublishTool.Gui;
@@ -29,7 +30,7 @@ public sealed class EventLogRowViewModel
 
     public EventLogEntryRecord Record { get; }
 
-    public string TimeDisplay => Record.TimeCreated?.LocalDateTime.ToString("yyyy-MM-dd HH:mm:ss") ?? "";
+    public string TimeDisplay => Record.TimeCreated?.ToPhTime().ToString("yyyy-MM-dd hh:mm:ss tt") ?? "";
 
     public string Level => Record.Level;
 

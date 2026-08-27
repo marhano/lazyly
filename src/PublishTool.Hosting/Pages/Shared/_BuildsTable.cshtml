@@ -44,7 +44,7 @@ else
                                 <span class="pt-badge-latest">latest</span>
                             }
                         </td>
-                        <td class="pt-muted" data-sort="@build.PublishedAtUtc.ToUnixTimeSeconds()">@build.PublishedAtUtc.ToLocalTime().ToString("yyyy-MM-dd HH:mm")</td>
+                        <td class="pt-muted" data-sort="@build.PublishedAtUtc.ToUnixTimeSeconds()">@build.PublishedAtUtc.ToPhTime().ToString("yyyy-MM-dd hh:mm tt")</td>
                         <td class="pt-muted">@build.PublishedBy</td>
                         <td class="pt-num" data-sort="@BuildDisplayHelpers.GetFileSizeBytes(build.ZipPath)">@BuildDisplayHelpers.FormatFileSize(build.ZipPath)</td>
                         <td>

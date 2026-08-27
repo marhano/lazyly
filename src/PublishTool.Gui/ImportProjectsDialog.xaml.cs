@@ -1,4 +1,5 @@
 using System.Windows;
+using PublishTool.Core;
 using PublishTool.Core.Services;
 
 namespace PublishTool.Gui;
@@ -17,7 +18,7 @@ public partial class ImportProjectsDialog : Wpf.Ui.Controls.FluentWindow
 
         var overwriteCount = preview.Count(p => p.AlreadyExists);
         IntroTextBlock.Text =
-            $"Exported {file.ExportedAtUtc.ToLocalTime():g}. {preview.Count} project(s) in this file" +
+            $"Exported {file.ExportedAtUtc.ToPhTime():g}. {preview.Count} project(s) in this file" +
             (overwriteCount > 0
                 ? $", {overwriteCount} of which already exist locally -- those are unchecked by default so nothing gets overwritten unless you choose to."
                 : ".");

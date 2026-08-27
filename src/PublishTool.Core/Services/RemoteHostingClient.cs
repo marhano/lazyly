@@ -282,6 +282,27 @@ public sealed class RemoteHostingClient
     public Task RecycleRemoteAppPoolAsync(string baseUrl, string? apiKey, string poolName, string performedBy, CancellationToken ct = default) =>
         PostRemoteIisAction(baseUrl, apiKey, $"/api/iis/apppools/{Uri.EscapeDataString(poolName)}/recycle?performedBy={Uri.EscapeDataString(performedBy)}", "recycle remote application pool", ct);
 
+    /// <summary>Sets a dev-server app pool's identity to one of the allow-listed built-in Windows
+    /// service accounts (see <see cref="AppPoolIdentityType"/>). Throws a 404
+    /// <see cref="RemoteFeatureNotAvailableException"/> against an older Hosting server that
+    /// predates this endpoint.</summary>
+    public async Task SetRemoteAppPoolIdentityAsync(
+        string baseUrl, string? apiKey, string poolName, AppPoolIdentityType identityType, string performedBy, CancellationToken ct = default)
+    {
+        using var request = CreateRequest(
+            HttpMethod.Post, baseUrl,
+            $"/api/iis/apppools/{Uri.EscapeDataString(poolName)}/identity?identityType={identityType}&performedBy={Uri.EscapeDataString(performedBy)}",
+            apiKey);
+        using var response = await Http.SendAsync(request, ct);
+        if (response.StatusCode == System.Net.HttpStatusCode.NotFound)
+        {
+            throw new RemoteFeatureNotAvailableException(
+                "Setting an application pool's identity isn't available yet -- this dev server needs PublishTool.Hosting redeployed.");
+        }
+
+        await EnsureSuccessAsync(response, $"set identity of application pool '{poolName}'", ct);
+    }
+
     /// <summary>Full deployment history (newest-first) for one site on the dev server's own IIS --
     /// for the IIS tab's History dialog in remote mode. Throws a 404 <see cref="InvalidOperationException"/>
     /// against an older Hosting server that predates this endpoint -- callers should show a specific

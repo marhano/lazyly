@@ -258,6 +258,15 @@ public sealed partial class IisSiteManager
         RunManagementCommand(
             $"recycle apppool /apppool.name:\"{poolName}\"", $"recycle application pool '{poolName}'", "AppPool", poolName, "Recycled", performedBy, ct);
 
+    /// <summary>Sets an app pool's identity to one of the allow-listed built-in Windows service
+    /// accounts -- see <see cref="AppPoolIdentityType"/> for why this doesn't accept an arbitrary
+    /// custom account.</summary>
+    public Task SetAppPoolIdentityAsync(string poolName, AppPoolIdentityType identityType, string? performedBy = null, CancellationToken ct = default) =>
+        RunManagementCommand(
+            $"set apppool \"{poolName}\" /processModel.identityType:{identityType}",
+            $"set identity of application pool '{poolName}' to {identityType}",
+            "AppPool", poolName, $"IdentitySetTo:{identityType}", performedBy, ct);
+
     /// <summary>Deletes the site and, best-effort, the app pool PublishTool would have given it if
     /// it auto-created it (see <see cref="EnsureAppPoolExistsAsync"/> -- always named exactly like
     /// the site). Silently leaves the pool alone if none exists by that name, or if it's still

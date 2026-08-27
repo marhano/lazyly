@@ -69,7 +69,7 @@
                     </div>
                     <div class="pt-project-card-body">
                         <span class="pt-version">@project.MostRecentBuild!.Version</span>
-                        <span class="pt-muted">@project.MostRecentBuild!.PublishedAtUtc.ToLocalTime().ToString("yyyy-MM-dd HH:mm")</span>
+                        <span class="pt-muted">@project.MostRecentBuild!.PublishedAtUtc.ToPhTime().ToString("yyyy-MM-dd hh:mm tt")</span>
                     </div>
                     <div class="pt-project-card-footer pt-muted">
                         @project.BuildCount build@(project.BuildCount == 1 ? "" : "s") &middot; by @project.MostRecentBuild!.PublishedBy
@@ -114,7 +114,7 @@
                                             <span class="pt-badge-latest">latest</span>
                                         }
                                     </td>
-                                    <td class="pt-muted">@build.PublishedAtUtc.ToLocalTime().ToString("yyyy-MM-dd HH:mm")</td>
+                                    <td class="pt-muted">@build.PublishedAtUtc.ToPhTime().ToString("yyyy-MM-dd hh:mm tt")</td>
                                     <td class="pt-muted">@build.PublishedBy</td>
                                     <td class="pt-num">@BuildDisplayHelpers.FormatFileSize(build.ZipPath)</td>
                                     <td>

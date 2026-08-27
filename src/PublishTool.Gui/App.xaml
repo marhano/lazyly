@@ -9,6 +9,7 @@
                 <ui:ThemesDictionary Theme="Light" />
                 <ui:ControlsDictionary />
             </ResourceDictionary.MergedDictionaries>
+            <local:UtcToPhTimeConverter x:Key="UtcToPhTimeConverter"/>
         </ResourceDictionary>
     </Application.Resources>
 </Application>

@@ -1,4 +1,5 @@
 using System.Text.Json;
+using PublishTool.Core.Models;
 
 namespace PublishTool.Core;
 
@@ -39,6 +40,12 @@ public sealed class AppSettings
     /// (<see cref="Models.ProjectConfig.AutoDeployOnPublish"/>) remain independent per-project
     /// choices on top of this.</summary>
     public bool UseRemoteMode { get; set; }
+
+    /// <summary>Saved alternate routes to reach the same dev server -- see
+    /// <see cref="Models.RemoteHostingRelay"/>. Purely a list of bookmarks; "using" one just
+    /// overwrites <see cref="RemoteHostingUrl"/> with its URL. Never affects
+    /// <see cref="RemoteHostingProtectedApiKey"/>, since it's still the same dev server underneath.</summary>
+    public List<RemoteHostingRelay> RemoteHostingRelays { get; set; } = new();
 
     public static string DefaultPath => Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),

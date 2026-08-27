@@ -26,7 +26,7 @@
     <UseWPF>true</UseWPF>
     <ApplicationIcon>Assets\app.ico</ApplicationIcon>
     <!-- The app's own version, shown in the Help tab: bump this by hand on notable releases. -->
-    <Version>1.4.0</Version>
+    <Version>1.4.1</Version>
   </PropertyGroup>
 
   <!--

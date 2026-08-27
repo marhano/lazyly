@@ -295,7 +295,7 @@
                                       IsReadOnly="True">
                                 <DataGrid.Columns>
                                     <DataGridTextColumn Header="Version" Binding="{Binding Version}" Width="120"/>
-                                    <DataGridTextColumn Header="Published" Binding="{Binding PublishedAtUtc}" Width="160"/>
+                                    <DataGridTextColumn Header="Published" Binding="{Binding PublishedAtUtc, Converter={StaticResource UtcToPhTimeConverter}}" Width="160"/>
                                     <DataGridTextColumn Header="Published by" Binding="{Binding PublishedBy}" Width="140"/>
                                     <DataGridTextColumn Header="Latest" Binding="{Binding IsLatest}" Width="60"/>
                                     <DataGridTextColumn Header="Listed" Binding="{Binding ListInHosting}" Width="60"/>
@@ -363,15 +363,18 @@
                                             <ComboBoxItem Content="Started"/>
                                             <ComboBoxItem Content="Stopped"/>
                                         </ComboBox>
+                                        <ui:ToggleSwitch x:Name="ShowAllIisSitesToggle" Content="Show all IIS sites" Margin="16,0,0,0"
+                                                         Checked="ShowAllIisSitesToggle_Toggled" Unchecked="ShowAllIisSitesToggle_Toggled"
+                                                         ToolTip="Off: only sites PublishTool has deployed to (marked [PT]). On: every IIS site on this server, including ones PublishTool never touched."/>
                                     </StackPanel>
 
                                     <DataGrid Grid.Row="1" x:Name="IisSitesDataGrid" AutoGenerateColumns="False" IsReadOnly="True" MinHeight="120">
                                         <DataGrid.Columns>
-                                            <DataGridTextColumn Header="Name" Binding="{Binding Name}" Width="*"/>
+                                            <DataGridTextColumn Header="Name" Binding="{Binding DisplayName}" Width="*"/>
                                             <DataGridTextColumn Header="State" Binding="{Binding State}" Width="80"/>
                                             <DataGridTextColumn Header="Bindings" Binding="{Binding Bindings}" Width="1.5*"/>
                                             <DataGridTextColumn Header="Deployed Version" Binding="{Binding DeployedVersion}" Width="120"/>
-                                            <DataGridTextColumn Header="Deployed At" Binding="{Binding DeployedAtUtc}" Width="160"/>
+                                            <DataGridTextColumn Header="Deployed At" Binding="{Binding DeployedAtUtc, Converter={StaticResource UtcToPhTimeConverter}}" Width="160"/>
                                             <DataGridTextColumn Header="Deployed By" Binding="{Binding DeployedBy}" Width="120"/>
                                             <DataGridTemplateColumn Header="Actions" Width="Auto">
                                                 <DataGridTemplateColumn.CellTemplate>
@@ -445,7 +448,9 @@
                                                             <ui:Button Icon="{ui:SymbolIcon Stop24}" ToolTip="Stop pool"
                                                                        Width="36" Margin="0,2,4,2" Click="StopAppPoolButton_Click"/>
                                                             <ui:Button Icon="{ui:SymbolIcon ArrowClockwise24}" ToolTip="Recycle pool"
-                                                                       Width="36" Margin="0,2" Click="RecycleAppPoolButton_Click"/>
+                                                                       Width="36" Margin="0,2,4,2" Click="RecycleAppPoolButton_Click"/>
+                                                            <ui:Button Icon="{ui:SymbolIcon Key24}" ToolTip="Set identity"
+                                                                       Width="36" Margin="0,2" Click="SetAppPoolIdentityButton_Click"/>
                                                         </StackPanel>
                                                     </DataTemplate>
                                                 </DataGridTemplateColumn.CellTemplate>
@@ -632,56 +637,68 @@
                 </TabItem>
 
                 <TabItem Header="Settings">
-                    <ScrollViewer VerticalScrollBarVisibility="Auto">
                     <Grid Margin="12">
-                        <Grid.RowDefinitions>
-                            <RowDefinition Height="Auto"/>
-                            <RowDefinition Height="Auto"/>
-                            <RowDefinition Height="Auto"/>
-                            <RowDefinition Height="Auto"/>
-                            <RowDefinition Height="Auto"/>
-                            <RowDefinition Height="Auto"/>
-                            <RowDefinition Height="Auto"/>
-                            <RowDefinition Height="Auto"/>
-                            <RowDefinition Height="Auto"/>
-                        </Grid.RowDefinitions>
                         <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="120"/>
+                            <ColumnDefinition Width="190"/>
                             <ColumnDefinition Width="*"/>
-                            <ColumnDefinition Width="Auto"/>
                         </Grid.ColumnDefinitions>
 
-                        <TextBlock Grid.Row="0" Grid.Column="0" Text="Builds root" VerticalAlignment="Center"/>
-                        <ui:TextBox Grid.Row="0" Grid.Column="1" x:Name="BuildsRootTextBox" Margin="0,6,6,6"/>
-                        <ui:Button Grid.Row="0" Grid.Column="2" Content="Browse..." Icon="{ui:SymbolIcon FolderOpen24}"
-                                   Width="100" Click="BrowseBuildsRootButton_Click"/>
+                        <ListBox Grid.Column="0" x:Name="SettingsCategoryListBox" Margin="0,0,16,0"
+                                 SelectionChanged="SettingsCategoryListBox_SelectionChanged">
+                            <ListBoxItem Content="General" IsSelected="True"/>
+                            <ListBoxItem Content="Projects"/>
+                            <ListBoxItem Content="Remote Build Hosting"/>
+                            <ListBoxItem Content="Dev Server Relays"/>
+                        </ListBox>
 
-                        <StackPanel Grid.Row="1" Grid.Column="1" Orientation="Horizontal" Margin="0,14,0,0">
-                            <ui:Button x:Name="SaveSettingsButton" Content="Save" Appearance="Primary"
-                                       Icon="{ui:SymbolIcon Save24}" Width="110" Click="SaveSettingsButton_Click"/>
-                            <ui:Button x:Name="OpenBuildsRootButton" Content="Open in Explorer" Icon="{ui:SymbolIcon Open24}"
-                                       Width="150" Margin="10,0,0,0" Click="OpenBuildsRootButton_Click"/>
+                        <ScrollViewer Grid.Column="1" VerticalScrollBarVisibility="Auto">
+                        <Grid>
+
+                        <StackPanel x:Name="SettingsGeneralPanel">
+                            <Grid>
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto"/>
+                                    <RowDefinition Height="Auto"/>
+                                </Grid.RowDefinitions>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="120"/>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+
+                                <TextBlock Grid.Row="0" Grid.Column="0" Text="Builds root" VerticalAlignment="Center"/>
+                                <ui:TextBox Grid.Row="0" Grid.Column="1" x:Name="BuildsRootTextBox" Margin="0,6,6,6"/>
+                                <ui:Button Grid.Row="0" Grid.Column="2" Content="Browse..." Icon="{ui:SymbolIcon FolderOpen24}"
+                                           Width="100" Click="BrowseBuildsRootButton_Click"/>
+
+                                <StackPanel Grid.Row="1" Grid.Column="1" Orientation="Horizontal" Margin="0,14,0,0">
+                                    <ui:Button x:Name="SaveSettingsButton" Content="Save" Appearance="Primary"
+                                               Icon="{ui:SymbolIcon Save24}" Width="110" Click="SaveSettingsButton_Click"/>
+                                    <ui:Button x:Name="OpenBuildsRootButton" Content="Open in Explorer" Icon="{ui:SymbolIcon Open24}"
+                                               Width="150" Margin="10,0,0,0" Click="OpenBuildsRootButton_Click"/>
+                                </StackPanel>
+                            </Grid>
+
+                            <ui:ToggleSwitch x:Name="DarkModeToggle"
+                                             Content="Dark mode" Margin="0,20,0,0" Checked="DarkModeToggle_Toggled" Unchecked="DarkModeToggle_Toggled"/>
+
+                            <StackPanel Orientation="Horizontal" Margin="0,20,0,0">
+                                <TextBlock Text="Accent color" VerticalAlignment="Center" Margin="0,0,14,0"/>
+                                <Border Width="32" Height="32" CornerRadius="16" Background="#0078D4" Cursor="Hand"
+                                        Tag="Blue" ToolTip="Blue" MouseLeftButtonUp="AccentSwatch_Click"/>
+                                <Border Width="32" Height="32" CornerRadius="16" Background="#8764B8" Cursor="Hand"
+                                        Tag="Purple" ToolTip="Purple" Margin="10,0,0,0" MouseLeftButtonUp="AccentSwatch_Click"/>
+                                <Border Width="32" Height="32" CornerRadius="16" Background="#107C10" Cursor="Hand"
+                                        Tag="Green" ToolTip="Green" Margin="10,0,0,0" MouseLeftButtonUp="AccentSwatch_Click"/>
+                            </StackPanel>
+
+                            <ui:ToggleSwitch x:Name="StartOnStartupToggle"
+                                             Content="Start on Windows startup" Margin="0,20,0,0"
+                                             Checked="StartOnStartupToggle_Toggled" Unchecked="StartOnStartupToggle_Toggled"
+                                             ToolTip="Closing the window minimizes PublishTool to the system tray instead of exiting -- right-click the tray icon to exit fully."/>
                         </StackPanel>
 
-                        <ui:ToggleSwitch Grid.Row="2" Grid.Column="0" Grid.ColumnSpan="2" x:Name="DarkModeToggle"
-                                         Content="Dark mode" Margin="0,20,0,0" Checked="DarkModeToggle_Toggled" Unchecked="DarkModeToggle_Toggled"/>
-
-                        <StackPanel Grid.Row="3" Grid.Column="0" Grid.ColumnSpan="2" Orientation="Horizontal" Margin="0,20,0,0">
-                            <TextBlock Text="Accent color" VerticalAlignment="Center" Margin="0,0,14,0"/>
-                            <Border Width="32" Height="32" CornerRadius="16" Background="#0078D4" Cursor="Hand"
-                                    Tag="Blue" ToolTip="Blue" MouseLeftButtonUp="AccentSwatch_Click"/>
-                            <Border Width="32" Height="32" CornerRadius="16" Background="#8764B8" Cursor="Hand"
-                                    Tag="Purple" ToolTip="Purple" Margin="10,0,0,0" MouseLeftButtonUp="AccentSwatch_Click"/>
-                            <Border Width="32" Height="32" CornerRadius="16" Background="#107C10" Cursor="Hand"
-                                    Tag="Green" ToolTip="Green" Margin="10,0,0,0" MouseLeftButtonUp="AccentSwatch_Click"/>
-                        </StackPanel>
-
-                        <ui:ToggleSwitch Grid.Row="4" Grid.Column="0" Grid.ColumnSpan="2" x:Name="StartOnStartupToggle"
-                                         Content="Start on Windows startup" Margin="0,20,0,0"
-                                         Checked="StartOnStartupToggle_Toggled" Unchecked="StartOnStartupToggle_Toggled"
-                                         ToolTip="Closing the window minimizes PublishTool to the system tray instead of exiting -- right-click the tray icon to exit fully."/>
-
-                        <StackPanel Grid.Row="5" Grid.Column="0" Grid.ColumnSpan="2" Margin="0,24,0,0">
+                        <StackPanel x:Name="SettingsProjectsPanel" Visibility="Collapsed">
                             <TextBlock Text="Project configs" FontWeight="SemiBold" Margin="0,0,0,6"/>
                             <TextBlock TextWrapping="Wrap" Margin="0,0,0,10"
                                        Foreground="{DynamicResource TextFillColorSecondaryBrush}"
@@ -692,9 +709,33 @@
                                 <ui:Button x:Name="ImportProjectsButton" Content="Import projects..." Icon="{ui:SymbolIcon ArrowUpload24}"
                                            Width="160" Margin="10,0,0,0" Click="ImportProjectsButton_Click"/>
                             </StackPanel>
+
+                            <TextBlock Text="Deployment Environments" FontWeight="SemiBold" Margin="0,24,0,6"/>
+                            <TextBlock TextWrapping="Wrap" Margin="0,0,0,10"
+                                       Foreground="{DynamicResource TextFillColorSecondaryBrush}"
+                                       Text="Named deploy targets (e.g. Staging, Production) offered when configuring a project's local/dev-server deploy targets, or picking one to publish to. Local to this machine, unless &quot;Use dev server for projects&quot; on the Remote Build Hosting page is on -- then shared with your whole team."/>
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+                                <ListBox Grid.Column="0" x:Name="EnvironmentsListBox" Height="120"/>
+                                <StackPanel Grid.Column="1" Margin="10,0,0,0" Width="150">
+                                    <ui:Button Content="Make default" Icon="{ui:SymbolIcon Star24}" HorizontalAlignment="Stretch" Click="MakeDefaultEnvironmentButton_Click"/>
+                                    <ui:Button Content="Remove" Icon="{ui:SymbolIcon Delete24}" Margin="0,8,0,0" HorizontalAlignment="Stretch" Click="RemoveEnvironmentButton_Click"/>
+                                </StackPanel>
+                            </Grid>
+                            <Grid Margin="0,10,0,0">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+                                <ui:TextBox Grid.Column="0" x:Name="NewEnvironmentNameTextBox" PlaceholderText="e.g. Staging" Margin="0,0,6,0"/>
+                                <ui:Button Grid.Column="1" Content="Add" Icon="{ui:SymbolIcon Add24}" Width="100" Click="AddEnvironmentButton_Click"/>
+                            </Grid>
                         </StackPanel>
 
-                        <StackPanel Grid.Row="6" Grid.Column="0" Grid.ColumnSpan="2" Margin="0,24,0,0">
+                        <StackPanel x:Name="SettingsRemoteHostingPanel" Visibility="Collapsed">
                             <TextBlock Text="Remote Build Hosting" FontWeight="SemiBold" Margin="0,0,0,6"/>
                             <TextBlock TextWrapping="Wrap" Margin="0,0,0,10"
                                        Foreground="{DynamicResource TextFillColorSecondaryBrush}"
@@ -730,33 +771,94 @@
                                              ToolTip="When on, the Projects tab and IIS tab read from/manage the dev server above instead of this machine. Independent of whether any individual project uploads/deploys its builds there (set per-project in the Projects tab)."/>
                         </StackPanel>
 
-                        <StackPanel Grid.Row="7" Grid.Column="0" Grid.ColumnSpan="2" Margin="0,24,0,0">
-                            <TextBlock Text="Deployment Environments" FontWeight="SemiBold" Margin="0,0,0,6"/>
+                        <StackPanel x:Name="SettingsRelaysPanel" Visibility="Collapsed">
+                            <TextBlock Text="Dev Server Relays" FontWeight="SemiBold" Margin="0,0,0,6"/>
                             <TextBlock TextWrapping="Wrap" Margin="0,0,0,10"
                                        Foreground="{DynamicResource TextFillColorSecondaryBrush}"
-                                       Text="Named deploy targets (e.g. Staging, Production) offered when configuring a project's local/dev-server deploy targets, or picking one to publish to. Local to this machine, unless &quot;Use dev server for projects&quot; above is on -- then shared with your whole team."/>
-                            <Grid>
-                                <Grid.ColumnDefinitions>
-                                    <ColumnDefinition Width="*"/>
-                                    <ColumnDefinition Width="Auto"/>
-                                </Grid.ColumnDefinitions>
-                                <ListBox Grid.Column="0" x:Name="EnvironmentsListBox" Height="120"/>
-                                <StackPanel Grid.Column="1" Margin="10,0,0,0" Width="150">
-                                    <ui:Button Content="Make default" Icon="{ui:SymbolIcon Star24}" HorizontalAlignment="Stretch" Click="MakeDefaultEnvironmentButton_Click"/>
-                                    <ui:Button Content="Remove" Icon="{ui:SymbolIcon Delete24}" Margin="0,8,0,0" HorizontalAlignment="Stretch" Click="RemoveEnvironmentButton_Click"/>
-                                </StackPanel>
-                            </Grid>
+                                       Text="If your network (e.g. a VPN that doesn't route to the dev server's subnet) can't reach the dev server directly, save a colleague's already-connected machine here as a relay -- &quot;Use&quot; switches the URL on the Remote Build Hosting page to theirs with one click and tests it right away. Same API key either way; only the URL changes."/>
+
+                            <DataGrid x:Name="RemoteHostingRelaysDataGrid" MinHeight="220" AutoGenerateColumns="False" CanUserAddRows="False" IsReadOnly="True">
+                                <DataGrid.Columns>
+                                    <DataGridTextColumn Header="Name" Binding="{Binding Name}" Width="*"/>
+                                    <DataGridTextColumn Header="URL" Binding="{Binding Url}" Width="2*"/>
+                                    <DataGridCheckBoxColumn Header="Active" Binding="{Binding IsActive}" Width="60"/>
+                                    <DataGridTemplateColumn Header="Actions" Width="220">
+                                        <DataGridTemplateColumn.CellTemplate>
+                                            <DataTemplate>
+                                                <StackPanel Orientation="Horizontal">
+                                                    <ui:Button Content="Use" Width="60" Click="UseRemoteHostingRelayButton_Click"/>
+                                                    <ui:Button Content="Test" Width="60" Margin="6,0,0,0" Click="TestRemoteHostingRelayButton_Click"/>
+                                                    <ui:Button Content="Remove" Width="75" Margin="6,0,0,0" Click="RemoveRemoteHostingRelayButton_Click"/>
+                                                </StackPanel>
+                                            </DataTemplate>
+                                        </DataGridTemplateColumn.CellTemplate>
+                                    </DataGridTemplateColumn>
+                                </DataGrid.Columns>
+                            </DataGrid>
+
                             <Grid Margin="0,10,0,0">
                                 <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="150"/>
                                     <ColumnDefinition Width="*"/>
                                     <ColumnDefinition Width="Auto"/>
                                 </Grid.ColumnDefinitions>
-                                <ui:TextBox Grid.Column="0" x:Name="NewEnvironmentNameTextBox" PlaceholderText="e.g. Staging" Margin="0,0,6,0"/>
-                                <ui:Button Grid.Column="1" Content="Add" Icon="{ui:SymbolIcon Add24}" Width="100" Click="AddEnvironmentButton_Click"/>
+                                <ui:TextBox Grid.Column="0" x:Name="NewRelayNameTextBox" PlaceholderText="e.g. John's machine" Margin="0,0,6,0"/>
+                                <ui:TextBox Grid.Column="1" x:Name="NewRelayUrlTextBox" PlaceholderText="http://&lt;colleague-VPN-IP&gt;:8080" Margin="0,0,6,0"/>
+                                <ui:Button Grid.Column="2" Content="Add relay" Icon="{ui:SymbolIcon Add24}" Width="120" Click="AddRemoteHostingRelayButton_Click"/>
                             </Grid>
+
+                            <TextBlock Text="Host a Relay (this machine)" FontWeight="SemiBold" Margin="0,24,0,6"/>
+                            <TextBlock TextWrapping="Wrap" Margin="0,0,0,10"
+                                       Foreground="{DynamicResource TextFillColorSecondaryBrush}"
+                                       Text="If this machine is in-office and already connected to the dev server, host a relay here so a colleague who can't reach it directly can go through you instead. Starting/stopping asks for one Administrator confirmation (it sets up a netsh port forward + firewall rule) -- no manual command prompt needed."/>
+
+                            <DataGrid x:Name="HostedRelaysDataGrid" MinHeight="200" AutoGenerateColumns="False" CanUserAddRows="False" IsReadOnly="True">
+                                <DataGrid.Columns>
+                                    <DataGridTextColumn Header="Listen Port" Binding="{Binding ListenPort}" Width="100"/>
+                                    <DataGridTextColumn Header="Forwards to" Binding="{Binding ForwardsTo}" Width="*"/>
+                                    <DataGridTextColumn Header="IIS Site(s)" Binding="{Binding MatchedSites}" Width="*"/>
+                                    <DataGridTemplateColumn Header="Actions" Width="100">
+                                        <DataGridTemplateColumn.CellTemplate>
+                                            <DataTemplate>
+                                                <ui:Button Content="Stop" Width="80" Click="StopHostedRelayButton_Click"/>
+                                            </DataTemplate>
+                                        </DataGridTemplateColumn.CellTemplate>
+                                    </DataGridTemplateColumn>
+                                </DataGrid.Columns>
+                            </DataGrid>
+
+                            <StackPanel Orientation="Horizontal" Margin="0,8,0,10">
+                                <ui:Button Content="Refresh" Icon="{ui:SymbolIcon ArrowSync24}" Width="100" Click="RefreshHostedRelaysButton_Click"/>
+                            </StackPanel>
+                            <TextBlock x:Name="HostedRelaysHintTextBlock" Margin="0,0,0,10" FontSize="12"
+                                       Foreground="{DynamicResource TextFillColorSecondaryBrush}" TextWrapping="Wrap"/>
+
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="90"/>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="90"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+                                <ui:TextBox Grid.Column="0" x:Name="NewRelayListenPortTextBox" PlaceholderText="8080" Margin="0,0,6,0"/>
+                                <ui:TextBox Grid.Column="1" x:Name="NewRelayConnectAddressTextBox" PlaceholderText="dev server host, e.g. devserver.internal" Margin="0,0,6,0"/>
+                                <ui:TextBox Grid.Column="2" x:Name="NewRelayConnectPortTextBox" PlaceholderText="port" Margin="0,0,6,0"/>
+                                <ui:Button Grid.Column="3" Content="Start Relay" Icon="{ui:SymbolIcon Play24}" Width="130" Click="StartHostedRelayButton_Click"/>
+                            </Grid>
+
+                            <TextBlock Text="IIS Sites on Dev Server" FontWeight="SemiBold" Margin="0,24,0,6"/>
+                            <TextBlock TextWrapping="Wrap" Margin="0,0,0,10"
+                                       Foreground="{DynamicResource TextFillColorSecondaryBrush}"
+                                       Text="Relay every port the dev server's IIS sites use, in one go, forwarding to the same address as the Remote Build Hosting URL above. One relay per port covers every site on it (host-header or not), so a colleague reaches any of them at http://&lt;this machine's address&gt;:&lt;site's port&gt;. Both buttons ask for one Administrator confirmation total, no matter how many ports are involved."/>
+                            <StackPanel Orientation="Horizontal">
+                                <ui:Button Content="Relay All IIS Sites" Icon="{ui:SymbolIcon Play24}" Width="160" Click="RelayAllIisSitesButton_Click"/>
+                                <ui:Button Content="Stop All IIS Site Relays" Icon="{ui:SymbolIcon Stop24}" Width="180" Margin="10,0,0,0" Click="StopAllIisSiteRelaysButton_Click"/>
+                            </StackPanel>
                         </StackPanel>
+
+                        </Grid>
+                        </ScrollViewer>
                     </Grid>
-                    </ScrollViewer>
                 </TabItem>
 
                 <TabItem Header="Audit Logs">
@@ -780,7 +882,7 @@
 
                         <DataGrid Grid.Row="2" x:Name="CombinedAuditDataGrid" AutoGenerateColumns="False" IsReadOnly="True">
                             <DataGrid.Columns>
-                                <DataGridTextColumn Header="Time" Binding="{Binding PerformedAtUtc}" Width="160"/>
+                                <DataGridTextColumn Header="Time" Binding="{Binding PerformedAtUtc, Converter={StaticResource UtcToPhTimeConverter}}" Width="160"/>
                                 <DataGridTextColumn Header="Category" Binding="{Binding Category}" Width="90"/>
                                 <DataGridTextColumn Header="Subject" Binding="{Binding Subject}" Width="150"/>
                                 <DataGridTextColumn Header="Action" Binding="{Binding Action}" Width="120"/>

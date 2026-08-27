@@ -48,10 +48,11 @@ public partial class ProjectEditDialog : Wpf.Ui.Controls.FluentWindow
     /// (AppConfigPathTextBox), and WPF's IsEnabled cascades to every descendant, so a coarse
     /// parent-level disable would have locked that local control too. RemoteEnvironmentsSectionPanel
     /// is safe to lock as a whole -- everything inside it (the host root path box included) is
-    /// shared, nothing local is nested there. Note this locks the section's *contents*, not the
-    /// RemoteIisToggle above it that reveals the section -- that toggle is deliberately per-user
-    /// (each dev decides independently whether they use Remote IIS for this project at all), even
-    /// though the section it reveals is shared team data once you're looking at it. NameTextBox is
+    /// shared, nothing local is nested there, and it's always visible regardless of RemoteIisToggle
+    /// (that toggle only controls whether this project's dev-server environments are offered as a
+    /// Publish tab deploy target -- it's deliberately per-user, each dev decides independently
+    /// whether they use Remote IIS for this project at all, even though the environments themselves
+    /// are shared team data once you're looking at them). NameTextBox is
     /// deliberately NOT here -- it gets a stronger, permanent lock (see the constructor) that even
     /// "Edit shared settings" can't undo, since renaming a project would orphan its build folder and
     /// any shared registration under the old name.</summary>
@@ -81,6 +82,11 @@ public partial class ProjectEditDialog : Wpf.Ui.Controls.FluentWindow
         // are constructed yet.
         ProjectTypeComboBox.SelectedIndex = 0;
         UpdateAndroidSigningStatusText();
+
+        if (existing is null)
+        {
+            RemoteHostRootPathTextBox.Text = @"E:\ProgramData\PublishTool\PublishBuilds";
+        }
 
         if (existing is not null)
         {
@@ -187,7 +193,6 @@ public partial class ProjectEditDialog : Wpf.Ui.Controls.FluentWindow
         EventLogUsernameTextBox.Text = p.EventLogUsername ?? string.Empty;
 
         RemoteIisToggle.IsChecked = p.RemoteIisEnabled;
-        RemoteEnvironmentsSectionPanel.Visibility = p.RemoteIisEnabled ? Visibility.Visible : Visibility.Collapsed;
 
         foreach (var env in p.RemoteEnvironments)
         {
@@ -311,12 +316,14 @@ public partial class ProjectEditDialog : Wpf.Ui.Controls.FluentWindow
         AndroidSigningSectionPanel.Visibility = tag == "Android" ? Visibility.Visible : Visibility.Collapsed;
 
         // Android has no IIS deploy story at all (see BuildRunners/AndroidBuildRunner) -- hide Local
-        // IIS entirely for it rather than leave a toggle that could never do anything.
-        var localIisApplicable = tag != "Android";
-        LocalIisToggle.Visibility = localIisApplicable ? Visibility.Visible : Visibility.Collapsed;
-        LocalEnvironmentsSectionPanel.Visibility = localIisApplicable && LocalIisToggle.IsChecked == true
+        // and Remote IIS entirely for it rather than leave toggles that could never do anything.
+        var iisApplicable = tag != "Android";
+        LocalIisToggle.Visibility = iisApplicable ? Visibility.Visible : Visibility.Collapsed;
+        LocalEnvironmentsSectionPanel.Visibility = iisApplicable && LocalIisToggle.IsChecked == true
             ? Visibility.Visible
             : Visibility.Collapsed;
+        RemoteIisToggle.Visibility = iisApplicable ? Visibility.Visible : Visibility.Collapsed;
+        RemoteEnvironmentsSectionPanel.Visibility = iisApplicable ? Visibility.Visible : Visibility.Collapsed;
 
         UpdateAppConfigTypeOptions(projectType);
     }
@@ -335,9 +342,6 @@ public partial class ProjectEditDialog : Wpf.Ui.Controls.FluentWindow
 
     private void LocalIisToggle_Toggled(object sender, RoutedEventArgs e) =>
         LocalEnvironmentsSectionPanel.Visibility = LocalIisToggle.IsChecked == true ? Visibility.Visible : Visibility.Collapsed;
-
-    private void RemoteIisToggle_Toggled(object sender, RoutedEventArgs e) =>
-        RemoteEnvironmentsSectionPanel.Visibility = RemoteIisToggle.IsChecked == true ? Visibility.Visible : Visibility.Collapsed;
 
     private void AddLocalEnvironmentButton_Click(object sender, RoutedEventArgs e)
     {
@@ -481,7 +485,17 @@ public partial class ProjectEditDialog : Wpf.Ui.Controls.FluentWindow
             return;
         }
 
-        if (remoteIisEnabled && !ValidateEnvironments(_remoteEnvironments, "dev-server"))
+        // Android has nothing to deploy to IIS -- an APK/AAB just lands in the Build Archive, so
+        // unlike every other project type it's fine to have zero dev-server environments.
+        if (projectType != ProjectType.Android && _remoteEnvironments.Count == 0)
+        {
+            MessageBox.Show(
+                "Add at least one dev-server environment.",
+                "PublishTool", MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
+        }
+
+        if (!ValidateEnvironments(_remoteEnvironments, "dev-server"))
         {
             return;
         }

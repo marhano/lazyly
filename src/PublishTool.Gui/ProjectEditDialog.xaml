@@ -88,8 +88,7 @@
                 </Grid>
 
                 <ui:ToggleSwitch x:Name="RemoteIisToggle" Content="Remote IIS" Margin="0,16,0,0"
-                                 Checked="RemoteIisToggle_Toggled" Unchecked="RemoteIisToggle_Toggled"
-                                 ToolTip="Per-user, a personal preference: only takes effect while &quot;Use dev server for projects&quot; is on in Settings. When on, shows this project's dev-server deploy target (configured below, in Shared settings) and offers it as a Publish tab option."/>
+                                 ToolTip="Per-user, a personal preference: only takes effect while &quot;Use dev server for projects&quot; is on in Settings. Controls only whether this project's dev-server environments (configured below, in Shared settings) are offered as a Publish tab deploy target -- the environments themselves are always visible/editable regardless of this toggle."/>
                 <ui:ToggleSwitch x:Name="LocalIisToggle" Content="Local IIS" Margin="0,10,0,0"
                                  Checked="LocalIisToggle_Toggled" Unchecked="LocalIisToggle_Toggled"
                                  ToolTip="Per-user: when on, every publish you do of this project can deploy straight to your own local IIS. Teammates decide this independently for their own machines. Not available for Android projects -- there's no IIS equivalent for an installable APK/AAB. Note: whoever publishes with this on needs to run PublishTool as Administrator on their own machine, or the local deploy step will fail."/>
@@ -247,7 +246,7 @@
                     </Grid>
                 </StackPanel>
 
-                <StackPanel x:Name="RemoteEnvironmentsSectionPanel" Visibility="Collapsed" Margin="0,16,0,0">
+                <StackPanel x:Name="RemoteEnvironmentsSectionPanel" Margin="0,16,0,0">
                     <TextBlock Text="Dev-server environments" FontWeight="SemiBold" Margin="0,0,0,4"/>
                     <TextBlock TextWrapping="Wrap" Margin="0,0,0,10" FontSize="12"
                                Foreground="{DynamicResource TextFillColorSecondaryBrush}"

@@ -737,6 +737,34 @@ app.MapPost("/api/iis/apppools/{name}/recycle", async (HttpRequest request, ICon
     }
 });
 
+// Deliberately re-validates identityType server-side against the same allow-list the enum already
+// restricts to (rather than trusting the client) -- this is the one /api/iis/* action that grants a
+// site elevated Windows privileges rather than just starting/stopping/recycling/removing it, so it
+// gets a clear 400 for anything outside the allow-list instead of silently doing whatever appcmd
+// would do with an unexpected value.
+app.MapPost("/api/iis/apppools/{name}/identity", async (HttpRequest request, IConfiguration configuration, string name, string identityType, string? performedBy) =>
+{
+    if (!ApiKeyAuth.Validate(request, configuration))
+    {
+        return Results.Unauthorized();
+    }
+
+    if (!Enum.TryParse<AppPoolIdentityType>(identityType, ignoreCase: true, out var parsedIdentityType))
+    {
+        return Results.BadRequest($"Unknown identity type '{identityType}'. Allowed: {string.Join(", ", Enum.GetNames<AppPoolIdentityType>())}.");
+    }
+
+    try
+    {
+        await CreateIisSiteManager(configuration).SetAppPoolIdentityAsync(name, parsedIdentityType, ResolvePerformedBy(performedBy), request.HttpContext.RequestAborted);
+        return Results.Ok();
+    }
+    catch (Exception ex)
+    {
+        return Results.Problem(ex.Message, statusCode: StatusCodes.Status500InternalServerError);
+    }
+});
+
 // Uploads a zip and deploys it into a site on the dev server's own IIS, creating the site (and its
 // own app pool) first if requested -- the remote counterpart to a local manual deploy, which calls
 // BuildDeployer directly instead of needing to ship the source content anywhere.

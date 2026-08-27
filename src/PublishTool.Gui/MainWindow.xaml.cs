@@ -406,6 +406,23 @@ public partial class MainWindow : Wpf.Ui.Controls.FluentWindow
         SetStartupEnabled(StartOnStartupToggle.IsChecked == true);
     }
 
+    private void SettingsCategoryListBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (SettingsGeneralPanel is null)
+        {
+            // The sidebar's IsSelected="True" item fires this during InitializeComponent(), before
+            // the panels declared later in the XAML are assigned to their fields yet.
+            return;
+        }
+
+        var panels = new[] { SettingsGeneralPanel, SettingsProjectsPanel, SettingsRemoteHostingPanel, SettingsRelaysPanel };
+        var selectedIndex = SettingsCategoryListBox.SelectedIndex;
+        for (var i = 0; i < panels.Length; i++)
+        {
+            panels[i].Visibility = i == selectedIndex ? Visibility.Visible : Visibility.Collapsed;
+        }
+    }
+
     private void LoadSettingsIntoForm()
     {
         var settings = AppSettings.Load(AppSettings.DefaultPath);
@@ -428,6 +445,391 @@ public partial class MainWindow : Wpf.Ui.Controls.FluentWindow
         {
             UseRemoteModeToggle.IsChecked = settings.UseRemoteMode;
         }
+
+        LoadRemoteHostingRelaysIntoForm(settings);
+        _ = LoadHostedRelaysIntoFormAsync();
+    }
+
+    private void LoadRemoteHostingRelaysIntoForm(AppSettings? settings = null)
+    {
+        settings ??= AppSettings.Load(AppSettings.DefaultPath);
+        var currentUrl = settings.RemoteHostingUrl;
+
+        RemoteHostingRelaysDataGrid.ItemsSource = settings.RemoteHostingRelays
+            .Select(r => new RemoteHostingRelayRow
+            {
+                Name = r.Name,
+                Url = r.Url,
+                IsActive = !string.IsNullOrWhiteSpace(currentUrl) && string.Equals(r.Url, currentUrl, StringComparison.OrdinalIgnoreCase),
+            })
+            .ToList();
+    }
+
+    private void AddRemoteHostingRelayButton_Click(object sender, RoutedEventArgs e)
+    {
+        var name = NewRelayNameTextBox.Text?.Trim();
+        var url = NewRelayUrlTextBox.Text?.Trim();
+        if (string.IsNullOrWhiteSpace(name) || string.IsNullOrWhiteSpace(url))
+        {
+            MessageBox.Show("Enter both a name and a URL first.", "PublishTool", MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
+        }
+
+        var settings = AppSettings.Load(AppSettings.DefaultPath);
+        if (settings.RemoteHostingRelays.Any(r => string.Equals(r.Name, name, StringComparison.OrdinalIgnoreCase)))
+        {
+            MessageBox.Show($"A relay named '{name}' already exists.", "PublishTool", MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
+        }
+
+        settings.RemoteHostingRelays.Add(new RemoteHostingRelay { Name = name, Url = url });
+        settings.Save(AppSettings.DefaultPath);
+
+        NewRelayNameTextBox.Text = string.Empty;
+        NewRelayUrlTextBox.Text = string.Empty;
+        _output.Info($"Added dev server relay '{name}' ({url}).");
+        LoadRemoteHostingRelaysIntoForm(settings);
+    }
+
+    private void RemoveRemoteHostingRelayButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (((FrameworkElement)sender).DataContext is not RemoteHostingRelayRow row)
+        {
+            return;
+        }
+
+        var settings = AppSettings.Load(AppSettings.DefaultPath);
+        settings.RemoteHostingRelays.RemoveAll(r => string.Equals(r.Name, row.Name, StringComparison.OrdinalIgnoreCase));
+        settings.Save(AppSettings.DefaultPath);
+
+        _output.Info($"Removed dev server relay '{row.Name}'.");
+        LoadRemoteHostingRelaysIntoForm(settings);
+    }
+
+    private async void TestRemoteHostingRelayButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (((FrameworkElement)sender).DataContext is not RemoteHostingRelayRow row)
+        {
+            return;
+        }
+
+        var settings = AppSettings.Load(AppSettings.DefaultPath);
+        var apiKey = settings.RemoteHostingProtectedApiKey is null
+            ? null
+            : SecretProtector.TryUnprotect(settings.RemoteHostingProtectedApiKey, SecretProtector.RemoteHostingPurpose);
+
+        try
+        {
+            var ok = await new RemoteHostingClient().PingAsync(row.Url, apiKey);
+            MessageBox.Show(
+                ok
+                    ? $"'{row.Name}' ({row.Url}) is reachable and the API key is accepted."
+                    : $"Couldn't connect to '{row.Name}' ({row.Url}) -- check it's reachable (e.g. the colleague's machine is on and VPN-connected) and the API key is correct.",
+                "PublishTool", MessageBoxButton.OK, ok ? MessageBoxImage.Information : MessageBoxImage.Warning);
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show($"Couldn't test '{row.Name}': {ex.Message}", "PublishTool", MessageBoxButton.OK, MessageBoxImage.Error);
+        }
+    }
+
+    /// <summary>Switches the active Remote Build Hosting URL to this relay's, saves it immediately
+    /// (no separate "Save" click needed -- this button's whole point is a fast one-click switch),
+    /// and tests it right away so the user finds out immediately whether this relay is actually
+    /// reachable right now instead of only discovering it on the next publish.</summary>
+    private async void UseRemoteHostingRelayButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (((FrameworkElement)sender).DataContext is not RemoteHostingRelayRow row)
+        {
+            return;
+        }
+
+        var settings = AppSettings.Load(AppSettings.DefaultPath);
+        settings.RemoteHostingUrl = row.Url;
+        settings.Save(AppSettings.DefaultPath);
+
+        RemoteHostingUrlTextBox.Text = row.Url;
+        UseRemoteModeToggle.IsEnabled = true;
+        _output.Info($"Switched Remote Build Hosting URL to relay '{row.Name}' ({row.Url}).");
+        LoadRemoteHostingRelaysIntoForm(settings);
+
+        RemoteHostingStatusTextBlock.Text = $"Using '{row.Name}' -- testing...";
+        var apiKey = settings.RemoteHostingProtectedApiKey is null
+            ? null
+            : SecretProtector.TryUnprotect(settings.RemoteHostingProtectedApiKey, SecretProtector.RemoteHostingPurpose);
+        try
+        {
+            var ok = await new RemoteHostingClient().PingAsync(row.Url, apiKey);
+            RemoteHostingStatusTextBlock.Text = ok
+                ? $"Using '{row.Name}' -- connected."
+                : $"Using '{row.Name}' -- couldn't connect. Check they're online and VPN-connected.";
+        }
+        catch (Exception ex)
+        {
+            RemoteHostingStatusTextBlock.Text = $"Using '{row.Name}' -- couldn't connect: {ex.Message}";
+        }
+    }
+
+    private async Task LoadHostedRelaysIntoFormAsync()
+    {
+        var addresses = PortProxyRelayService.GetLocalIPv4Addresses();
+        HostedRelaysHintTextBlock.Text = addresses.Count == 0
+            ? "Could not detect any network addresses for this machine."
+            : "This machine's addresses -- give a colleague whichever one they can actually reach (the VPN one, usually): "
+                + string.Join(", ", addresses.Select(a => $"{a.Address} ({a.InterfaceName})"));
+
+        try
+        {
+            var rules = await PortProxyRelayService.ListAsync();
+            var portsToSites = await TryGetDevServerPortsToSiteNamesAsync();
+            HostedRelaysDataGrid.ItemsSource = rules
+                .Select(r => new HostedRelayRow
+                {
+                    ListenPort = r.ListenPort,
+                    ConnectAddress = r.ConnectAddress,
+                    ConnectPort = r.ConnectPort,
+                    MatchedSites = portsToSites.TryGetValue(r.ConnectPort, out var names) ? string.Join(", ", names) : string.Empty,
+                })
+                .ToList();
+        }
+        catch (Exception ex)
+        {
+            _output.Error($"Couldn't list hosted relays: {ex.Message}");
+        }
+    }
+
+    /// <summary>Best-effort: dev server IIS ports mapped to the site name(s) using each one, purely
+    /// for the "IIS Site(s)" display column -- an empty result (unconfigured/unreachable dev server)
+    /// just means that column stays blank, never an error surfaced to the user.</summary>
+    private async Task<IReadOnlyDictionary<int, List<string>>> TryGetDevServerPortsToSiteNamesAsync()
+    {
+        var result = new Dictionary<int, List<string>>();
+        try
+        {
+            var (devServerHost, sites) = await GetRemoteHostingSitesAsync();
+            if (devServerHost is null)
+            {
+                return result;
+            }
+
+            foreach (var site in sites)
+            {
+                foreach (var port in IisBindingParser.ExtractPorts(site.Bindings))
+                {
+                    if (!result.TryGetValue(port, out var names))
+                    {
+                        names = new List<string>();
+                        result[port] = names;
+                    }
+
+                    names.Add(site.Name);
+                }
+            }
+        }
+        catch
+        {
+            // Best-effort display hint only -- dev server unreachable/unconfigured just means no
+            // matches get shown, not an error dialog.
+        }
+
+        return result;
+    }
+
+    /// <summary>Fetches the dev server's current IIS site list plus the host this machine reaches it
+    /// at, or (null, empty) if Remote Build Hosting isn't configured. Shared by the "IIS Site(s)"
+    /// display hint and the "Relay All/Stop All IIS Site Relays" buttons so both agree on exactly
+    /// which sites and which address are in play.</summary>
+    private async Task<(string? DevServerHost, IReadOnlyList<IisSiteStatus> Sites)> GetRemoteHostingSitesAsync()
+    {
+        var settings = AppSettings.Load(AppSettings.DefaultPath);
+        if (string.IsNullOrWhiteSpace(settings.RemoteHostingUrl) || !Uri.TryCreate(settings.RemoteHostingUrl, UriKind.Absolute, out var uri))
+        {
+            return (null, Array.Empty<IisSiteStatus>());
+        }
+
+        var apiKey = settings.RemoteHostingProtectedApiKey is null
+            ? null
+            : SecretProtector.TryUnprotect(settings.RemoteHostingProtectedApiKey, SecretProtector.RemoteHostingPurpose);
+        var sites = await new RemoteHostingClient().ListRemoteSitesAsync(settings.RemoteHostingUrl, apiKey);
+        return (uri.Host, sites);
+    }
+
+    private async void RefreshHostedRelaysButton_Click(object sender, RoutedEventArgs e)
+    {
+        await LoadHostedRelaysIntoFormAsync();
+    }
+
+    private async void StartHostedRelayButton_Click(object sender, RoutedEventArgs e)
+    {
+        var portText = NewRelayListenPortTextBox.Text?.Trim();
+        var address = NewRelayConnectAddressTextBox.Text?.Trim();
+        var connectPortText = NewRelayConnectPortTextBox.Text?.Trim();
+
+        if (!int.TryParse(portText, out var listenPort) || listenPort is <= 0 or > 65535)
+        {
+            MessageBox.Show("Enter a valid listen port (1-65535).", "PublishTool", MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(address))
+        {
+            MessageBox.Show("Enter the dev server's address.", "PublishTool", MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
+        }
+
+        if (!int.TryParse(connectPortText, out var connectPort) || connectPort is <= 0 or > 65535)
+        {
+            MessageBox.Show("Enter a valid dev server port (1-65535).", "PublishTool", MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
+        }
+
+        _output.Info($"Requesting elevation to start a relay on port {listenPort} -> {address}:{connectPort}...");
+        var (success, output) = await PortProxyRelayService.AddAsync(listenPort, address, connectPort);
+        if (success)
+        {
+            _output.Info($"Relay started: 0.0.0.0:{listenPort} -> {address}:{connectPort}.");
+            NewRelayListenPortTextBox.Text = string.Empty;
+            NewRelayConnectAddressTextBox.Text = string.Empty;
+            NewRelayConnectPortTextBox.Text = string.Empty;
+            MessageBox.Show(
+                $"Relay started. Share http://<one of this machine's addresses below>:{listenPort} with your colleague.",
+                "PublishTool", MessageBoxButton.OK, MessageBoxImage.Information);
+        }
+        else
+        {
+            MessageBox.Show(
+                string.IsNullOrWhiteSpace(output) ? "Couldn't start the relay." : $"Couldn't start the relay:\n\n{output}",
+                "PublishTool", MessageBoxButton.OK, MessageBoxImage.Error);
+        }
+
+        await LoadHostedRelaysIntoFormAsync();
+    }
+
+    private async void StopHostedRelayButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (((FrameworkElement)sender).DataContext is not HostedRelayRow row)
+        {
+            return;
+        }
+
+        _output.Info($"Requesting elevation to stop the relay on port {row.ListenPort}...");
+        var (success, output) = await PortProxyRelayService.RemoveAsync(row.ListenPort);
+        if (success)
+        {
+            _output.Info($"Relay on port {row.ListenPort} stopped.");
+        }
+        else
+        {
+            MessageBox.Show(
+                string.IsNullOrWhiteSpace(output) ? "Couldn't stop the relay." : $"Couldn't stop the relay:\n\n{output}",
+                "PublishTool", MessageBoxButton.OK, MessageBoxImage.Error);
+        }
+
+        await LoadHostedRelaysIntoFormAsync();
+    }
+
+    /// <summary>One click to relay every port the dev server's IIS sites currently use -- one shared
+    /// relay per distinct port covers every site bound to it (host-header or not), and every rule is
+    /// created in a single elevated batch (see <see cref="PortProxyRelayService.AddManyAsync"/>), so
+    /// this asks for Administrator confirmation once no matter how many ports are involved.</summary>
+    private async void RelayAllIisSitesButton_Click(object sender, RoutedEventArgs e)
+    {
+        (string? devServerHost, IReadOnlyList<IisSiteStatus> sites) fetched;
+        try
+        {
+            fetched = await GetRemoteHostingSitesAsync();
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show($"Couldn't read the dev server's IIS sites: {ex.Message}", "PublishTool", MessageBoxButton.OK, MessageBoxImage.Error);
+            return;
+        }
+
+        if (fetched.devServerHost is null)
+        {
+            MessageBox.Show("Configure the Remote Build Hosting URL first -- that's the address these relays will forward to.", "PublishTool", MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
+        }
+
+        var allPorts = fetched.sites.SelectMany(s => IisBindingParser.ExtractPorts(s.Bindings)).Distinct().ToList();
+        if (allPorts.Count == 0)
+        {
+            MessageBox.Show("The dev server has no IIS sites (or none with bindings) to relay.", "PublishTool", MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+
+        var existingPorts = (await PortProxyRelayService.ListAsync()).Select(r => r.ListenPort).ToHashSet();
+        var newPorts = allPorts.Where(p => !existingPorts.Contains(p)).ToList();
+        if (newPorts.Count == 0)
+        {
+            MessageBox.Show("Every dev server IIS port is already relayed.", "PublishTool", MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+
+        _output.Info($"Requesting elevation to relay {newPorts.Count} IIS site port(s) ({string.Join(", ", newPorts)}) -> {fetched.devServerHost}...");
+        var (success, output) = await PortProxyRelayService.AddManyAsync(newPorts.Select(p => (p, fetched.devServerHost, p)));
+        if (success)
+        {
+            _output.Info($"Relayed {newPorts.Count} IIS site port(s): {string.Join(", ", newPorts)}.");
+            MessageBox.Show(
+                $"Relayed {newPorts.Count} port(s): {string.Join(", ", newPorts)}. Share http://<one of this machine's addresses below>:<port> with your colleague.",
+                "PublishTool", MessageBoxButton.OK, MessageBoxImage.Information);
+        }
+        else
+        {
+            MessageBox.Show(
+                string.IsNullOrWhiteSpace(output) ? "Couldn't relay all ports -- some may still have gone through, check the list below." : $"Couldn't relay all ports:\n\n{output}",
+                "PublishTool", MessageBoxButton.OK, MessageBoxImage.Warning);
+        }
+
+        await LoadHostedRelaysIntoFormAsync();
+    }
+
+    /// <summary>Tears down every currently-active relay whose port matches one of the dev server's
+    /// current IIS site ports, in one elevated batch. A relay for a port that's no longer an IIS site
+    /// (e.g. the site was since removed) is left alone -- stop it individually from the list above.</summary>
+    private async void StopAllIisSiteRelaysButton_Click(object sender, RoutedEventArgs e)
+    {
+        (string? devServerHost, IReadOnlyList<IisSiteStatus> sites) fetched;
+        try
+        {
+            fetched = await GetRemoteHostingSitesAsync();
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show($"Couldn't read the dev server's IIS sites: {ex.Message}", "PublishTool", MessageBoxButton.OK, MessageBoxImage.Error);
+            return;
+        }
+
+        if (fetched.devServerHost is null)
+        {
+            MessageBox.Show("Configure the Remote Build Hosting URL first.", "PublishTool", MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
+        }
+
+        var sitePorts = fetched.sites.SelectMany(s => IisBindingParser.ExtractPorts(s.Bindings)).ToHashSet();
+        var activePorts = (await PortProxyRelayService.ListAsync()).Select(r => r.ListenPort).ToHashSet();
+        var portsToStop = sitePorts.Intersect(activePorts).ToList();
+        if (portsToStop.Count == 0)
+        {
+            MessageBox.Show("No active relays currently match a dev server IIS site port.", "PublishTool", MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+
+        _output.Info($"Requesting elevation to stop {portsToStop.Count} IIS site relay(s) ({string.Join(", ", portsToStop)})...");
+        var (success, output) = await PortProxyRelayService.RemoveManyAsync(portsToStop);
+        if (success)
+        {
+            _output.Info($"Stopped {portsToStop.Count} IIS site relay(s): {string.Join(", ", portsToStop)}.");
+        }
+        else
+        {
+            MessageBox.Show(
+                string.IsNullOrWhiteSpace(output) ? "Couldn't stop all relays -- some may still have gone through, check the list below." : $"Couldn't stop all relays:\n\n{output}",
+                "PublishTool", MessageBoxButton.OK, MessageBoxImage.Warning);
+        }
+
+        await LoadHostedRelaysIntoFormAsync();
     }
 
     private async void DarkModeToggle_Toggled(object sender, RoutedEventArgs e)
@@ -983,8 +1385,13 @@ public partial class MainWindow : Wpf.Ui.Controls.FluentWindow
 
     private void IisSiteStateFilterComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e) => ApplyIisSiteStateFilter();
 
+    private void ShowAllIisSitesToggle_Toggled(object sender, RoutedEventArgs e) => ApplyIisSiteStateFilter();
+
     /// <summary>Client-side filter over whatever's currently loaded -- same pattern as the Event
-    /// Logs tab's Level/Method/Type filters, just one combo instead of three.</summary>
+    /// Logs tab's Level/Method/Type filters, combining the state ComboBox with
+    /// <see cref="ShowAllIisSitesToggle"/> (off by default: only sites PublishTool has deployed to,
+    /// same "don't show unrelated system state by default" default as the Firewall tab's own
+    /// "Show all rules" toggle).</summary>
     private void ApplyIisSiteStateFilter()
     {
         // IisSiteStateFilterComboBox's SelectedIndex="0" (set in XAML) fires SelectionChanged
@@ -997,11 +1404,26 @@ public partial class MainWindow : Wpf.Ui.Controls.FluentWindow
 
         var view = System.Windows.Data.CollectionViewSource.GetDefaultView(IisSitesDataGrid.ItemsSource);
         var selection = (IisSiteStateFilterComboBox.SelectedItem as ComboBoxItem)?.Content as string;
-        view.Filter = selection switch
+        var showAll = ShowAllIisSitesToggle is not null && ShowAllIisSitesToggle.IsChecked == true;
+
+        view.Filter = item =>
         {
-            "Started" => item => item is IisSiteStatus site && string.Equals(site.State, "Started", StringComparison.OrdinalIgnoreCase),
-            "Stopped" => item => item is IisSiteStatus site && string.Equals(site.State, "Stopped", StringComparison.OrdinalIgnoreCase),
-            _ => null,
+            if (item is not IisSiteStatus site)
+            {
+                return false;
+            }
+
+            if (!showAll && site.DeployedVersion is null)
+            {
+                return false;
+            }
+
+            return selection switch
+            {
+                "Started" => string.Equals(site.State, "Started", StringComparison.OrdinalIgnoreCase),
+                "Stopped" => string.Equals(site.State, "Stopped", StringComparison.OrdinalIgnoreCase),
+                _ => true,
+            };
         };
     }
 
@@ -1269,6 +1691,47 @@ public partial class MainWindow : Wpf.Ui.Controls.FluentWindow
         catch (Exception ex)
         {
             MessageBox.Show($"Couldn't recycle '{pool.Name}': {ex.Message}", "PublishTool", MessageBoxButton.OK, MessageBoxImage.Error);
+        }
+
+        await RefreshIisStatusAsync();
+    }
+
+    private async void SetAppPoolIdentityButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (((FrameworkElement)sender).DataContext is not IisAppPoolStatus pool)
+        {
+            return;
+        }
+
+        var dialog = new SetAppPoolIdentityDialog(pool.Name) { Owner = this };
+        if (dialog.ShowDialog() != true)
+        {
+            return;
+        }
+
+        var identityType = dialog.SelectedIdentityType;
+
+        try
+        {
+            if (IsRemoteModeActive(out var settings))
+            {
+                await RunGuiActionAsync($"Setting identity of application pool '{pool.Name}' to {identityType} on the dev server", () =>
+                    new RemoteHostingClient().SetRemoteAppPoolIdentityAsync(
+                        settings.RemoteHostingUrl!, DecryptRemoteHostingApiKey(settings), pool.Name, identityType, Environment.UserName));
+            }
+            else
+            {
+                await RunGuiActionAsync($"Setting identity of application pool '{pool.Name}' to {identityType}", () =>
+                    new IisSiteManager(_output).SetAppPoolIdentityAsync(pool.Name, identityType, Environment.UserName));
+            }
+        }
+        catch (RemoteFeatureNotAvailableException ex)
+        {
+            MessageBox.Show(ex.Message, "PublishTool", MessageBoxButton.OK, MessageBoxImage.Information);
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show($"Couldn't set identity for '{pool.Name}': {ex.Message}", "PublishTool", MessageBoxButton.OK, MessageBoxImage.Error);
         }
 
         await RefreshIisStatusAsync();
