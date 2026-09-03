@@ -24,9 +24,10 @@ public sealed class EventLogQueryOptions
     /// <summary>One of <see cref="EventLogFilterTypes"/>.</summary>
     public required string FilterType { get; set; }
 
-    /// <summary>The Source name or message substring to filter by, depending on
-    /// <see cref="FilterType"/>. Null/empty means no filtering beyond the log name and lookback.</summary>
-    public string? FilterValue { get; set; }
+    /// <summary>The Source name(s) or message substring(s) to filter by, depending on
+    /// <see cref="FilterType"/> -- matches if a record matches ANY value. Empty means no filtering
+    /// beyond the log name and lookback.</summary>
+    public IReadOnlyList<string> FilterValues { get; set; } = Array.Empty<string>();
 
     public int MaxEntries { get; set; } = 500;
 

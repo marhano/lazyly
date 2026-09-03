@@ -62,6 +62,11 @@ public sealed class SharedProjectConfig
 
     public string? EventLogFilterType { get; set; } = "Source";
 
+    /// <summary>See <see cref="ProjectConfig.EventLogFilterValues"/>.</summary>
+    public List<string> EventLogFilterValues { get; set; } = new();
+
+    /// <summary>Superseded by <see cref="EventLogFilterValues"/> -- see
+    /// <see cref="ProjectConfig.EventLogFilterValue"/>.</summary>
     public string? EventLogFilterValue { get; set; }
 
     public string? EventLogMachineName { get; set; }
@@ -102,6 +107,7 @@ public sealed class SharedProjectConfig
         UseEventLog = config.UseEventLog,
         EventLogName = config.EventLogName,
         EventLogFilterType = config.EventLogFilterType,
+        EventLogFilterValues = config.EventLogFilterValues,
         EventLogFilterValue = config.EventLogFilterValue,
         EventLogMachineName = config.EventLogMachineName,
         EventLogUsername = config.EventLogUsername,

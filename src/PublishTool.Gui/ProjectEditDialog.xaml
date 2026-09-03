@@ -218,7 +218,6 @@
                             <RowDefinition Height="Auto"/>
                             <RowDefinition Height="Auto"/>
                             <RowDefinition Height="Auto"/>
-                            <RowDefinition Height="Auto"/>
                         </Grid.RowDefinitions>
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="150"/>
@@ -234,15 +233,28 @@
                             <ComboBoxItem Content="Message contains" Tag="MessageContains"/>
                         </ComboBox>
 
-                        <TextBlock Grid.Row="2" Grid.Column="0" Text="Source name or&#10;message text" VerticalAlignment="Center"/>
-                        <ui:TextBox Grid.Row="2" Grid.Column="1" x:Name="EventLogFilterValueTextBox" Margin="0,6" PlaceholderText="e.g. MyApp, or a distinctive substring"/>
-
-                        <TextBlock Grid.Row="3" Grid.Column="0" Text="Machine&#10;(optional)" VerticalAlignment="Center"/>
-                        <ui:TextBox Grid.Row="3" Grid.Column="1" x:Name="EventLogMachineTextBox" Margin="0,6" PlaceholderText="(local machine)"
+                        <TextBlock Grid.Row="2" Grid.Column="0" Text="Machine&#10;(optional)" VerticalAlignment="Center"/>
+                        <ui:TextBox Grid.Row="2" Grid.Column="1" x:Name="EventLogMachineTextBox" Margin="0,6" PlaceholderText="(local machine)"
                                     ToolTip="Only used in local mode -- for a direct EventLogSession to a different machine. Ignored when reading via the dev server's own /api/eventlog."/>
 
-                        <TextBlock Grid.Row="4" Grid.Column="0" Text="Username&#10;(optional)" VerticalAlignment="Center"/>
-                        <ui:TextBox Grid.Row="4" Grid.Column="1" x:Name="EventLogUsernameTextBox" Margin="0,6" PlaceholderText="(use current Windows identity)"/>
+                        <TextBlock Grid.Row="3" Grid.Column="0" Text="Username&#10;(optional)" VerticalAlignment="Center"/>
+                        <ui:TextBox Grid.Row="3" Grid.Column="1" x:Name="EventLogUsernameTextBox" Margin="0,6" PlaceholderText="(use current Windows identity)"/>
+                    </Grid>
+
+                    <TextBlock Text="Source name(s) or message text(s)" Margin="0,14,0,6"/>
+                    <TextBlock TextWrapping="Wrap" Margin="0,0,0,8" FontSize="12"
+                               Foreground="{DynamicResource TextFillColorSecondaryBrush}"
+                               Text="An entry matches if it matches ANY value below -- add more than one to catch multiple Source names (or message substrings) under the same project."/>
+                    <ListBox x:Name="EventLogFilterValuesListBox" Height="90"/>
+                    <Grid Margin="0,8,0,0">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <ui:TextBox Grid.Column="0" x:Name="NewEventLogFilterValueTextBox" PlaceholderText="e.g. MyApp, or a distinctive substring" Margin="0,0,6,0"/>
+                        <ui:Button Grid.Column="1" Content="Add" Icon="{ui:SymbolIcon Add24}" Width="90" Click="AddEventLogFilterValueButton_Click"/>
+                        <ui:Button Grid.Column="2" Content="Remove" Icon="{ui:SymbolIcon Delete24}" Width="100" Margin="6,0,0,0" Click="RemoveEventLogFilterValueButton_Click"/>
                     </Grid>
                 </StackPanel>
 

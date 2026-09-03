@@ -31,6 +31,7 @@ public partial class ProjectEditDialog : Wpf.Ui.Controls.FluentWindow
 
     private readonly ObservableCollection<DeploymentEnvironment> _localEnvironments = new();
     private readonly ObservableCollection<DeploymentEnvironment> _remoteEnvironments = new();
+    private readonly ObservableCollection<string> _eventLogFilterValues = new();
     private List<string> _environmentNames = new();
     private string? _defaultEnvironmentName;
 
@@ -72,6 +73,7 @@ public partial class ProjectEditDialog : Wpf.Ui.Controls.FluentWindow
 
         LocalEnvironmentsDataGrid.ItemsSource = _localEnvironments;
         RemoteEnvironmentsDataGrid.ItemsSource = _remoteEnvironments;
+        EventLogFilterValuesListBox.ItemsSource = _eventLogFilterValues;
 
         TitleTextBlock.Text = existing is null ? "Add project" : $"Edit {existing.Name}";
 
@@ -188,7 +190,10 @@ public partial class ProjectEditDialog : Wpf.Ui.Controls.FluentWindow
         EventLogNameTextBox.Text = p.EventLogName ?? "Application";
         EventLogFilterTypeComboBox.SelectedIndex =
             string.Equals(p.EventLogFilterType, EventLogFilterTypes.MessageContains, StringComparison.OrdinalIgnoreCase) ? 1 : 0;
-        EventLogFilterValueTextBox.Text = p.EventLogFilterValue ?? string.Empty;
+        foreach (var value in p.EffectiveEventLogFilterValues)
+        {
+            _eventLogFilterValues.Add(value);
+        }
         EventLogMachineTextBox.Text = p.EventLogMachineName ?? string.Empty;
         EventLogUsernameTextBox.Text = p.EventLogUsername ?? string.Empty;
 
@@ -417,6 +422,32 @@ public partial class ProjectEditDialog : Wpf.Ui.Controls.FluentWindow
         }
     }
 
+    private void AddEventLogFilterValueButton_Click(object sender, RoutedEventArgs e)
+    {
+        var value = NewEventLogFilterValueTextBox.Text?.Trim();
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return;
+        }
+
+        if (_eventLogFilterValues.Any(v => string.Equals(v, value, StringComparison.OrdinalIgnoreCase)))
+        {
+            MessageBox.Show($"'{value}' is already in the list.", "PublishTool", MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
+        }
+
+        _eventLogFilterValues.Add(value);
+        NewEventLogFilterValueTextBox.Text = string.Empty;
+    }
+
+    private void RemoveEventLogFilterValueButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (EventLogFilterValuesListBox.SelectedItem is string value)
+        {
+            _eventLogFilterValues.Remove(value);
+        }
+    }
+
     private void UseAppConfigToggle_Toggled(object sender, RoutedEventArgs e)
     {
         var isOn = UseAppConfigToggle.IsChecked == true;
@@ -515,10 +546,10 @@ public partial class ProjectEditDialog : Wpf.Ui.Controls.FluentWindow
         var appConfigProvider = AppConfigTypeComboBox.SelectedItem as IAppConfigProvider;
 
         var useEventLog = UseEventLogToggle.IsChecked == true;
-        if (useEventLog && string.IsNullOrWhiteSpace(EventLogFilterValueTextBox.Text))
+        if (useEventLog && _eventLogFilterValues.Count == 0)
         {
             MessageBox.Show(
-                "Event Logs is on but no Source name or message text filter was entered. Fill it in, or turn the toggle off.",
+                "Event Logs is on but no Source name or message text filter was added. Add at least one, or turn the toggle off.",
                 "PublishTool", MessageBoxButton.OK, MessageBoxImage.Warning);
             return;
         }
@@ -581,7 +612,7 @@ public partial class ProjectEditDialog : Wpf.Ui.Controls.FluentWindow
             UseEventLog = useEventLog,
             EventLogName = useEventLog ? (string.IsNullOrWhiteSpace(EventLogNameTextBox.Text) ? "Application" : EventLogNameTextBox.Text.Trim()) : "Application",
             EventLogFilterType = useEventLog ? filterType : EventLogFilterTypes.Source,
-            EventLogFilterValue = useEventLog ? EventLogFilterValueTextBox.Text.Trim() : null,
+            EventLogFilterValues = useEventLog ? _eventLogFilterValues.ToList() : new(),
             EventLogMachineName = useEventLog && !string.IsNullOrWhiteSpace(EventLogMachineTextBox.Text) ? EventLogMachineTextBox.Text.Trim() : null,
             EventLogUsername = useEventLog && !string.IsNullOrWhiteSpace(EventLogUsernameTextBox.Text) ? EventLogUsernameTextBox.Text.Trim() : null,
             EventLogProtectedPassword = _existing?.EventLogProtectedPassword,

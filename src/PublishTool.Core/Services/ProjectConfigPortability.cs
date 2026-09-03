@@ -102,6 +102,7 @@ public static class ProjectConfigPortability
         UseEventLog = source.UseEventLog,
         EventLogName = source.EventLogName,
         EventLogFilterType = source.EventLogFilterType,
+        EventLogFilterValues = source.EventLogFilterValues,
         EventLogFilterValue = source.EventLogFilterValue,
         EventLogMachineName = source.EventLogMachineName,
         EventLogUsername = source.EventLogUsername,

@@ -1,3 +1,5 @@
+using System.Text.Json.Serialization;
+
 namespace PublishTool.Core.Models;
 
 public sealed class ProjectConfig
@@ -124,9 +126,24 @@ public sealed class ProjectConfig
     /// (for apps that share a generic log, e.g. via NLog writing to "Application").</summary>
     public string? EventLogFilterType { get; set; } = "Source";
 
-    /// <summary>The Source name or message substring to filter by, depending on
-    /// <see cref="EventLogFilterType"/>.</summary>
+    /// <summary>The Source name(s) or message substring(s) to filter by, depending on
+    /// <see cref="EventLogFilterType"/> -- an entry matches if it matches ANY value in this list.
+    /// Current code always writes here (even for a single value); see
+    /// <see cref="EventLogFilterValue"/> for the older field this supersedes.</summary>
+    public List<string> EventLogFilterValues { get; set; } = new();
+
+    /// <summary>Superseded by <see cref="EventLogFilterValues"/> -- kept only so a project saved
+    /// before multi-value support existed still deserializes and filters correctly. Never written
+    /// by current code; read only as a fallback, see <see cref="EffectiveEventLogFilterValues"/>.</summary>
     public string? EventLogFilterValue { get; set; }
+
+    /// <summary><see cref="EventLogFilterValues"/>, falling back to the legacy single
+    /// <see cref="EventLogFilterValue"/> for a project saved before multi-value support existed.</summary>
+    [JsonIgnore]
+    public IReadOnlyList<string> EffectiveEventLogFilterValues =>
+        EventLogFilterValues.Count > 0
+            ? EventLogFilterValues
+            : string.IsNullOrWhiteSpace(EventLogFilterValue) ? Array.Empty<string>() : new[] { EventLogFilterValue };
 
     /// <summary>Machine to read the event log from. Null/empty means the local machine.</summary>
     public string? EventLogMachineName { get; set; }

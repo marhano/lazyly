@@ -454,8 +454,11 @@ public partial class MainWindow : Wpf.Ui.Controls.FluentWindow
     {
         settings ??= AppSettings.Load(AppSettings.DefaultPath);
         var currentUrl = settings.RemoteHostingUrl;
+        var apiKey = settings.RemoteHostingProtectedApiKey is null
+            ? null
+            : SecretProtector.TryUnprotect(settings.RemoteHostingProtectedApiKey, SecretProtector.RemoteHostingPurpose);
 
-        RemoteHostingRelaysDataGrid.ItemsSource = settings.RemoteHostingRelays
+        var rows = settings.RemoteHostingRelays
             .Select(r => new RemoteHostingRelayRow
             {
                 Name = r.Name,
@@ -463,6 +466,29 @@ public partial class MainWindow : Wpf.Ui.Controls.FluentWindow
                 IsActive = !string.IsNullOrWhiteSpace(currentUrl) && string.Equals(r.Url, currentUrl, StringComparison.OrdinalIgnoreCase),
             })
             .ToList();
+
+        RemoteHostingRelaysDataGrid.ItemsSource = rows;
+
+        // Ping every relay in the background so the grid appears immediately (each row starts as
+        // "Checking...") instead of blocking on the network -- RemoteHostingRelayRow's own
+        // INotifyPropertyChanged updates the cell live once each ping resolves.
+        foreach (var row in rows)
+        {
+            _ = PingRemoteHostingRelayRowAsync(row, apiKey);
+        }
+    }
+
+    private static async Task PingRemoteHostingRelayRowAsync(RemoteHostingRelayRow row, string? apiKey)
+    {
+        try
+        {
+            var ok = await new RemoteHostingClient().PingAsync(row.Url, apiKey);
+            row.ConnectionStatus = ok ? "Online" : "Offline";
+        }
+        catch (Exception ex)
+        {
+            row.ConnectionStatus = $"Error: {ex.Message}";
+        }
     }
 
     private void AddRemoteHostingRelayButton_Click(object sender, RoutedEventArgs e)
@@ -3430,7 +3456,7 @@ public partial class MainWindow : Wpf.Ui.Controls.FluentWindow
                     Username = string.IsNullOrWhiteSpace(project.EventLogUsername) ? null : project.EventLogUsername,
                     Password = password,
                     FilterType = project.EventLogFilterType ?? EventLogFilterTypes.Source,
-                    FilterValue = project.EventLogFilterValue,
+                    FilterValues = project.EffectiveEventLogFilterValues,
                 };
 
                 var reader = new EventLogReaderService();

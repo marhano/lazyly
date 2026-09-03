@@ -1,4 +1,5 @@
 using System.Diagnostics.Eventing.Reader;
+using System.Linq;
 using System.Runtime.Versioning;
 using System.Security;
 using PublishTool.Core.Models;
@@ -30,8 +31,9 @@ public sealed class EventLogReaderService
             ReverseDirection = true,
         };
 
+        var messageFilterValues = options.FilterValues.Where(v => !string.IsNullOrWhiteSpace(v)).ToList();
         var messageFilterActive = string.Equals(options.FilterType, EventLogFilterTypes.MessageContains, StringComparison.OrdinalIgnoreCase)
-            && !string.IsNullOrWhiteSpace(options.FilterValue);
+            && messageFilterValues.Count > 0;
 
         var results = new List<EventLogEntryRecord>();
         using var reader = new EventLogReader(query);
@@ -49,7 +51,7 @@ public sealed class EventLogReaderService
 
             var message = ResolveMessage(record);
 
-            if (messageFilterActive && (message is null || !message.Contains(options.FilterValue!, StringComparison.OrdinalIgnoreCase)))
+            if (messageFilterActive && (message is null || !messageFilterValues.Any(v => message.Contains(v, StringComparison.OrdinalIgnoreCase))))
             {
                 continue;
             }
@@ -168,10 +170,11 @@ public sealed class EventLogReaderService
             $"TimeCreated[timediff(@SystemTime) <= {(long)options.Lookback.TotalMilliseconds}]",
         };
 
-        if (string.Equals(options.FilterType, EventLogFilterTypes.Source, StringComparison.OrdinalIgnoreCase) &&
-            !string.IsNullOrWhiteSpace(options.FilterValue))
+        var sourceValues = options.FilterValues.Where(v => !string.IsNullOrWhiteSpace(v)).ToList();
+        if (string.Equals(options.FilterType, EventLogFilterTypes.Source, StringComparison.OrdinalIgnoreCase) && sourceValues.Count > 0)
         {
-            conditions.Add($"Provider[@Name='{options.FilterValue.Replace("'", "&apos;")}']");
+            var providerConditions = sourceValues.Select(v => $"Provider[@Name='{v.Replace("'", "&apos;")}']");
+            conditions.Add($"({string.Join(" or ", providerConditions)})");
         }
 
         return $"*[System[{string.Join(" and ", conditions)}]]";

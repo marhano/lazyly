@@ -1,4 +1,5 @@
 using System.CommandLine;
+using System.Linq;
 using PublishTool.Core;
 using PublishTool.Core.Models;
 using PublishTool.Core.Services;
@@ -409,9 +410,10 @@ public static class CommandLineFactory
                            $"(native filter by Source/Provider name) or \"{EventLogFilterTypes.MessageContains}\" " +
                            "(substring match against the message body, for apps sharing a generic log via e.g. NLog).",
         };
-        var eventLogFilterValueOption = new Option<string?>("--event-log-filter-value")
+        var eventLogFilterValueOption = new Option<string[]>("--event-log-filter-value")
         {
-            Description = "The Source name or message substring to filter by, per --event-log-filter-type.",
+            Description = "A Source name or message substring to filter by, per --event-log-filter-type. " +
+                           "Repeatable -- an entry matches if it matches ANY value given.",
         };
         var eventLogMachineOption = new Option<string?>("--event-log-machine")
         {
@@ -540,7 +542,7 @@ public static class CommandLineFactory
                     UseEventLog = enableEventLog,
                     EventLogName = parseResult.GetValue(eventLogNameOption) ?? "Application",
                     EventLogFilterType = eventLogFilterType ?? EventLogFilterTypes.Source,
-                    EventLogFilterValue = parseResult.GetValue(eventLogFilterValueOption),
+                    EventLogFilterValues = (parseResult.GetValue(eventLogFilterValueOption) ?? Array.Empty<string>()).ToList(),
                     EventLogMachineName = parseResult.GetValue(eventLogMachineOption),
                     EventLogUsername = parseResult.GetValue(eventLogUsernameOption),
                     EventLogProtectedPassword = existing?.EventLogProtectedPassword,

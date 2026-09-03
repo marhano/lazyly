@@ -138,6 +138,7 @@ public sealed class RemoteProjectRegistry : IProjectRegistry
             UseEventLog = shared.UseEventLog,
             EventLogName = shared.EventLogName,
             EventLogFilterType = shared.EventLogFilterType,
+            EventLogFilterValues = shared.EventLogFilterValues,
             EventLogFilterValue = shared.EventLogFilterValue,
             EventLogMachineName = shared.EventLogMachineName,
             EventLogUsername = shared.EventLogUsername,

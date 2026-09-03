@@ -1007,7 +1007,9 @@ app.MapGet("/api/eventlog", (HttpRequest request, IConfiguration configuration, 
         LogName = string.IsNullOrWhiteSpace(sharedProject.EventLogName) ? "Application" : sharedProject.EventLogName,
         MachineName = null,
         FilterType = sharedProject.EventLogFilterType ?? EventLogFilterTypes.Source,
-        FilterValue = sharedProject.EventLogFilterValue,
+        FilterValues = sharedProject.EventLogFilterValues.Count > 0
+            ? sharedProject.EventLogFilterValues
+            : string.IsNullOrWhiteSpace(sharedProject.EventLogFilterValue) ? Array.Empty<string>() : new[] { sharedProject.EventLogFilterValue },
     };
 
 #pragma warning disable CA1416 // EventLogReaderService is Windows-only; Hosting only ever runs on Windows despite its plain net8.0 TFM (same as the other pragma-suppressed CA1416 sites in this solution).
