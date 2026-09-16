@@ -50,6 +50,7 @@
                             <RowDefinition Height="Auto"/>
                             <RowDefinition Height="Auto"/>
                             <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/>
                             <RowDefinition Height="*"/>
                         </Grid.RowDefinitions>
                         <Grid.ColumnDefinitions>
@@ -111,7 +112,12 @@
                                         Message="Deploying to your own machine's IIS needs PublishTool running as Administrator, or this publish's local deploy step will fail. Close the app and relaunch it with &quot;Run as administrator&quot;, or switch Deploy target to a dev-server environment instead."/>
                         </StackPanel>
 
-                        <StackPanel Grid.Row="4" Grid.Column="0" Grid.ColumnSpan="2" x:Name="AndroidBuildOptionsPanel" Visibility="Collapsed" Margin="0,6,0,0">
+                        <StackPanel Grid.Row="4" Grid.Column="0" Grid.ColumnSpan="2" x:Name="RunUnitTestsPanel" Visibility="Collapsed" Margin="0,6,0,0">
+                            <ui:ToggleSwitch x:Name="RunUnitTestsToggle" Content="Run unit tests"
+                                             ToolTip="Runs this project's configured unit tests and includes an Excel report with the build. Never blocks or fails the publish, even if tests fail or can't run."/>
+                        </StackPanel>
+
+                        <StackPanel Grid.Row="5" Grid.Column="0" Grid.ColumnSpan="2" x:Name="AndroidBuildOptionsPanel" Visibility="Collapsed" Margin="0,6,0,0">
                             <Grid>
                                 <Grid.RowDefinitions>
                                     <RowDefinition Height="Auto"/>
@@ -137,7 +143,7 @@
                             </Grid>
                         </StackPanel>
 
-                        <Grid Grid.Row="5" Grid.Column="0" Grid.ColumnSpan="2" x:Name="AppConfigCandidatePanel" Visibility="Collapsed" Margin="0,10,0,0">
+                        <Grid Grid.Row="6" Grid.Column="0" Grid.ColumnSpan="2" x:Name="AppConfigCandidatePanel" Visibility="Collapsed" Margin="0,10,0,0">
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="120"/>
                                 <ColumnDefinition Width="*"/>
@@ -148,14 +154,14 @@
                                       ToolTip="No fixed config path is set on this project -- pick which of the automatically found files to edit for this publish."/>
                         </Grid>
 
-                        <StackPanel Grid.Row="6" Grid.Column="1" Orientation="Horizontal" Margin="0,10,0,0">
+                        <StackPanel Grid.Row="7" Grid.Column="1" Orientation="Horizontal" Margin="0,10,0,0">
                             <ui:ToggleSwitch x:Name="MarkAsLatestToggle" Content="Mark as latest release"
                                              ToolTip="Shown as &quot;(latest)&quot; next to this build on the hosting site. Only one build per project can be latest -- marking this one un-flags whichever build had it before."/>
                             <ui:ToggleSwitch x:Name="ListInHostingToggle" Content="List in hosting site" IsChecked="True" Margin="24,0,0,0"
                                              ToolTip="Whether this build appears in the build-hosting site's listing. Turn off for a throwaway test build you don't want showing up there -- it's still archived either way."/>
                         </StackPanel>
 
-                        <StackPanel Grid.Row="7" Grid.Column="1" Orientation="Horizontal" Margin="0,14,0,0">
+                        <StackPanel Grid.Row="8" Grid.Column="1" Orientation="Horizontal" Margin="0,14,0,0">
                             <ui:Button x:Name="PublishButton" Content="Publish"
                                        Appearance="Primary" Icon="{ui:SymbolIcon Rocket24}"
                                        Width="140" Click="PublishButton_Click"/>
@@ -164,7 +170,7 @@
                                        Width="140" Margin="10,0,0,0" Click="RefreshProjectsButton_Click"/>
                         </StackPanel>
 
-                        <ScrollViewer Grid.Row="8" Grid.Column="0" Grid.ColumnSpan="2" VerticalScrollBarVisibility="Auto" Margin="0,20,0,0">
+                        <ScrollViewer Grid.Row="9" Grid.Column="0" Grid.ColumnSpan="2" VerticalScrollBarVisibility="Auto" Margin="0,20,0,0">
                             <StackPanel>
                                 <ui:CardExpander x:Name="AppConfigExpander" Header="App Config" IsExpanded="False"
                                                   Margin="0,0,0,12" Visibility="Collapsed">
@@ -260,8 +266,8 @@
                                 <TextBlock Text="Registered projects" VerticalAlignment="Center"
                                            Foreground="{DynamicResource TextFillColorSecondaryBrush}"/>
                             </DockPanel>
-                            <ListBox Grid.Row="1" x:Name="RegisteredProjectsListBox"
-                                     DisplayMemberPath="Name" SelectionChanged="RegisteredProjectsListBox_SelectionChanged"/>
+                            <ListBox Grid.Row="1" x:Name="RegisteredProjectsListBox" DisplayMemberPath="Name"
+                                     SelectionChanged="RegisteredProjectsListBox_SelectionChanged"/>
 
                             <StackPanel Grid.Row="2" Margin="0,10,0,0">
                                 <ui:Button x:Name="AddProjectButton" Content="Add project" Appearance="Primary"
@@ -299,14 +305,35 @@
                                     <DataGridTextColumn Header="Published by" Binding="{Binding PublishedBy}" Width="140"/>
                                     <DataGridTextColumn Header="Latest" Binding="{Binding IsLatest}" Width="60"/>
                                     <DataGridTextColumn Header="Listed" Binding="{Binding ListInHosting}" Width="60"/>
-                                    <DataGridTemplateColumn Header="Actions" Width="*">
+                                    <DataGridTemplateColumn Header="Test Result" Width="150">
                                         <DataGridTemplateColumn.CellTemplate>
                                             <DataTemplate>
                                                 <StackPanel Orientation="Horizontal">
-                                                    <ui:Button Content="Deploy this version" Icon="{ui:SymbolIcon Rocket24}"
-                                                               Width="150" Margin="0,2,6,2" Click="DeployBuildButton_Click">
+                                                    <TextBlock Text="{Binding TestResultDisplay}" VerticalAlignment="Center" Margin="0,0,4,0"/>
+                                                    <ui:Button Icon="{ui:SymbolIcon ArrowDownload24}" ToolTip="Download test report"
+                                                               Width="30" Height="30" Padding="0" Click="DownloadTestReportButton_Click">
                                                         <ui:Button.Style>
-                                                            <Style TargetType="ui:Button">
+                                                            <Style TargetType="ui:Button" BasedOn="{StaticResource {x:Type ui:Button}}">
+                                                                <Style.Triggers>
+                                                                    <DataTrigger Binding="{Binding HasUnitTestReport}" Value="False">
+                                                                        <Setter Property="Visibility" Value="Collapsed"/>
+                                                                    </DataTrigger>
+                                                                </Style.Triggers>
+                                                            </Style>
+                                                        </ui:Button.Style>
+                                                    </ui:Button>
+                                                </StackPanel>
+                                            </DataTemplate>
+                                        </DataGridTemplateColumn.CellTemplate>
+                                    </DataGridTemplateColumn>
+                                    <DataGridTemplateColumn Header="Actions" Width="Auto">
+                                        <DataGridTemplateColumn.CellTemplate>
+                                            <DataTemplate>
+                                                <StackPanel Orientation="Horizontal">
+                                                    <ui:Button Icon="{ui:SymbolIcon Rocket24}" ToolTip="Deploy this version"
+                                                               Width="36" Margin="0,2,4,2" Click="DeployBuildButton_Click">
+                                                        <ui:Button.Style>
+                                                            <Style TargetType="ui:Button" BasedOn="{StaticResource {x:Type ui:Button}}">
                                                                 <Style.Triggers>
                                                                     <DataTrigger Binding="{Binding CanDeploy}" Value="False">
                                                                         <Setter Property="Visibility" Value="Collapsed"/>
@@ -315,10 +342,22 @@
                                                             </Style>
                                                         </ui:Button.Style>
                                                     </ui:Button>
-                                                    <ui:Button Content="Mark latest" Icon="{ui:SymbolIcon Star24}"
-                                                               Width="110" Margin="0,2,6,2" Click="MarkBuildLatestButton_Click"/>
-                                                    <ui:Button Content="Delete" Icon="{ui:SymbolIcon Delete24}"
-                                                               Width="90" Margin="0,2" Click="DeleteBuildButton_Click"/>
+                                                    <ui:Button Icon="{ui:SymbolIcon Star24}" ToolTip="Mark latest"
+                                                               Width="36" Margin="0,2,4,2" Click="MarkBuildLatestButton_Click"/>
+                                                    <ui:Button Icon="{ui:SymbolIcon Delete24}" ToolTip="Delete"
+                                                               Width="36" Margin="0,2,4,2" Click="DeleteBuildButton_Click"/>
+                                                    <ui:Button Icon="{ui:SymbolIcon Play24}" ToolTip="Run tests"
+                                                               Width="36" Margin="0,2" Click="RunTestsButton_Click">
+                                                        <ui:Button.Style>
+                                                            <Style TargetType="ui:Button" BasedOn="{StaticResource {x:Type ui:Button}}">
+                                                                <Style.Triggers>
+                                                                    <DataTrigger Binding="{Binding HasTestSuites}" Value="False">
+                                                                        <Setter Property="Visibility" Value="Collapsed"/>
+                                                                    </DataTrigger>
+                                                                </Style.Triggers>
+                                                            </Style>
+                                                        </ui:Button.Style>
+                                                    </ui:Button>
                                                 </StackPanel>
                                             </DataTemplate>
                                         </DataGridTemplateColumn.CellTemplate>

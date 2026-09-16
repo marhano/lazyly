@@ -126,6 +126,13 @@
                                                     Release Notes
                                                 </button>
                                             }
+                                            @if (BuildDisplayHelpers.HasUnitTestReport(build))
+                                            {
+                                                <a class="pt-btn pt-btn-ghost pt-btn-sm"
+                                                   href="/download?path=@Uri.EscapeDataString(BuildDisplayHelpers.RelativeUnitTestReportPath(Model.BuildsRootPath, build))">
+                                                    Test Report
+                                                </a>
+                                            }
                                             <a class="pt-btn pt-btn-primary pt-btn-sm"
                                                href="/download?path=@Uri.EscapeDataString(BuildDisplayHelpers.RelativeZipPath(Model.BuildsRootPath, build))">
                                                 Download

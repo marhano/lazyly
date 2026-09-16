@@ -1,6 +1,8 @@
+using System.IO.Compression;
 using PublishTool.Core.Models;
 using PublishTool.Core.Services.AppConfig;
 using PublishTool.Core.Services.BuildRunners;
+using PublishTool.Core.Services.UnitTestRunners;
 
 namespace PublishTool.Core.Services;
 
@@ -97,10 +99,34 @@ public sealed class Publisher
         // built purely to upload, never the shared local BuildsRoot (see PublishOptions.UseRemoteMode).
         string? uploadStagingDir = null;
 
+        // Populated below (if options.RunUnitTests) and cleaned up in the finally block alongside
+        // stagingDir/uploadStagingDir -- declared out here (not inside try) so finally can see it.
+        // This is the raw generated report from a scratch temp dir; it gets copied to its real
+        // sibling-artifact location (see "unitTestReportPath" below) once that's known, the same
+        // way release notes content gets written to "releaseNotesPath" once that's known.
+        string? generatedUnitTestReportPath = null;
+        string? generatedTestBundlePath = null;
+
         try
         {
             var runner = BuildRunnerRegistry.Get(project.ProjectType);
             var buildResult = await runner.BuildAsync(new BuildContext(project, options, stagingDir, _output), ct);
+
+            if (options.RunUnitTests)
+            {
+                generatedUnitTestReportPath = await TryRunUnitTestsAsync(project, options.MsBuildPath, ct);
+            }
+
+            // Independent of options.RunUnitTests -- this isn't about producing a report now, it's
+            // about giving the dev server something to run LATER, on demand, with no source or git
+            // needed there at all (see RemoteTestRunnerService in PublishTool.Hosting). Runs
+            // regardless of local/remote mode, same as the unit test report above, so a locally
+            // published build could still be uploaded/redeployed with a working bundle later.
+            List<TestBundleSuiteEntry> testBundleSuites = new();
+            if (project.TestSuites.Count > 0)
+            {
+                (generatedTestBundlePath, testBundleSuites) = await TryBundleTestSuitesAsync(project, options.MsBuildPath, ct);
+            }
 
             // Copies buildResult's output to destinationPath -- zipping a Directory-kind result
             // (as every build did before Angular/Android existed), or copying a SingleFile-kind
@@ -109,7 +135,7 @@ public sealed class Publisher
                 ? Task.Run(() => _buildRepository.WriteZip(destinationPath, buildResult.Path), ct)
                 : Task.Run(() => File.Copy(buildResult.Path, destinationPath, overwrite: true), ct);
 
-            string zipPath, manifestPath, releaseNotesPath;
+            string zipPath, manifestPath, releaseNotesPath, unitTestReportPath, testBundlePath;
             string? existingReleaseNotesReference;
 
             if (options.UseRemoteMode)
@@ -121,6 +147,8 @@ public sealed class Publisher
                 zipPath = Path.Combine(uploadStagingDir, $"{options.Version}{artifactExtension}");
                 manifestPath = Path.Combine(uploadStagingDir, $"{options.Version}.manifest.json");
                 releaseNotesPath = Path.Combine(uploadStagingDir, $"{options.Version}.releasenotes.txt");
+                unitTestReportPath = Path.Combine(uploadStagingDir, $"{options.Version}.unittests.xlsx");
+                testBundlePath = Path.Combine(uploadStagingDir, $"{options.Version}.testbundle.zip");
 
                 await WriteArtifactAsync(zipPath);
                 existingReleaseNotesReference = await TryGetExistingRemoteReleaseNotesReferenceAsync(options, project, ct);
@@ -135,10 +163,15 @@ public sealed class Publisher
                     _output.Stage($"Version {options.Version} already exists for {project.Name} -- overwriting in place...");
                     zipPath = existing.Manifest.ZipPath;
                     manifestPath = existing.ManifestPath;
-                    // Pre-this-feature manifests may not have a release notes path yet -- fall back to
-                    // the naming convention derived from the existing zip so an overwrite can still add one.
+                    // Pre-this-feature manifests may not have a release notes/unit test report/test
+                    // bundle path yet -- fall back to the naming convention derived from the existing
+                    // zip so an overwrite can still add any of them.
                     releaseNotesPath = existing.Manifest.ReleaseNotesPath
                         ?? Path.ChangeExtension(zipPath, null) + ".releasenotes.txt";
+                    unitTestReportPath = existing.Manifest.UnitTestReportPath
+                        ?? Path.ChangeExtension(zipPath, null) + ".unittests.xlsx";
+                    testBundlePath = existing.Manifest.TestBundlePath
+                        ?? Path.ChangeExtension(zipPath, null) + ".testbundle.zip";
 
                     await WriteArtifactAsync(zipPath);
 
@@ -159,6 +192,8 @@ public sealed class Publisher
                     zipPath = archive.ZipPath;
                     manifestPath = archive.ManifestPath;
                     releaseNotesPath = archive.ReleaseNotesPath;
+                    unitTestReportPath = archive.UnitTestReportPath;
+                    testBundlePath = archive.TestBundlePath;
                     existingReleaseNotesReference = null;
                 }
             }
@@ -200,6 +235,20 @@ public sealed class Publisher
                 _output.Warn($"'{project.Name}' has no Project ID set -- skipping release notes generation.");
             }
 
+            string? writtenUnitTestReportPath = null;
+            if (generatedUnitTestReportPath is not null)
+            {
+                await Task.Run(() => _buildRepository.CopyUnitTestReport(unitTestReportPath, generatedUnitTestReportPath), ct);
+                writtenUnitTestReportPath = unitTestReportPath;
+            }
+
+            string? writtenTestBundlePath = null;
+            if (generatedTestBundlePath is not null)
+            {
+                await Task.Run(() => _buildRepository.CopyTestBundle(testBundlePath, generatedTestBundlePath), ct);
+                writtenTestBundlePath = testBundlePath;
+            }
+
             _buildRepository.WriteManifest(manifestPath, new BuildManifest
             {
                 ProjectName = project.Name,
@@ -209,15 +258,20 @@ public sealed class Publisher
                 ZipPath = zipPath,
                 ListInHosting = options.ListInHosting,
                 ReleaseNotesPath = writtenReleaseNotesPath,
+                UnitTestReportPath = writtenUnitTestReportPath,
                 AppConfigSettings = project.UseAppConfig ? options.AppConfigSettings : null,
                 IsLatest = options.MarkAsLatest,
+                HasTestSuites = project.TestSuites.Count > 0,
+                TestBundlePath = writtenTestBundlePath,
+                TestBundleSuites = writtenTestBundlePath is not null ? testBundleSuites : new(),
             });
 
             if (options.UseRemoteMode)
             {
                 _output.Stage("Uploading to dev server...");
                 var remoteManifestPath = await _remoteHostingClient.UploadBuildAsync(
-                    options.RemoteHostingUrl!, options.RemoteHostingApiKey, zipPath, manifestPath, writtenReleaseNotesPath, ct);
+                    options.RemoteHostingUrl!, options.RemoteHostingApiKey, zipPath, manifestPath, writtenReleaseNotesPath,
+                    writtenUnitTestReportPath, writtenTestBundlePath, ct);
                 _output.Info("Uploaded to dev server.");
                 // The uploaded manifest already carries IsLatest = options.MarkAsLatest -- the server
                 // applies its own SetLatest from that when it accepts the upload, same as marking
@@ -305,6 +359,163 @@ public sealed class Publisher
             {
                 Directory.Delete(uploadStagingDir, recursive: true);
             }
+
+            if (generatedUnitTestReportPath is not null && File.Exists(generatedUnitTestReportPath))
+            {
+                File.Delete(generatedUnitTestReportPath);
+            }
+
+            if (generatedTestBundlePath is not null && File.Exists(generatedTestBundlePath))
+            {
+                File.Delete(generatedTestBundlePath);
+            }
+        }
+    }
+
+    /// <summary>Runs every configured test suite for this project (see <see cref="UnitTestOrchestrator"/>)
+    /// and returns the path to the combined .xlsx report, or null if there was nothing to report (no
+    /// suites configured, or none produced test cases). Never throws -- see
+    /// <see cref="UnitTestOrchestrator"/>'s remarks on why a suite failing to run is just logged, not
+    /// propagated. The caller owns copying the returned file to its real sibling-artifact location
+    /// (see "unitTestReportPath" in <see cref="PublishAsync"/>, same treatment as release notes) and
+    /// is responsible for its own cleanup -- this only cleans up the scratch directory the run
+    /// itself used.</summary>
+    private async Task<string?> TryRunUnitTestsAsync(ProjectConfig project, string? msBuildPath, CancellationToken ct)
+    {
+        var workingDir = Path.Combine(Path.GetTempPath(), "PublishTool", "tests", Guid.NewGuid().ToString("N"));
+        try
+        {
+            _output.Stage("Running unit tests...");
+            var result = await UnitTestOrchestrator.RunAllAsync(project, workingDir, _output, ct, msBuildPath);
+
+            if (result?.ReportPath is null)
+            {
+                return null;
+            }
+
+            // Copied out of workingDir before the finally block below deletes it -- the caller needs
+            // this file to outlive this method call.
+            var reportCopyPath = Path.Combine(Path.GetTempPath(), "PublishTool", $"unit-test-results-{Guid.NewGuid():N}.xlsx");
+            File.Copy(result.ReportPath, reportCopyPath);
+            return reportCopyPath;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _output.Warn($"Unit tests could not be run: {ex.Message}");
+            return null;
+        }
+        finally
+        {
+            if (Directory.Exists(workingDir))
+            {
+                Directory.Delete(workingDir, recursive: true);
+            }
+        }
+    }
+
+    /// <summary>Builds/publishes each of the project's configured <see cref="ProjectConfig.TestSuites"/>
+    /// into its own folder and zips the result -- this is what lets the dev server run a project's
+    /// tests later with no git, no checkout, and no source of its own at all: the bundle already
+    /// carries a fully-built test assembly per suite, and <see cref="UnitTestRunners.DotNetUnitTestRunner"/>'s
+    /// prebuilt-assembly path knows how to run one directly (<c>dotnet vstest</c> for a modern suite,
+    /// vstest.console.exe for a classic one) -- no MSBuild/Build Tools needed on the server at all for
+    /// a modern suite, since building already happened here, on the publishing dev's own machine,
+    /// which has the real source and tooling. Never throws -- same "purely informational, must never
+    /// block publish" contract as <see cref="TryRunUnitTestsAsync"/>; a suite that fails to
+    /// build/publish is just skipped with a warning; other suites still bundle successfully. Returns
+    /// (null, empty) if nothing could be bundled at all.</summary>
+    private async Task<(string? BundleZipPath, List<TestBundleSuiteEntry> Suites)> TryBundleTestSuitesAsync(
+        ProjectConfig project, string? msBuildPath, CancellationToken ct)
+    {
+        var bundleRoot = Path.Combine(Path.GetTempPath(), "PublishTool", "test-bundles", Guid.NewGuid().ToString("N"));
+        var suiteEntries = new List<TestBundleSuiteEntry>();
+        try
+        {
+            foreach (var suite in project.TestSuites.Where(s => !string.IsNullOrWhiteSpace(s.ProjectPath)))
+            {
+                ct.ThrowIfCancellationRequested();
+                try
+                {
+                    if (!File.Exists(suite.ProjectPath))
+                    {
+                        _output.Warn($"'{project.Name}' test suite '{suite.Name}' not found at '{suite.ProjectPath}' -- won't be bundled for remote execution.");
+                        continue;
+                    }
+
+                    var suiteOutputDir = Path.Combine(bundleRoot, UnitTestOrchestrator.SanitizeForPath(suite.Name));
+                    Directory.CreateDirectory(suiteOutputDir);
+
+                    if (DotNetUnitTestRunner.IsSdkStyleProject(suite.ProjectPath!))
+                    {
+                        _output.Stage($"Publishing {suite.Name} for remote execution...");
+                        var publishExitCode = await ProcessRunner.RunAsync(
+                            "dotnet", $"publish \"{suite.ProjectPath}\" -c Debug -o \"{suiteOutputDir}\"", _output, treatStderrAsError: true, ct);
+                        if (publishExitCode != 0)
+                        {
+                            _output.Warn($"Publishing {suite.Name} exited with code {publishExitCode} -- it won't be bundled for remote execution.");
+                            continue;
+                        }
+                    }
+                    else
+                    {
+                        var msBuildExePath = await MsBuildLocator.LocateAsync(msBuildPath, ct);
+                        await DotNetUnitTestRunner.BuildClassicProjectAsync(suite.Name, suite.ProjectPath!, msBuildExePath, _output, ct);
+
+                        // Classic MSBuild always builds into the project's own bin\ folder -- copy
+                        // that whole output (the compiled DLL plus every dependency MSBuild already
+                        // copied there for it) into the bundle, rather than just the one DLL, since
+                        // vstest needs its dependencies sitting right alongside it to run standalone.
+                        var classicBinDir = Path.Combine(Path.GetDirectoryName(suite.ProjectPath!)!, "bin", "Debug");
+                        if (!Directory.Exists(classicBinDir))
+                        {
+                            _output.Warn($"Built {suite.Name}, but couldn't find its output under '{classicBinDir}' -- it won't be bundled for remote execution.");
+                            continue;
+                        }
+
+                        CopyDirectoryContents(classicBinDir, suiteOutputDir);
+                    }
+
+                    var assemblyPath = DotNetUnitTestRunner.ResolveAssemblyPath(suite.ProjectPath!, suiteOutputDir);
+                    if (assemblyPath is null)
+                    {
+                        _output.Warn($"Built {suite.Name}, but couldn't find its output assembly -- it won't be bundled for remote execution.");
+                        continue;
+                    }
+
+                    suiteEntries.Add(new TestBundleSuiteEntry { Name = suite.Name, AssemblyFileName = Path.GetFileName(assemblyPath) });
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    _output.Warn($"'{project.Name}' test suite '{suite.Name}' couldn't be bundled for remote execution: {ex.Message}");
+                }
+            }
+
+            if (suiteEntries.Count == 0)
+            {
+                return (null, new List<TestBundleSuiteEntry>());
+            }
+
+            var zipPath = Path.Combine(Path.GetTempPath(), "PublishTool", $"test-bundle-{Guid.NewGuid():N}.zip");
+            await Task.Run(() => ZipFile.CreateFromDirectory(bundleRoot, zipPath, CompressionLevel.Optimal, includeBaseDirectory: false), ct);
+            return (zipPath, suiteEntries);
+        }
+        finally
+        {
+            if (Directory.Exists(bundleRoot))
+            {
+                Directory.Delete(bundleRoot, recursive: true);
+            }
+        }
+    }
+
+    private static void CopyDirectoryContents(string sourceDir, string destinationDir)
+    {
+        foreach (var sourceFile in Directory.EnumerateFiles(sourceDir, "*", SearchOption.AllDirectories))
+        {
+            var relativePath = Path.GetRelativePath(sourceDir, sourceFile);
+            var destinationFile = Path.Combine(destinationDir, relativePath);
+            Directory.CreateDirectory(Path.GetDirectoryName(destinationFile)!);
+            File.Copy(sourceFile, destinationFile, overwrite: true);
         }
     }
 

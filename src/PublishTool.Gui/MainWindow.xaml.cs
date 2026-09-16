@@ -19,6 +19,7 @@ using PublishTool.Core.Models;
 using PublishTool.Core.Services;
 using PublishTool.Core.Services.AppConfig;
 using PublishTool.Core.Services.BuildRunners;
+using PublishTool.Core.Services.UnitTestRunners;
 using Wpf.Ui.Appearance;
 
 namespace PublishTool.Gui;
@@ -1985,13 +1986,13 @@ public partial class MainWindow : Wpf.Ui.Controls.FluentWindow
 
     private async void ProjectHistoryButton_Click(object sender, RoutedEventArgs e)
     {
-        if (RegisteredProjectsListBox.SelectedItem is not ProjectConfig project)
+        if (RegisteredProjectsListBox.SelectedItem is not ProjectConfig selectedProject)
         {
             MessageBox.Show("Select a project in the list first.", "PublishTool", MessageBoxButton.OK, MessageBoxImage.Warning);
             return;
         }
 
-        await ShowProjectAuditDialogAsync(project.Name);
+        await ShowProjectAuditDialogAsync(selectedProject.Name);
     }
 
     private async void AllProjectsHistoryButton_Click(object sender, RoutedEventArgs e) => await ShowProjectAuditDialogAsync(projectNameFilter: null);
@@ -2108,6 +2109,30 @@ public partial class MainWindow : Wpf.Ui.Controls.FluentWindow
         }
     }
 
+    /// <summary>Every project's latest test run status, for the registered-projects grid's Test
+    /// Result column -- one status per BUILD (project name + version), not per project; see
+    /// <see cref="TestRunStatus"/>'s remarks. Best-effort in both modes -- local mode just reads
+    /// whatever's on disk (never throws for a missing file), and remote mode swallows a 404 (an
+    /// un-redeployed dev server) or any other failure into an empty result, since this is a display
+    /// nicety, not something that should block the build history grid from loading at all.</summary>
+    private async Task<IReadOnlyList<TestRunStatus>> LoadTestStatusesAsync()
+    {
+        try
+        {
+            if (IsRemoteModeActive(out var settings))
+            {
+                return await new RemoteHostingClient().GetRemoteTestStatusesAsync(settings.RemoteHostingUrl!, DecryptRemoteHostingApiKey(settings));
+            }
+
+            return await new TestRunStatusStore().LoadAllAsync(TestRunStatusStore.DefaultRoot);
+        }
+        catch (Exception ex)
+        {
+            _output.Warn($"Couldn't load test run status: {ex.Message}");
+            return Array.Empty<TestRunStatus>();
+        }
+    }
+
     private async void ProjectComboBox_SelectionChanged(object sender, System.Windows.Controls.SelectionChangedEventArgs e)
     {
         var project = ProjectComboBox.SelectedItem as string;
@@ -2153,6 +2178,15 @@ public partial class MainWindow : Wpf.Ui.Controls.FluentWindow
         AndroidBuildVariantComboBox.SelectedIndex = 0;
 
         await LoadAndroidConfigForSelectedProjectAsync(isAndroid ? project : null);
+
+        // Independent of deploy targets, so this is set before the early-return below for a
+        // project with no deploy target at all -- unit tests can still run for that project.
+        var unitTestsAvailable = project?.TestSuites.Count > 0;
+        RunUnitTestsPanel.Visibility = unitTestsAvailable ? Visibility.Visible : Visibility.Collapsed;
+        if (unitTestsAvailable)
+        {
+            RunUnitTestsToggle.IsChecked = true;
+        }
 
         var targets = new List<string>();
         if (project?.LocalIisEnabled == true)
@@ -2874,6 +2908,11 @@ public partial class MainWindow : Wpf.Ui.Controls.FluentWindow
             args.Add(deployEnvironment);
         }
 
+        if (RunUnitTestsPanel.Visibility == Visibility.Visible && RunUnitTestsToggle.IsChecked == true)
+        {
+            args.Add("--run-unit-tests");
+        }
+
         foreach (var item in FeaturesEditor.Items) { args.Add("--feature"); args.Add(item); }
         foreach (var item in FixesEditor.Items) { args.Add("--fix"); args.Add(item); }
         foreach (var item in OtherUpdatesEditor.Items) { args.Add("--other-update"); args.Add(item); }
@@ -3086,6 +3125,16 @@ public partial class MainWindow : Wpf.Ui.Controls.FluentWindow
         {
             List<BuildHistoryRow> rows;
             var canDeploy = GetAvailableDeployTargets(project).Count > 0;
+            var testStatuses = await LoadTestStatusesAsync();
+
+            // Test status is per-BUILD (see TestRunStatus's remarks): a build only offers "Run Tests"
+            // if IT was published knowing about test suites (BuildManifest.HasTestSuites, snapshotted
+            // at publish time -- a build predating the whole feature always reports false here, since
+            // older manifests simply never had this field), and its Test Result column looks up a
+            // status matching this exact project+version, never some other build's result.
+            TestRunStatus? FindStatus(string version) => testStatuses.FirstOrDefault(s =>
+                string.Equals(s.ProjectName, project.Name, StringComparison.OrdinalIgnoreCase) &&
+                string.Equals(s.Version, version, StringComparison.Ordinal));
 
             if (IsRemoteModeActive(out var settings))
             {
@@ -3101,6 +3150,9 @@ public partial class MainWindow : Wpf.Ui.Controls.FluentWindow
                     RemoteManifestPath = b.ManifestPath,
                     RemoteZipPath = b.ZipPath,
                     CanDeploy = canDeploy,
+                    HasTestSuites = b.HasTestSuites,
+                    TestStatus = FindStatus(b.Version),
+                    RemoteUnitTestReportPath = b.UnitTestReportPath,
                 }).ToList();
             }
             else
@@ -3117,6 +3169,9 @@ public partial class MainWindow : Wpf.Ui.Controls.FluentWindow
                     ManifestPath = b.ManifestPath,
                     ZipPath = b.Manifest.ZipPath,
                     CanDeploy = canDeploy,
+                    HasTestSuites = b.Manifest.HasTestSuites,
+                    TestStatus = FindStatus(b.Manifest.Version),
+                    UnitTestReportPath = b.Manifest.UnitTestReportPath,
                 }).ToList();
             }
 
@@ -3386,6 +3441,159 @@ public partial class MainWindow : Wpf.Ui.Controls.FluentWindow
 
         await RecordProjectAuditAsync("Build Deleted", project.Name, $"v{row.Version}");
         await LoadBuildHistoryAsync();
+    }
+
+    private async void DownloadTestReportButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (((FrameworkElement)sender).DataContext is not BuildHistoryRow row ||
+            RegisteredProjectsListBox.SelectedItem is not ProjectConfig project ||
+            !row.HasUnitTestReport)
+        {
+            return;
+        }
+
+        var saveDialog = new SaveFileDialog
+        {
+            Filter = "Excel workbook (*.xlsx)|*.xlsx|All files (*.*)|*.*",
+            FileName = $"{project.Name}-{row.Version}-test-report.xlsx",
+        };
+        if (saveDialog.ShowDialog() != true)
+        {
+            return;
+        }
+
+        try
+        {
+            if (row.RemoteUnitTestReportPath is not null)
+            {
+                if (!IsRemoteModeActive(out var settings))
+                {
+                    return;
+                }
+
+                await new RemoteHostingClient().DownloadAsync(
+                    settings.RemoteHostingUrl!, DecryptRemoteHostingApiKey(settings), row.RemoteUnitTestReportPath, saveDialog.FileName);
+            }
+            else
+            {
+                await Task.Run(() => File.Copy(row.UnitTestReportPath!, saveDialog.FileName, overwrite: true));
+            }
+
+            _output.Info($"Saved {project.Name} v{row.Version}'s test report to {saveDialog.FileName}");
+            _output.Notify($"{project.Name} v{row.Version} test report downloaded", Path.GetFileName(saveDialog.FileName), saveDialog.FileName);
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show($"Couldn't download the test report: {ex.Message}", "PublishTool", MessageBoxButton.OK, MessageBoxImage.Error);
+        }
+    }
+
+    /// <summary>Runs every configured test suite for one build. Where this actually executes depends
+    /// on hosting mode, same as every other action in this app (deploys, IIS, firewall): in local
+    /// mode, on THIS machine, against this dev's own local <see cref="ProjectConfig.TestSuites"/>
+    /// paths; in remote mode, on the DEV SERVER itself, against its own configured checkout (see
+    /// <see cref="RemoteHostingClient.RunTestsAsync"/>) -- this is what lets a non-developer,
+    /// remote-only user who has no local checkout at all actually trigger a run, not just view
+    /// whatever a dev last ran locally. Output streams live into the same output log every other
+    /// command uses either way, per the explicit requirement that this not just show an end result.</summary>
+    private async void RunTestsButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (((FrameworkElement)sender).DataContext is not BuildHistoryRow row ||
+            RegisteredProjectsListBox.SelectedItem is not ProjectConfig project)
+        {
+            return;
+        }
+
+        SetBusy(true);
+        BuildHistoryDataGrid.IsEnabled = false;
+        _output.Stage($"Running tests for '{project.Name}' v{row.Version}...");
+        try
+        {
+            if (IsRemoteModeActive(out var settings))
+            {
+                await new RemoteHostingClient().RunTestsAsync(
+                    settings.RemoteHostingUrl!, DecryptRemoteHostingApiKey(settings), project.Name, row.Version, Environment.UserName, _output);
+                await RecordProjectAuditAsync("Tests Run", project.Name, $"v{row.Version} (on dev server)");
+            }
+            else
+            {
+                await RunTestsLocallyAsync(project, row.Version);
+            }
+        }
+        catch (RemoteFeatureNotAvailableException ex)
+        {
+            _output.Warn(ex.Message);
+        }
+        catch (Exception ex)
+        {
+            _output.Error($"'{project.Name}' v{row.Version}: test run failed: {ex.Message}");
+        }
+        finally
+        {
+            BuildHistoryDataGrid.IsEnabled = true;
+            SetBusy(false);
+        }
+
+        await LoadBuildHistoryAsync();
+    }
+
+    /// <summary>The local-mode half of <see cref="RunTestsButton_Click"/> -- only reached when
+    /// remote mode is off. Runs every configured suite on this machine via
+    /// <see cref="UnitTestOrchestrator"/> against this dev's own local <see cref="ProjectConfig.TestSuites"/>
+    /// paths, and records the result to this machine's own <see cref="TestRunStatusStore"/>.</summary>
+    private async Task RunTestsLocallyAsync(ProjectConfig project, string version)
+    {
+        var workingDir = Path.Combine(Path.GetTempPath(), "PublishTool", "test-runs", Guid.NewGuid().ToString("N"));
+        try
+        {
+            var msBuildPath = AppSettings.Load(AppSettings.DefaultPath).MsBuildPath;
+            var result = await UnitTestOrchestrator.RunAllAsync(project, workingDir, _output, CancellationToken.None, msBuildPath);
+            if (result is null)
+            {
+                _output.Warn($"'{project.Name}' has no runnable test suites.");
+                return;
+            }
+
+            _output.Info(result.Passed ? $"'{project.Name}' v{version}: all tests passed." : $"'{project.Name}' v{version}: tests failed.");
+
+            var status = new TestRunStatus
+            {
+                ProjectName = project.Name,
+                Version = version,
+                Passed = result.Passed,
+                RunAtUtc = DateTimeOffset.UtcNow,
+                PerformedBy = Environment.UserName,
+                Suites = result.Suites
+                    .Select(s => new TestSuiteRunStatus
+                    {
+                        SuiteName = s.SuiteName,
+                        Passed = s.Passed,
+                        TotalCount = s.TotalCount,
+                        PassedCount = s.PassedCount,
+                        FailedCount = s.FailedCount,
+                        SkippedCount = s.SkippedCount,
+                    })
+                    .ToList(),
+            };
+
+            try
+            {
+                await new TestRunStatusStore().SetAsync(TestRunStatusStore.DefaultRoot, status);
+            }
+            catch (Exception ex)
+            {
+                _output.Warn($"'{project.Name}' v{version}: tests ran, but the result couldn't be recorded: {ex.Message}");
+            }
+
+            await RecordProjectAuditAsync("Tests Run", project.Name, $"v{version} -> {(result.Passed ? "Passed" : "Failed")}");
+        }
+        finally
+        {
+            if (Directory.Exists(workingDir))
+            {
+                Directory.Delete(workingDir, recursive: true);
+            }
+        }
     }
 
     private async void EventLogProjectComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e) =>

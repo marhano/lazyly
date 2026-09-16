@@ -5,8 +5,8 @@ namespace PublishTool.Hosting.Pages;
 
 /// <summary>
 /// Alternative to <see cref="UploadModel"/>'s manual-entry form -- for a dev who already has a
-/// local publish's three output files (zip, manifest.json, and optionally a release notes .txt)
-/// sitting on disk and just needs them in the shared build archive. All the metadata a manual
+/// local publish's output files (zip, manifest.json, and optionally a release notes .txt and/or a
+/// unit test report .xlsx) sitting on disk and just needs them in the shared build archive. All the metadata a manual
 /// upload asks for by hand (project name, version, who published it, release notes) already lives
 /// in the manifest, so this reads it from there instead of asking the dev to retype it.
 /// Validation and file-writing live in <see cref="BuildUploadHandler"/>, shared with the
@@ -30,6 +30,9 @@ public class UploadBuildModel : PageModel
 
     [BindProperty]
     public IFormFile? ReleaseNotesFile { get; set; }
+
+    [BindProperty]
+    public IFormFile? UnitTestReportFile { get; set; }
 
     /// <summary>Only one build per project can be latest -- <see cref="PublishTool.Core.Services.BuildRepository.SetLatest"/>
     /// un-flags whichever build previously held it, so this is the only path that can set it true.
@@ -78,15 +81,19 @@ public class UploadBuildModel : PageModel
         }
 
         var hasReleaseNotes = ReleaseNotesFile is not null && ReleaseNotesFile.Length > 0;
+        var hasUnitTestReport = UnitTestReportFile is not null && UnitTestReportFile.Length > 0;
 
         await using var zipStream = BuildZip.OpenReadStream();
         await using var manifestStream = ManifestFile.OpenReadStream();
         await using var releaseNotesStream = hasReleaseNotes ? ReleaseNotesFile!.OpenReadStream() : null;
+        await using var unitTestReportStream = hasUnitTestReport ? UnitTestReportFile!.OpenReadStream() : null;
 
         var result = await _handler.HandleAsync(buildsRoot, new BuildUploadRequest(
             zipStream, BuildZip.FileName,
             manifestStream,
             releaseNotesStream, hasReleaseNotes ? ReleaseNotesFile!.FileName : null,
+            unitTestReportStream, hasUnitTestReport ? UnitTestReportFile!.FileName : null,
+            TestBundleStream: null, TestBundleFileName: null,
             MarkAsLatest), HttpContext.RequestAborted);
 
         if (!result.Success)

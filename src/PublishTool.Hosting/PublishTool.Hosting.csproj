@@ -10,4 +10,26 @@
     <ImplicitUsings>enable</ImplicitUsings>
   </PropertyGroup>
 
+  <!--
+    A portable, xcopy-deployable vstest.console.exe: lets a classic (.NET Framework) test suite's
+    bundle run remote test execution (see RemoteTestRunnerService) on a dev server that has no Visual
+    Studio/Build Tools installed at all, not even the "Testing tools core features" component, so
+    whoever administers the server never needs to install anything beyond deploying this app itself.
+    VsTestLocator checks for this bundled copy before falling back to vswhere-based discovery, so a
+    dev machine's own local classic-suite runs (which already need real MSBuild/Build Tools installed
+    to build the app itself) are unaffected either way. ExcludeAssets="all" since this isn't a real
+    .NET library reference, just a source of files to copy; GeneratePathProperty exposes its extracted
+    NuGet cache path as $(PkgMicrosoft_TestPlatform) below. Content (not None) so it also flows
+    through `dotnet publish`, which is what actually matters here.
+  -->
+  <ItemGroup>
+    <PackageReference Include="Microsoft.TestPlatform" Version="17.11.1" ExcludeAssets="all" GeneratePathProperty="true" />
+  </ItemGroup>
+  <ItemGroup>
+    <Content Include="$(PkgMicrosoft_TestPlatform)\tools\net462\Common7\IDE\Extensions\TestPlatform\**"
+             Link="vstest-portable\%(RecursiveDir)%(Filename)%(Extension)"
+             CopyToOutputDirectory="PreserveNewest"
+             CopyToPublishDirectory="PreserveNewest" />
+  </ItemGroup>
+
 </Project>

@@ -19,5 +19,7 @@ internal static class BuildSummaryMapper
         ManifestPath = SafeBuildPath.ToRelative(buildsRoot, manifestPath),
         ZipPath = SafeBuildPath.ToRelative(buildsRoot, manifest.ZipPath),
         ReleaseNotesPath = manifest.ReleaseNotesPath is null ? null : SafeBuildPath.ToRelative(buildsRoot, manifest.ReleaseNotesPath),
+        UnitTestReportPath = manifest.UnitTestReportPath is null ? null : SafeBuildPath.ToRelative(buildsRoot, manifest.UnitTestReportPath),
+        HasTestSuites = manifest.HasTestSuites,
     };
 }

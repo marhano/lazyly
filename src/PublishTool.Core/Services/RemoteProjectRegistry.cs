@@ -145,6 +145,7 @@ public sealed class RemoteProjectRegistry : IProjectRegistry
             EventLogProtectedPassword = local.EventLogProtectedPassword,
             RemoteIisEnabled = local.RemoteIisEnabled,
             RemoteEnvironments = shared.RemoteEnvironments,
+            TestSuites = local.TestSuites,
         };
     }
 
@@ -163,5 +164,6 @@ public sealed class RemoteProjectRegistry : IProjectRegistry
         RemoteIisEnabled = config.RemoteIisEnabled,
         AppConfigPath = config.AppConfigPath,
         EventLogProtectedPassword = config.EventLogProtectedPassword,
+        TestSuites = config.TestSuites,
     };
 }

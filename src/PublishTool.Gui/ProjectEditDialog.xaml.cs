@@ -32,6 +32,7 @@ public partial class ProjectEditDialog : Wpf.Ui.Controls.FluentWindow
     private readonly ObservableCollection<DeploymentEnvironment> _localEnvironments = new();
     private readonly ObservableCollection<DeploymentEnvironment> _remoteEnvironments = new();
     private readonly ObservableCollection<string> _eventLogFilterValues = new();
+    private readonly ObservableCollection<TestSuiteConfig> _testSuites = new();
     private List<string> _environmentNames = new();
     private string? _defaultEnvironmentName;
 
@@ -74,6 +75,7 @@ public partial class ProjectEditDialog : Wpf.Ui.Controls.FluentWindow
         LocalEnvironmentsDataGrid.ItemsSource = _localEnvironments;
         RemoteEnvironmentsDataGrid.ItemsSource = _remoteEnvironments;
         EventLogFilterValuesListBox.ItemsSource = _eventLogFilterValues;
+        TestSuitesDataGrid.ItemsSource = _testSuites;
 
         TitleTextBlock.Text = existing is null ? "Add project" : $"Edit {existing.Name}";
 
@@ -197,6 +199,12 @@ public partial class ProjectEditDialog : Wpf.Ui.Controls.FluentWindow
         EventLogMachineTextBox.Text = p.EventLogMachineName ?? string.Empty;
         EventLogUsernameTextBox.Text = p.EventLogUsername ?? string.Empty;
 
+        foreach (var suite in p.TestSuites)
+        {
+            _testSuites.Add(suite);
+        }
+        JsTestsToggle.IsChecked = p.TestSuites.Count > 0;
+
         RemoteIisToggle.IsChecked = p.RemoteIisEnabled;
 
         foreach (var env in p.RemoteEnvironments)
@@ -214,6 +222,63 @@ public partial class ProjectEditDialog : Wpf.Ui.Controls.FluentWindow
         if (dialog.ShowDialog() == true)
         {
             CsprojTextBox.Text = dialog.FileName;
+        }
+    }
+
+    private void BrowseNewTestSuiteProjectPath_Click(object sender, RoutedEventArgs e)
+    {
+        var dialog = new OpenFileDialog { Filter = "Project files (*.csproj)|*.csproj|All files (*.*)|*.*" };
+        if (dialog.ShowDialog() == true)
+        {
+            NewTestSuiteProjectPathTextBox.Text = dialog.FileName;
+        }
+    }
+
+    private void AddTestSuiteButton_Click(object sender, RoutedEventArgs e)
+    {
+        var name = NewTestSuiteNameTextBox.Text?.Trim();
+        var path = NewTestSuiteProjectPathTextBox.Text?.Trim();
+        if (string.IsNullOrWhiteSpace(name) || string.IsNullOrWhiteSpace(path))
+        {
+            MessageBox.Show("Enter both a name and a test project path first.", "PublishTool", MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
+        }
+
+        if (_testSuites.Any(s => string.Equals(s.Name, name, StringComparison.OrdinalIgnoreCase)))
+        {
+            MessageBox.Show($"A test suite named '{name}' already exists.", "PublishTool", MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
+        }
+
+        _testSuites.Add(new TestSuiteConfig { Name = name, ProjectPath = path });
+        NewTestSuiteNameTextBox.Text = string.Empty;
+        NewTestSuiteProjectPathTextBox.Text = string.Empty;
+    }
+
+    private void RemoveTestSuiteButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (((FrameworkElement)sender).DataContext is TestSuiteConfig suite)
+        {
+            _testSuites.Remove(suite);
+        }
+    }
+
+    /// <summary>Angular/Android have no per-suite project-path concept -- this just adds/removes
+    /// one synthesized "npm test" entry, guarded so populating <see cref="_testSuites"/> from an
+    /// existing project in <see cref="PopulateFrom"/> (which sets this toggle's IsChecked
+    /// afterward) doesn't also add a duplicate.</summary>
+    private void JsTestsToggle_Toggled(object sender, RoutedEventArgs e)
+    {
+        if (JsTestsToggle.IsChecked == true)
+        {
+            if (_testSuites.Count == 0)
+            {
+                _testSuites.Add(new TestSuiteConfig { Name = "npm test" });
+            }
+        }
+        else
+        {
+            _testSuites.Clear();
         }
     }
 
@@ -329,6 +394,12 @@ public partial class ProjectEditDialog : Wpf.Ui.Controls.FluentWindow
             : Visibility.Collapsed;
         RemoteIisToggle.Visibility = iisApplicable ? Visibility.Visible : Visibility.Collapsed;
         RemoteEnvironmentsSectionPanel.Visibility = iisApplicable ? Visibility.Visible : Visibility.Collapsed;
+
+        // .NET runs its tests via one or more separate *.Tests.csproj suites (needs the full
+        // editor); Angular/Android run "npm test" in the project root already configured above --
+        // there's no per-suite path concept for them, so they just get a single toggle instead.
+        DotNetTestSuitesPanel.Visibility = tag == "DotNet" ? Visibility.Visible : Visibility.Collapsed;
+        JsTestsToggle.Visibility = tag is "Angular" or "Android" ? Visibility.Visible : Visibility.Collapsed;
 
         UpdateAppConfigTypeOptions(projectType);
     }
@@ -618,6 +689,7 @@ public partial class ProjectEditDialog : Wpf.Ui.Controls.FluentWindow
             EventLogProtectedPassword = _existing?.EventLogProtectedPassword,
             RemoteIisEnabled = remoteIisEnabled,
             RemoteEnvironments = _remoteEnvironments.ToList(),
+            TestSuites = _testSuites.ToList(),
         };
 
         try

@@ -171,4 +171,15 @@ public sealed class ProjectConfig
     /// the same targets apply no matter which teammate deploys. Only offered as a deploy option
     /// while <see cref="RemoteIisEnabled"/> is true (this dev's own choice) and remote mode is on.</summary>
     public List<DeploymentEnvironment> RemoteEnvironments { get; set; } = new();
+
+    /// <summary>Named test suites for this project (e.g. "Unit Test", "E2E Test") -- see
+    /// <see cref="TestSuiteConfig"/>. Local to this machine (a list of local filesystem paths), same
+    /// reasoning as <see cref="CsprojPath"/>. Never required, never gates publish success -- see
+    /// <see cref="Services.UnitTestRunners.IUnitTestRunner"/>. A project "has tests configured" iff
+    /// this list is non-empty; there's no separate enable/disable flag. In remote mode, these same
+    /// suites also drive what <see cref="Services.Publisher"/> builds/publishes and bundles alongside
+    /// each build for the dev server to run on demand -- see <see cref="Models.BuildManifest.TestBundlePath"/>.
+    /// No separate server-side config exists for this; a build already carries everything the server
+    /// needs to run its own suites, with no git or source checkout involved.</summary>
+    public List<TestSuiteConfig> TestSuites { get; set; } = new();
 }

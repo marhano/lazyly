@@ -127,6 +127,12 @@ public static class CommandLineFactory
             Description = "Named deploy target (e.g. Staging, Production) within whichever side --deploy-target " +
                            "selects, matching an entry in the project's local or dev-server environments.",
         };
+        var runUnitTestsOption = new Option<bool>("--run-unit-tests")
+        {
+            Description = "Run this project's configured test suites and include a combined Excel report with the " +
+                           "build (see add-project --test-suite). Purely informational -- never fails the publish, " +
+                           "even if a suite fails or can't be run at all.",
+        };
 
         var command = new Command("publish", "Publish a registered project: build, archive, and deploy to IIS.");
         command.Add(projectOption);
@@ -149,6 +155,7 @@ public static class CommandLineFactory
         command.Add(listInHostingOption);
         command.Add(deployTargetOption);
         command.Add(environmentOption);
+        command.Add(runUnitTestsOption);
 
         command.SetAction(async (parseResult, ct) =>
         {
@@ -230,6 +237,7 @@ public static class CommandLineFactory
                     parseResult.GetValue(androidBuildNumberOption)),
                 DeployTarget = deployTarget,
                 DeployEnvironmentName = environmentName,
+                RunUnitTests = parseResult.GetValue(runUnitTestsOption),
                 // Whether this uploads to the dev server instead of archiving locally is decided
                 // purely by the global "Use dev server for projects" setting -- see
                 // PublishOptions.UseRemoteMode and Publisher itself.
@@ -313,6 +321,23 @@ public static class CommandLineFactory
         bundleId is null && displayName is null && versionNumber is null && buildNumber is null
             ? null
             : new AndroidAppMetadata { BundleId = bundleId, DisplayName = displayName, VersionNumber = versionNumber, BuildNumber = buildNumber };
+
+    private static List<TestSuiteConfig> ParseTestSuites(IEnumerable<string> raw)
+    {
+        var result = new List<TestSuiteConfig>();
+        foreach (var entry in raw)
+        {
+            var separatorIndex = entry.IndexOf('=');
+            if (separatorIndex <= 0)
+            {
+                throw new ArgumentException($"Invalid --test-suite value '{entry}'. Expected Name=Path.");
+            }
+
+            result.Add(new TestSuiteConfig { Name = entry[..separatorIndex], ProjectPath = entry[(separatorIndex + 1)..] });
+        }
+
+        return result;
+    }
 
     private static Dictionary<string, string> ParseKeyValuePairs(IEnumerable<string> raw)
     {
@@ -424,6 +449,13 @@ public static class CommandLineFactory
             Description = "Username for --event-log-machine, if it needs different credentials than the current " +
                            "Windows identity. The password itself is set (and optionally saved) from the GUI, not the CLI.",
         };
+        var testSuiteOption = new Option<string[]>("--test-suite")
+        {
+            Description = "A named test suite as \"Name=Path\", e.g. \"Unit Test=C:\\src\\MyProject.Tests\\MyProject.Tests.csproj\". " +
+                           "Repeatable -- add one per kind of test (Unit Test, E2E Test, ...). Only meaningful for " +
+                           "--project-type dotnet; Angular/Android run \"npm test\" in --project-root instead, gated by " +
+                           "whether any suite at all is given (the path portion is ignored for those types).",
+        };
 
         var command = new Command("add-project", "Register a project (or update an existing registration).");
         command.Add(nameOption);
@@ -445,6 +477,7 @@ public static class CommandLineFactory
         command.Add(eventLogFilterValueOption);
         command.Add(eventLogMachineOption);
         command.Add(eventLogUsernameOption);
+        command.Add(testSuiteOption);
 
         command.SetAction(async (parseResult, ct) =>
         {
@@ -546,6 +579,7 @@ public static class CommandLineFactory
                     EventLogMachineName = parseResult.GetValue(eventLogMachineOption),
                     EventLogUsername = parseResult.GetValue(eventLogUsernameOption),
                     EventLogProtectedPassword = existing?.EventLogProtectedPassword,
+                    TestSuites = ParseTestSuites(parseResult.GetValue(testSuiteOption) ?? Array.Empty<string>()),
                 });
 
                 output.Info($"Registered project '{parseResult.GetValue(nameOption)}'.");

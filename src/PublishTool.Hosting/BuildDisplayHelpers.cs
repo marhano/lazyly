@@ -19,6 +19,12 @@ internal static class BuildDisplayHelpers
     public static string RelativeReleaseNotesPath(string buildsRootPath, BuildManifest build) =>
         Path.GetRelativePath(buildsRootPath, build.ReleaseNotesPath!);
 
+    public static bool HasUnitTestReport(BuildManifest build) =>
+        build.UnitTestReportPath is not null && File.Exists(build.UnitTestReportPath);
+
+    public static string RelativeUnitTestReportPath(string buildsRootPath, BuildManifest build) =>
+        Path.GetRelativePath(buildsRootPath, build.UnitTestReportPath!);
+
     public static long GetFileSizeBytes(string zipPath) =>
         File.Exists(zipPath) ? new FileInfo(zipPath).Length : -1;
 

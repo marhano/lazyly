@@ -105,4 +105,11 @@ public sealed class PublishOptions
     /// Null, or any null field on it, means "leave that alone" -- same per-publish, only-touch-what's-given
     /// contract as <see cref="AppConfigSettings"/>. Only used when the project is <see cref="ProjectType.Android"/>.</summary>
     public AndroidAppMetadata? AndroidAppMetadata { get; set; }
+
+    /// <summary>Whether to run this project's unit tests as part of this publish, if it has any
+    /// configured (see <see cref="ProjectConfig.UnitTestsEnabled"/>). Purely informational -- a
+    /// missing test project, a tool that can't be found, or failing tests never fail the publish,
+    /// see <see cref="Services.UnitTestRunners.IUnitTestRunner"/>. Defaults to false: running tests
+    /// takes real time, so it's an explicit per-publish opt-in, not automatic.</summary>
+    public bool RunUnitTests { get; set; }
 }

@@ -28,19 +28,27 @@ public sealed class RemoteHostingClient
     public const string ApiKeyHeaderName = "X-PublishTool-Api-Key";
 
     private static readonly HttpClient Http = new() { Timeout = TimeSpan.FromMinutes(10) };
+
+    // A large E2E/Playwright suite (or a classic project's restore+build+vstest path) can easily
+    // run past the 10-minute timeout every other call here is fine with -- this client has no
+    // per-call timeout at all, relying on the caller's own CancellationToken instead, same as how a
+    // person watching the live output would judge for themselves whether it's hung.
+    private static readonly HttpClient HttpLongRunning = new() { Timeout = Timeout.InfiniteTimeSpan };
+
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 
     private sealed record UploadResponse(string ProjectName, string Version, string ManifestPath);
 
-    /// <summary>Uploads a build's zip + manifest + optional release notes. Overwrites in place on
-    /// the server if the same project+version already exists there (see
-    /// <see cref="BuildRepository.ResolvePaths"/>). Throws with the server's own error message on
-    /// any non-success response or network failure -- callers that opted into this should have the
-    /// failure surfaced loudly, same as a build/deploy failure would be. Returns the build's
+    /// <summary>Uploads a build's zip + manifest + optional release notes + optional unit test
+    /// report. Overwrites in place on the server if the same project+version already exists there
+    /// (see <see cref="BuildRepository.ResolvePaths"/>). Throws with the server's own error message
+    /// on any non-success response or network failure -- callers that opted into this should have
+    /// the failure surfaced loudly, same as a build/deploy failure would be. Returns the build's
     /// manifest path relative to the server's BuildsRoot, for passing straight to
     /// <see cref="DeployAsync"/> or any other path-taking call.</summary>
     public async Task<string> UploadBuildAsync(
-        string baseUrl, string? apiKey, string zipPath, string manifestPath, string? releaseNotesPath, CancellationToken ct = default)
+        string baseUrl, string? apiKey, string zipPath, string manifestPath, string? releaseNotesPath,
+        string? unitTestReportPath = null, string? testBundlePath = null, CancellationToken ct = default)
     {
         using var content = new MultipartFormDataContent();
         using var zipStream = File.OpenRead(zipPath);
@@ -48,12 +56,28 @@ public sealed class RemoteHostingClient
         using var releaseNotesStream = releaseNotesPath is not null && File.Exists(releaseNotesPath)
             ? File.OpenRead(releaseNotesPath)
             : null;
+        using var unitTestReportStream = unitTestReportPath is not null && File.Exists(unitTestReportPath)
+            ? File.OpenRead(unitTestReportPath)
+            : null;
+        using var testBundleStream = testBundlePath is not null && File.Exists(testBundlePath)
+            ? File.OpenRead(testBundlePath)
+            : null;
 
         content.Add(new StreamContent(zipStream), "BuildZip", Path.GetFileName(zipPath));
         content.Add(new StreamContent(manifestStream), "Manifest", Path.GetFileName(manifestPath));
         if (releaseNotesStream is not null)
         {
             content.Add(new StreamContent(releaseNotesStream), "ReleaseNotes", Path.GetFileName(releaseNotesPath!));
+        }
+
+        if (unitTestReportStream is not null)
+        {
+            content.Add(new StreamContent(unitTestReportStream), "UnitTestReport", Path.GetFileName(unitTestReportPath!));
+        }
+
+        if (testBundleStream is not null)
+        {
+            content.Add(new StreamContent(testBundleStream), "TestBundle", Path.GetFileName(testBundlePath!));
         }
 
         using var request = CreateRequest(HttpMethod.Post, baseUrl, "/api/builds/upload", apiKey);
@@ -485,6 +509,79 @@ public sealed class RemoteHostingClient
         await EnsureSuccessAsync(response, "read remote project audit history", ct);
 
         return await response.Content.ReadFromJsonAsync<List<ProjectAuditEntry>>(JsonOptions, ct) ?? new List<ProjectAuditEntry>();
+    }
+
+    // ---------------------------------------------------------------------------------------
+    // Test run status (/api/tests/status) -- when "Run Tests" executes locally (a dev's own
+    // machine, using their local TestSuites paths), the *result* is recorded here in remote mode
+    // so every teammate viewing a remote-mode build history sees the same Test Result, not just
+    // whoever last happened to click the button. RunTestsAsync (below) is the other case: the
+    // server does the work itself, running the specific build's own bundled test assemblies (see
+    // BuildManifest.TestBundlePath), for a non-developer/remote-only user who has no local checkout
+    // at all -- it records to this same status store once it finishes.
+    // ---------------------------------------------------------------------------------------
+
+    public async Task RecordRemoteTestStatusAsync(string baseUrl, string? apiKey, TestRunStatus status, CancellationToken ct = default)
+    {
+        using var request = CreateRequest(HttpMethod.Post, baseUrl, "/api/tests/status", apiKey);
+        request.Content = JsonContent.Create(status, options: JsonOptions);
+
+        using var response = await Http.SendAsync(request, ct);
+        await EnsureSuccessAsync(response, "record test run status", ct);
+    }
+
+    /// <summary>Every project's latest test run status. Throws a 404
+    /// <see cref="RemoteFeatureNotAvailableException"/> against an older Hosting server that
+    /// predates this endpoint.</summary>
+    public async Task<IReadOnlyList<TestRunStatus>> GetRemoteTestStatusesAsync(string baseUrl, string? apiKey, CancellationToken ct = default)
+    {
+        using var request = CreateRequest(HttpMethod.Get, baseUrl, "/api/tests/status", apiKey);
+        using var response = await Http.SendAsync(request, ct);
+        if (response.StatusCode == System.Net.HttpStatusCode.NotFound)
+        {
+            throw new RemoteFeatureNotAvailableException(
+                "Test run status isn't available yet -- this dev server needs PublishTool.Hosting redeployed.");
+        }
+
+        await EnsureSuccessAsync(response, "read remote test run status", ct);
+
+        return await response.Content.ReadFromJsonAsync<List<TestRunStatus>>(JsonOptions, ct) ?? new List<TestRunStatus>();
+    }
+
+    /// <summary>Runs one build's bundled test suites ON THE DEV SERVER (see
+    /// <see cref="Models.BuildManifest.TestBundlePath"/> -- the suites' own built assemblies,
+    /// published/built and uploaded alongside the build at publish time) and streams the server's own
+    /// live output into <paramref name="output"/> line-by-line as it happens -- letting a
+    /// non-developer, remote-only user who has no local checkout or source of their own actually
+    /// trigger a test run, not just view whatever a dev last ran locally. No git, no checkout, no
+    /// source needed on the server at all -- it just unzips the bundle this exact build already
+    /// carries and runs it. The server records the resulting <see cref="TestRunStatus"/> itself once
+    /// it finishes (same store <see cref="GetRemoteTestStatusesAsync"/> reads from) -- callers should
+    /// re-fetch/refresh afterward rather than expect this call to return a result directly. Throws a
+    /// 404 <see cref="RemoteFeatureNotAvailableException"/> against an older Hosting server that
+    /// predates this endpoint, same convention as every other not-yet-redeployed-server case in this
+    /// client.</summary>
+    public async Task RunTestsAsync(
+        string baseUrl, string? apiKey, string projectName, string version, string performedBy, IOutputSink output, CancellationToken ct = default)
+    {
+        var query = $"?project={Uri.EscapeDataString(projectName)}&version={Uri.EscapeDataString(version)}&performedBy={Uri.EscapeDataString(performedBy)}";
+        using var request = CreateRequest(HttpMethod.Post, baseUrl, $"/api/tests/run{query}", apiKey);
+
+        using var response = await HttpLongRunning.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct);
+        if (response.StatusCode == System.Net.HttpStatusCode.NotFound)
+        {
+            throw new RemoteFeatureNotAvailableException(
+                "Remote test execution isn't available yet -- this dev server needs PublishTool.Hosting redeployed.");
+        }
+
+        await EnsureSuccessAsync(response, "run tests on the dev server", ct);
+
+        await using var stream = await response.Content.ReadAsStreamAsync(ct);
+        using var reader = new StreamReader(stream);
+        while (await reader.ReadLineAsync(ct) is { } line)
+        {
+            output.Info(line);
+        }
     }
 
     // ---------------------------------------------------------------------------------------

@@ -4,7 +4,7 @@ using PublishTool.Core.Models;
 
 namespace PublishTool.Core.Services;
 
-public sealed record BuildArchiveResult(string ZipPath, string ManifestPath, string ReleaseNotesPath);
+public sealed record BuildArchiveResult(string ZipPath, string ManifestPath, string ReleaseNotesPath, string UnitTestReportPath, string TestBundlePath);
 
 public sealed record ExistingBuild(BuildManifest Manifest, string ManifestPath);
 
@@ -104,8 +104,10 @@ public sealed class BuildRepository
         var zipPath = Path.Combine(projectDir, $"{baseName}{artifactExtension}");
         var manifestPath = Path.Combine(projectDir, $"{baseName}.manifest.json");
         var releaseNotesPath = Path.Combine(projectDir, $"{baseName}.releasenotes.txt");
+        var unitTestReportPath = Path.Combine(projectDir, $"{baseName}.unittests.xlsx");
+        var testBundlePath = Path.Combine(projectDir, $"{baseName}.testbundle.zip");
 
-        return new BuildArchiveResult(zipPath, manifestPath, releaseNotesPath);
+        return new BuildArchiveResult(zipPath, manifestPath, releaseNotesPath, unitTestReportPath, testBundlePath);
     }
 
     /// <summary>
@@ -131,12 +133,17 @@ public sealed class BuildRepository
             return ReservePaths(buildsRoot, projectName, version, artifactExtension);
         }
 
-        // Pre-this-feature manifests may not have a release notes path yet -- fall back to the
-        // naming convention derived from the existing zip, same as Publisher does.
+        // Pre-this-feature manifests may not have a release notes/unit test report/test bundle path
+        // yet -- fall back to the naming convention derived from the existing zip, same as Publisher
+        // does.
         var releaseNotesPath = existing.Manifest.ReleaseNotesPath
             ?? Path.ChangeExtension(existing.Manifest.ZipPath, null) + ".releasenotes.txt";
+        var unitTestReportPath = existing.Manifest.UnitTestReportPath
+            ?? Path.ChangeExtension(existing.Manifest.ZipPath, null) + ".unittests.xlsx";
+        var testBundlePath = existing.Manifest.TestBundlePath
+            ?? Path.ChangeExtension(existing.Manifest.ZipPath, null) + ".testbundle.zip";
 
-        return new BuildArchiveResult(existing.Manifest.ZipPath, existing.ManifestPath, releaseNotesPath);
+        return new BuildArchiveResult(existing.Manifest.ZipPath, existing.ManifestPath, releaseNotesPath, unitTestReportPath, testBundlePath);
     }
 
     public void WriteManifest(string manifestPath, BuildManifest manifest)
@@ -182,6 +189,21 @@ public sealed class BuildRepository
         File.WriteAllText(releaseNotesPath, content);
     }
 
+    /// <summary>Copies an already-generated unit test report (.xlsx) into place -- the binary
+    /// counterpart to <see cref="WriteReleaseNotes"/>, which writes text content directly since a
+    /// report is already a file on disk by the time <see cref="Publisher"/> has one to place.</summary>
+    public void CopyUnitTestReport(string destinationPath, string sourceReportPath)
+    {
+        File.Copy(sourceReportPath, destinationPath, overwrite: true);
+    }
+
+    /// <summary>Copies an already-zipped test bundle into place -- same treatment as
+    /// <see cref="CopyUnitTestReport"/>.</summary>
+    public void CopyTestBundle(string destinationPath, string sourceBundlePath)
+    {
+        File.Copy(sourceBundlePath, destinationPath, overwrite: true);
+    }
+
     /// <summary>Deletes a build entirely: its zip, its release notes (if any), and the manifest
     /// itself. Identified by the manifest's own path rather than project+version, since more than
     /// one manifest can exist for the same version (see <see cref="FindBuild"/>) -- this always
@@ -205,6 +227,16 @@ public sealed class BuildRepository
             if (manifest.ReleaseNotesPath is not null && File.Exists(manifest.ReleaseNotesPath))
             {
                 File.Delete(manifest.ReleaseNotesPath);
+            }
+
+            if (manifest.UnitTestReportPath is not null && File.Exists(manifest.UnitTestReportPath))
+            {
+                File.Delete(manifest.UnitTestReportPath);
+            }
+
+            if (manifest.TestBundlePath is not null && File.Exists(manifest.TestBundlePath))
+            {
+                File.Delete(manifest.TestBundlePath);
             }
         }
 

@@ -5,7 +5,7 @@ using PublishTool.Core.Services;
 namespace PublishTool.Hosting;
 
 /// <summary>Everything needed to accept an already-built zip + manifest.json (+ optional release
-/// notes) -- shared by the human "Upload build files" form (<c>UploadBuildModel</c>) and the
+/// notes + optional unit test report) -- shared by the human "Upload build files" form (<c>UploadBuildModel</c>) and the
 /// <c>POST /api/builds/upload</c> endpoint, so the validate/write logic exists exactly once.
 /// Takes <see cref="Stream"/>s rather than <c>IFormFile</c> so it isn't tied to Razor Pages model
 /// binding.</summary>
@@ -22,6 +22,10 @@ internal sealed record BuildUploadRequest(
     Stream ManifestStream,
     Stream? ReleaseNotesStream,
     string? ReleaseNotesFileName,
+    Stream? UnitTestReportStream,
+    string? UnitTestReportFileName,
+    Stream? TestBundleStream,
+    string? TestBundleFileName,
     bool? MarkAsLatest);
 
 internal sealed record BuildUploadResult(bool Success, string? ErrorMessage, string? ProjectName, string? Version, string? ManifestPath)
@@ -51,6 +55,18 @@ internal sealed class BuildUploadHandler
             !Path.GetExtension(request.ReleaseNotesFileName).Equals(".txt", StringComparison.OrdinalIgnoreCase))
         {
             return BuildUploadResult.Fail("Release notes must be a .txt file.");
+        }
+
+        if (request.UnitTestReportFileName is not null &&
+            !Path.GetExtension(request.UnitTestReportFileName).Equals(".xlsx", StringComparison.OrdinalIgnoreCase))
+        {
+            return BuildUploadResult.Fail("The unit test report must be an .xlsx file.");
+        }
+
+        if (request.TestBundleFileName is not null &&
+            !Path.GetExtension(request.TestBundleFileName).Equals(".zip", StringComparison.OrdinalIgnoreCase))
+        {
+            return BuildUploadResult.Fail("The test bundle must be a .zip file.");
         }
 
         BuildManifest? manifest;
@@ -108,11 +124,28 @@ internal sealed class BuildUploadHandler
             releaseNotesPath = paths.ReleaseNotesPath;
         }
 
+        string? unitTestReportPath = null;
+        if (request.UnitTestReportStream is not null)
+        {
+            await using var reportStream = File.Create(paths.UnitTestReportPath);
+            await request.UnitTestReportStream.CopyToAsync(reportStream, ct);
+            unitTestReportPath = paths.UnitTestReportPath;
+        }
+
+        string? testBundlePath = null;
+        if (request.TestBundleStream is not null)
+        {
+            await using var bundleStream = File.Create(paths.TestBundlePath);
+            await request.TestBundleStream.CopyToAsync(bundleStream, ct);
+            testBundlePath = paths.TestBundlePath;
+        }
+
         var isLatest = request.MarkAsLatest ?? manifest.IsLatest;
 
-        // ZipPath/ReleaseNotesPath in the uploaded manifest point at wherever it was published
-        // from and mean nothing here -- everything else (who/when/whether it's listed/app config)
-        // comes straight from the manifest instead of asking the caller to resupply it.
+        // ZipPath/ReleaseNotesPath/UnitTestReportPath/TestBundlePath in the uploaded manifest point
+        // at wherever it was published from and mean nothing here -- everything else (who/when/
+        // whether it's listed/app config) comes straight from the manifest instead of asking the
+        // caller to resupply it.
         _buildRepository.WriteManifest(paths.ManifestPath, new BuildManifest
         {
             ProjectName = projectName,
@@ -122,8 +155,12 @@ internal sealed class BuildUploadHandler
             ZipPath = paths.ZipPath,
             ListInHosting = manifest.ListInHosting,
             ReleaseNotesPath = releaseNotesPath,
+            UnitTestReportPath = unitTestReportPath,
             AppConfigSettings = manifest.AppConfigSettings,
             IsLatest = isLatest,
+            HasTestSuites = manifest.HasTestSuites,
+            TestBundlePath = testBundlePath,
+            TestBundleSuites = testBundlePath is not null ? manifest.TestBundleSuites : new(),
         });
 
         if (isLatest)

@@ -45,4 +45,7 @@ public sealed class LocalProjectOverrides
     /// <summary>DPAPI-bound to this Windows user -- can never be shared, even though
     /// <see cref="SharedProjectConfig.EventLogName"/>'s machine/username fields are shared.</summary>
     public string? EventLogProtectedPassword { get; set; }
+
+    /// <summary>See <see cref="ProjectConfig.TestSuites"/>.</summary>
+    public List<TestSuiteConfig> TestSuites { get; set; } = new();
 }

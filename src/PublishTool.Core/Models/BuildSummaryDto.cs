@@ -28,4 +28,8 @@ public sealed class BuildSummaryDto
     public required string ZipPath { get; set; }
 
     public string? ReleaseNotesPath { get; set; }
+
+    public string? UnitTestReportPath { get; set; }
+
+    public bool HasTestSuites { get; set; }
 }

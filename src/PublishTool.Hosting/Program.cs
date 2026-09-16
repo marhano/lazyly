@@ -4,6 +4,7 @@ using Microsoft.AspNetCore.Http.Features;
 using Microsoft.AspNetCore.Server.IIS;
 using PublishTool.Core.Models;
 using PublishTool.Core.Services;
+using PublishTool.Core.Services.UnitTestRunners;
 using PublishTool.Hosting;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -129,6 +130,8 @@ app.MapPost("/api/builds/upload", async (HttpRequest request, IConfiguration con
     var zipFile = form.Files["BuildZip"];
     var manifestFile = form.Files["Manifest"];
     var releaseNotesFile = form.Files["ReleaseNotes"];
+    var unitTestReportFile = form.Files["UnitTestReport"];
+    var testBundleFile = form.Files["TestBundle"];
 
     if (zipFile is null || zipFile.Length == 0)
     {
@@ -148,12 +151,16 @@ app.MapPost("/api/builds/upload", async (HttpRequest request, IConfiguration con
     await using var zipStream = zipFile.OpenReadStream();
     await using var manifestStream = manifestFile.OpenReadStream();
     await using var releaseNotesStream = releaseNotesFile is { Length: > 0 } ? releaseNotesFile.OpenReadStream() : null;
+    await using var unitTestReportStream = unitTestReportFile is { Length: > 0 } ? unitTestReportFile.OpenReadStream() : null;
+    await using var testBundleStream = testBundleFile is { Length: > 0 } ? testBundleFile.OpenReadStream() : null;
 
     var handler = new BuildUploadHandler();
     var result = await handler.HandleAsync(buildsRoot, new BuildUploadRequest(
         zipStream, zipFile.FileName,
         manifestStream,
         releaseNotesStream, releaseNotesFile?.FileName,
+        unitTestReportStream, unitTestReportFile?.FileName,
+        testBundleStream, testBundleFile?.FileName,
         markAsLatest), request.HttpContext.RequestAborted);
 
     if (!result.Success)
@@ -394,6 +401,171 @@ app.MapPost("/api/projects/audit", async (HttpRequest request, IConfiguration co
 });
 
 // ---------------------------------------------------------------------------------------------
+// /api/tests/status -- the latest test run result per build (project name + version). When "Run
+// Tests" executes locally (a dev's own machine, using their local TestSuites paths), the client
+// already did the real work and this just records/serves the result, same "client already did the
+// work, this just logs it" shape as /api/projects/audit, except this overwrites the one current
+// status per build instead of appending to a log. /api/tests/run (below) is the other case -- the
+// server does the work itself, for non-developer/remote-only users who have no local checkout at
+// all -- and writes to this same store once it finishes.
+// ---------------------------------------------------------------------------------------------
+
+app.MapGet("/api/tests/status", async (HttpRequest request, IConfiguration configuration) =>
+{
+    if (!ApiKeyAuth.Validate(request, configuration))
+    {
+        return Results.Unauthorized();
+    }
+
+    try
+    {
+        var all = await new TestRunStatusStore().LoadAllAsync(TestRunStatusRoot(configuration), request.HttpContext.RequestAborted);
+        return Results.Ok(all);
+    }
+    catch (Exception ex)
+    {
+        return Results.Problem(ex.Message, statusCode: StatusCodes.Status500InternalServerError);
+    }
+});
+
+app.MapPost("/api/tests/status", async (HttpRequest request, IConfiguration configuration) =>
+{
+    if (!ApiKeyAuth.Validate(request, configuration))
+    {
+        return Results.Unauthorized();
+    }
+
+    var body = await request.ReadFromJsonAsync<TestRunStatus>(request.HttpContext.RequestAborted);
+    if (body is null)
+    {
+        return Results.BadRequest(new { error = "Expected a JSON body." });
+    }
+
+    try
+    {
+        await new TestRunStatusStore().SetAsync(TestRunStatusRoot(configuration), body, request.HttpContext.RequestAborted);
+        return Results.Ok();
+    }
+    catch (Exception ex)
+    {
+        return Results.Problem(ex.Message, statusCode: StatusCodes.Status500InternalServerError);
+    }
+});
+
+// /api/tests/run -- runs one build's own BUNDLED test suites ON THIS SERVER (see
+// BuildManifest.TestBundlePath -- built/published by Publisher on the publishing dev's own machine
+// and uploaded alongside the build, so there's no git/checkout/source needed here at all), streaming
+// output live into the HTTP response body line-by-line as it happens (read incrementally by
+// RemoteHostingClient.RunTestsAsync, same "live, not just the end result" requirement local runs
+// already meet) -- this is what actually lets a non-developer, remote-only user trigger a real test
+// run themselves, with no source or test tooling of their own. Requires this server machine to have
+// whatever each suite's project type needs installed on it too: .NET SDK always (a modern suite only
+// needs this -- dotnet vstest, no Visual Studio); Visual Studio/Build Tools (vstest.console.exe) for a
+// classic packages.config suite; Playwright's browsers (a one-time "playwright.ps1 install" here) for
+// an E2E suite -- same prerequisites a dev's own machine needs for local execution, just installed
+// here instead.
+app.MapPost("/api/tests/run", async (HttpRequest request, HttpResponse response, IConfiguration configuration, string project, string version, string? performedBy) =>
+{
+    if (!ApiKeyAuth.Validate(request, configuration))
+    {
+        return Results.Unauthorized();
+    }
+
+    var buildsRoot = configuration["BuildsRoot"];
+    if (string.IsNullOrWhiteSpace(buildsRoot) || !Directory.Exists(buildsRoot))
+    {
+        return Results.Problem("BuildsRoot isn't configured or accessible on this server.", statusCode: StatusCodes.Status503ServiceUnavailable);
+    }
+
+    // Past this point the response IS the log stream -- every failure from here on (including "no
+    // such build" or "this build has no test bundle") is written into it as a line (via
+    // HttpStreamOutputSink) rather than returned as a normal error IResult, since headers are about
+    // to be committed as soon as the first line is written.
+    response.StatusCode = StatusCodes.Status200OK;
+    response.ContentType = "text/plain; charset=utf-8";
+
+    // Kestrel disallows synchronous body writes by default (throws InvalidOperationException:
+    // "Synchronous operations are disallowed") -- HttpStreamOutputSink's Write/Flush calls are
+    // synchronous on purpose, to match IOutputSink's own synchronous contract without needing async
+    // plumbing through every caller in this codebase. This is the standard, documented escape hatch
+    // for exactly that case, scoped to just this one request.
+    var syncIoFeature = request.HttpContext.Features.Get<IHttpBodyControlFeature>();
+    if (syncIoFeature is not null)
+    {
+        syncIoFeature.AllowSynchronousIO = true;
+    }
+
+    var ct = request.HttpContext.RequestAborted;
+    await using var writer = new StreamWriter(response.Body) { AutoFlush = true };
+    var output = new HttpStreamOutputSink(writer);
+
+    var workingDir = Path.Combine(Path.GetTempPath(), "PublishToolHosting", "tests", Guid.NewGuid().ToString("N"));
+    UnitTestOrchestratorResult? result = null;
+    try
+    {
+        output.Stage($"Running tests for '{project}' v{version} on the dev server...");
+        result = await new RemoteTestRunnerService().RunAsync(buildsRoot, project, version, workingDir, output, ct);
+    }
+    catch (Exception ex) when (ex is not OperationCanceledException)
+    {
+        output.Error(ex.Message);
+    }
+    finally
+    {
+        if (Directory.Exists(workingDir))
+        {
+            try
+            {
+                Directory.Delete(workingDir, recursive: true);
+            }
+            catch (IOException)
+            {
+                // Best-effort cleanup -- a locked file (e.g. an antivirus scan) here shouldn't
+                // fail an otherwise-successful run.
+            }
+        }
+    }
+
+    if (result is null)
+    {
+        output.Warn($"'{project}' has no runnable test suites.");
+        return Results.Empty;
+    }
+
+    output.Info(result.Passed ? "All tests passed." : "Tests failed.");
+
+    try
+    {
+        var status = new TestRunStatus
+        {
+            ProjectName = project,
+            Version = version,
+            Passed = result.Passed,
+            RunAtUtc = DateTimeOffset.UtcNow,
+            PerformedBy = string.IsNullOrWhiteSpace(performedBy) ? "(unknown)" : performedBy,
+            Suites = result.Suites
+                .Select(s => new TestSuiteRunStatus
+                {
+                    SuiteName = s.SuiteName,
+                    Passed = s.Passed,
+                    TotalCount = s.TotalCount,
+                    PassedCount = s.PassedCount,
+                    FailedCount = s.FailedCount,
+                    SkippedCount = s.SkippedCount,
+                })
+                .ToList(),
+        };
+        await new TestRunStatusStore().SetAsync(TestRunStatusRoot(configuration), status, ct);
+    }
+    catch (Exception ex)
+    {
+        output.Warn($"Tests ran, but the result couldn't be recorded: {ex.Message}");
+    }
+
+    return Results.Empty;
+});
+
+// ---------------------------------------------------------------------------------------------
 // /api/environments -- the shared deployment environment name list (Staging/Production/etc.) every
 // PublishTool user picks from when configuring or deploying to a project's environments.
 // ---------------------------------------------------------------------------------------------
@@ -540,6 +712,7 @@ static string ContentTypeForDownload(string filePath) => Path.GetExtension(fileP
     ".txt" => "text/plain",
     ".apk" => "application/vnd.android.package-archive",
     ".aab" => "application/octet-stream",
+    ".xlsx" => "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     _ => "application/zip",
 };
 
@@ -554,6 +727,9 @@ static string ProjectAuditRoot(IConfiguration configuration) =>
 
 static string IisAuditRoot(IConfiguration configuration) =>
     configuration["BuildsRoot"] is { Length: > 0 } buildsRoot ? Path.Combine(buildsRoot, "_iis-audit") : IisAuditStore.DefaultRoot;
+
+static string TestRunStatusRoot(IConfiguration configuration) =>
+    configuration["BuildsRoot"] is { Length: > 0 } buildsRoot ? Path.Combine(buildsRoot, "_test-status") : TestRunStatusStore.DefaultRoot;
 
 static IisSiteManager CreateIisSiteManager(IConfiguration configuration) =>
     new(NullOutputSink.Instance, DeploymentsRoot(configuration), IisAuditRoot(configuration));
