@@ -77,6 +77,11 @@ public sealed class SharedProjectConfig
     /// <see cref="ProjectConfig.RemoteEnvironments"/>.</summary>
     public List<DeploymentEnvironment> RemoteEnvironments { get; set; } = new();
 
+    /// <summary>See <see cref="ProjectConfig.TestSuiteTypes"/> -- genuinely needed by the server's
+    /// own remote test execution (to resolve an E2E suite's target environment), not just
+    /// round-tripped for a client to read back.</summary>
+    public List<SharedTestSuiteConfig> TestSuiteTypes { get; set; } = new();
+
     /// <summary>Catches any JSON property this exact build of the class doesn't declare a named
     /// property for, and re-emits it unchanged on serialize -- see the class remarks above. Never
     /// read or written directly by application code; <c>System.Text.Json</c> populates/consumes it
@@ -112,5 +117,6 @@ public sealed class SharedProjectConfig
         EventLogMachineName = config.EventLogMachineName,
         EventLogUsername = config.EventLogUsername,
         RemoteEnvironments = config.RemoteEnvironments,
+        TestSuiteTypes = config.TestSuiteTypes,
     };
 }

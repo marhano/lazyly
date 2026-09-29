@@ -85,6 +85,15 @@ public sealed class PublishOptions
     /// found). Null defers to <see cref="ProjectConfig.AppConfigPath"/> as before.</summary>
     public string? AppConfigPathOverride { get; set; }
 
+    /// <summary>Explicit MSBuild publish profile name for this publish, overriding
+    /// <see cref="ProjectConfig.PubxmlName"/> -- the GUI's Publish tab now always sends this,
+    /// populated from a select box listing whatever .pubxml files actually exist under the
+    /// project's own Properties\PublishProfiles folder (see
+    /// <see cref="Services.PublishProfileDiscovery"/>), rather than a free-text field on the
+    /// project itself. Only meaningful for <see cref="ProjectType.DotNet"/>; null falls back to
+    /// <see cref="ProjectConfig.PubxmlName"/> for CLI callers that still set it there.</summary>
+    public string? PubxmlNameOverride { get; set; }
+
     /// <summary>Passed as <c>npm run build -- --configuration=&lt;value&gt;</c> for Angular/Android
     /// builds -- a per-publish choice rather than a project setting, normally derived from whichever
     /// environment.*.ts file was picked for app config (see
@@ -106,10 +115,20 @@ public sealed class PublishOptions
     /// contract as <see cref="AppConfigSettings"/>. Only used when the project is <see cref="ProjectType.Android"/>.</summary>
     public AndroidAppMetadata? AndroidAppMetadata { get; set; }
 
-    /// <summary>Whether to run this project's unit tests as part of this publish, if it has any
-    /// configured (see <see cref="ProjectConfig.UnitTestsEnabled"/>). Purely informational -- a
-    /// missing test project, a tool that can't be found, or failing tests never fail the publish,
-    /// see <see cref="Services.UnitTestRunners.IUnitTestRunner"/>. Defaults to false: running tests
-    /// takes real time, so it's an explicit per-publish opt-in, not automatic.</summary>
-    public bool RunUnitTests { get; set; }
+    /// <summary>Which of this project's configured test suite types (see
+    /// <see cref="ProjectConfig.TestSuiteTypes"/>) to run as part of this publish. Purely
+    /// informational -- a missing test project, a tool that can't be found, or failing tests never
+    /// fail the publish, see <see cref="Services.UnitTestRunners.IUnitTestRunner"/>. Empty by
+    /// default: running tests takes real time, so it's an explicit per-publish opt-in per type, not
+    /// automatic. Replaces the old single "RunUnitTests" toggle now that a project can have more
+    /// than one suite type (e.g. Unit Test AND E2E) runnable independently.</summary>
+    public HashSet<TestSuiteType> TestTypesToRun { get; set; } = new();
+
+    /// <summary>Explicit BASE_URL for the E2E suite when it's included in <see cref="TestTypesToRun"/>
+    /// -- the Publish tab's own "E2E test URL" field, shown only while that toggle is on. Bypasses the
+    /// project's configured target environment/binding resolution entirely (see
+    /// <see cref="Services.E2EBaseUrlResolver"/>), since a dev publishing locally may want to point E2E
+    /// at whatever URL they're actually testing against right now. Null/empty falls back to the normal
+    /// environment-based resolution. Ignored when E2E isn't in <see cref="TestTypesToRun"/>.</summary>
+    public string? E2ETestUrl { get; set; }
 }

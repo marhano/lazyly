@@ -67,7 +67,7 @@ public sealed class DotNetUnitTestRunner : IUnitTestRunner
         var exitCode = await ProcessRunner.RunAsync(
             "dotnet",
             $"test \"{testProjectPath}\" --logger \"trx;LogFileName=results.trx\" --results-directory \"{context.WorkingDir}\"",
-            context.Output, treatStderrAsError: true, context.WorkingDir, ct);
+            context.Output, treatStderrAsError: true, context.WorkingDir, context.EnvironmentVariables, ct);
 
         var trxPath = Path.Combine(context.WorkingDir, "results.trx");
         if (!File.Exists(trxPath))
@@ -95,7 +95,7 @@ public sealed class DotNetUnitTestRunner : IUnitTestRunner
             throw new InvalidOperationException($"Built {suite.Name}, but couldn't find its output assembly under '{testProjectDir}\\bin'.");
         }
 
-        return await RunClassicVsTestAsync(project.Name, suite.Name, testAssemblyPath, context.WorkingDir, context.Output, ct);
+        return await RunClassicVsTestAsync(project.Name, suite.Name, testAssemblyPath, context.WorkingDir, context.Output, context.EnvironmentVariables, ct);
     }
 
     // The remote-execution path: TestSuiteConfig.ProjectPath already points at a built assembly
@@ -116,7 +116,7 @@ public sealed class DotNetUnitTestRunner : IUnitTestRunner
             var exitCode = await ProcessRunner.RunAsync(
                 "dotnet",
                 $"vstest \"{assemblyPath}\" /logger:\"trx;LogFileName=results.trx\" /ResultsDirectory:\"{context.WorkingDir}\"",
-                context.Output, treatStderrAsError: false, ct);
+                context.Output, treatStderrAsError: false, workingDirectory: null, context.EnvironmentVariables, ct);
 
             var trxPath = Path.Combine(context.WorkingDir, "results.trx");
             if (!File.Exists(trxPath))
@@ -128,7 +128,7 @@ public sealed class DotNetUnitTestRunner : IUnitTestRunner
             return (trxPath, exitCode);
         }
 
-        return await RunClassicVsTestAsync(projectName: null, suite.Name, assemblyPath, context.WorkingDir, context.Output, ct);
+        return await RunClassicVsTestAsync(projectName: null, suite.Name, assemblyPath, context.WorkingDir, context.Output, context.EnvironmentVariables, ct);
     }
 
     // A Playwright-based suite's own build output includes a "playwright.ps1" script (generated
@@ -163,7 +163,8 @@ public sealed class DotNetUnitTestRunner : IUnitTestRunner
     // path -- both end up needing the exact same "locate vstest.console.exe, run it against one
     // assembly, confirm a .trx came out" sequence.
     private static async Task<(string TrxPath, int ExitCode)> RunClassicVsTestAsync(
-        string? projectName, string suiteName, string assemblyPath, string workingDir, IOutputSink output, CancellationToken ct)
+        string? projectName, string suiteName, string assemblyPath, string workingDir, IOutputSink output,
+        IReadOnlyDictionary<string, string>? environmentVariables, CancellationToken ct)
     {
         var vsTestExePath = await VsTestLocator.LocateAsync(ct);
         if (vsTestExePath is null)
@@ -178,7 +179,7 @@ public sealed class DotNetUnitTestRunner : IUnitTestRunner
         var exitCode = await ProcessRunner.RunAsync(
             vsTestExePath,
             $"\"{assemblyPath}\" /logger:\"trx;LogFileName=results.trx\" /ResultsDirectory:\"{workingDir}\"",
-            output, treatStderrAsError: false, ct);
+            output, treatStderrAsError: false, workingDirectory: null, environmentVariables, ct);
 
         var trxPath = Path.Combine(workingDir, "results.trx");
         if (!File.Exists(trxPath))

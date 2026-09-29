@@ -32,8 +32,12 @@ public interface IUnitTestRunner
 /// staging directory, since tests run against source, not the published build output.
 /// <paramref name="MsBuildPath"/> is an optional user-configured override for the classic .NET
 /// Framework test-project path (see <see cref="DotNetUnitTestRunner"/>) -- null lets it fall back to
-/// vswhere auto-detection, same as every other MSBuild.exe lookup in this app.</summary>
-public sealed record UnitTestContext(string WorkingDir, IOutputSink Output, string? MsBuildPath = null);
+/// vswhere auto-detection, same as every other MSBuild.exe lookup in this app.
+/// <paramref name="EnvironmentVariables"/> are extra variables for the actual test-execution child
+/// process only (never the restore/build steps) -- currently only ever populated for an E2E suite's
+/// <c>BASE_URL</c>, see <see cref="E2EBaseUrlResolver"/>.</summary>
+public sealed record UnitTestContext(
+    string WorkingDir, IOutputSink Output, string? MsBuildPath = null, IReadOnlyDictionary<string, string>? EnvironmentVariables = null);
 
 /// <summary><paramref name="Cases"/> is every parsed test case from this one suite's run (empty if
 /// the run produced none to report -- e.g. no JUnit file ever showed up). <paramref name="Passed"/>

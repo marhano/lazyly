@@ -66,7 +66,6 @@
                     <Grid.RowDefinitions>
                         <RowDefinition Height="Auto"/>
                         <RowDefinition Height="Auto"/>
-                        <RowDefinition Height="Auto"/>
                     </Grid.RowDefinitions>
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="150"/>
@@ -82,9 +81,6 @@
                     <TextBlock Grid.Row="1" Grid.Column="0" Text="AssemblyInfo.cs&#10;(optional)" VerticalAlignment="Center"/>
                     <ui:TextBox Grid.Row="1" Grid.Column="1" x:Name="AssemblyInfoTextBox" Margin="0,6,6,6" PlaceholderText="Properties\AssemblyInfo.cs"/>
                     <ui:Button Grid.Row="1" Grid.Column="2" Content="Browse..." Icon="{ui:SymbolIcon FolderOpen24}" Width="100" Click="BrowseAssemblyInfo_Click"/>
-
-                    <TextBlock Grid.Row="2" Grid.Column="0" Text="Publish profile&#10;(optional)" VerticalAlignment="Center"/>
-                    <ui:TextBox Grid.Row="2" Grid.Column="1" x:Name="PubxmlTextBox" Margin="0,6,6,6" PlaceholderText="FolderProfile"/>
                 </Grid>
 
                 <ui:ToggleSwitch x:Name="RemoteIisToggle" Content="Remote IIS" Margin="0,16,0,0"
@@ -128,42 +124,34 @@
                     <ui:Button Content="Add environment" Icon="{ui:SymbolIcon Add24}" Width="150" Margin="0,8,0,0" Click="AddLocalEnvironmentButton_Click"/>
                 </StackPanel>
 
-                <TextBlock Text="Test Suites" FontWeight="SemiBold" Margin="0,16,0,4"/>
-                <TextBlock TextWrapping="Wrap" Margin="0,0,0,10" FontSize="12"
-                           Foreground="{DynamicResource TextFillColorSecondaryBrush}"
-                           Text="Optional -- never blocks publishing, and can also be run on demand from the Projects tab's &quot;Run Tests&quot; button. Add one entry per kind of test (e.g. Unit Test, E2E Test); a project's overall Test Result is Passed only if every suite passes. Local to this machine, like the .csproj path above -- each teammate points at their own checkout. In remote mode, these same suites are built/published and bundled alongside each publish, so non-developer, remote-only teammates can run them too -- the dev server just needs the .NET SDK (plus Visual Studio/Build Tools for a classic test project, or Playwright's browsers for an E2E suite)."/>
+                <StackPanel x:Name="DotNetTestSuitePathsPanel">
+                    <TextBlock Text="Test Suites" FontWeight="SemiBold" Margin="0,16,0,4"/>
+                    <TextBlock TextWrapping="Wrap" Margin="0,0,0,10" FontSize="12"
+                               Foreground="{DynamicResource TextFillColorSecondaryBrush}"
+                               Text="Where YOUR OWN checkout of each test suite enabled below (Shared settings) lives -- local to this machine, like the .csproj path above, so each teammate points at their own checkout. Optional -- a suite with no path here just isn't runnable from this machine yet. In remote mode, whatever's built from these paths is bundled alongside each publish, so non-developer, remote-only teammates can run it too -- the dev server just needs the .NET SDK (plus Visual Studio/Build Tools for a classic test project, or Playwright's browsers for an E2E suite)."/>
 
-                <StackPanel x:Name="DotNetTestSuitesPanel">
-                    <DataGrid x:Name="TestSuitesDataGrid" AutoGenerateColumns="False" CanUserAddRows="False" IsReadOnly="True" Height="120">
-                        <DataGrid.Columns>
-                            <DataGridTextColumn Header="Name" Binding="{Binding Name}" Width="150"/>
-                            <DataGridTextColumn Header="Test Project" Binding="{Binding ProjectPath}" Width="*"/>
-                            <DataGridTemplateColumn Header="Actions" Width="90">
-                                <DataGridTemplateColumn.CellTemplate>
-                                    <DataTemplate>
-                                        <ui:Button Content="Remove" Width="80" Click="RemoveTestSuiteButton_Click"/>
-                                    </DataTemplate>
-                                </DataGridTemplateColumn.CellTemplate>
-                            </DataGridTemplateColumn>
-                        </DataGrid.Columns>
-                    </DataGrid>
-                    <Grid Margin="0,8,0,0">
+                    <Grid x:Name="UnitTestSuitePathGrid" Visibility="Collapsed" Margin="0,0,0,10">
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="150"/>
                             <ColumnDefinition Width="*"/>
                             <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" Text="Unit Test project" VerticalAlignment="Center"/>
+                        <ui:TextBox Grid.Column="1" x:Name="UnitTestSuitePathTextBox" Margin="0,0,6,0" PlaceholderText="C:\src\MyProject\MyProject.Tests\MyProject.Tests.csproj"/>
+                        <ui:Button Grid.Column="2" Content="Browse..." Icon="{ui:SymbolIcon FolderOpen24}" Width="100" Click="BrowseUnitTestSuitePath_Click"/>
+                    </Grid>
+
+                    <Grid x:Name="E2ETestSuitePathGrid" Visibility="Collapsed">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="150"/>
+                            <ColumnDefinition Width="*"/>
                             <ColumnDefinition Width="Auto"/>
                         </Grid.ColumnDefinitions>
-                        <ui:TextBox Grid.Column="0" x:Name="NewTestSuiteNameTextBox" PlaceholderText="e.g. Unit Test" Margin="0,0,6,0"/>
-                        <ui:TextBox Grid.Column="1" x:Name="NewTestSuiteProjectPathTextBox" PlaceholderText="C:\src\MyProject\MyProject.Tests\MyProject.Tests.csproj" Margin="0,0,6,0"/>
-                        <ui:Button Grid.Column="2" Content="Browse..." Icon="{ui:SymbolIcon FolderOpen24}" Width="100" Margin="0,0,6,0" Click="BrowseNewTestSuiteProjectPath_Click"/>
-                        <ui:Button Grid.Column="3" Content="Add" Icon="{ui:SymbolIcon Add24}" Width="90" Click="AddTestSuiteButton_Click"/>
+                        <TextBlock Grid.Column="0" Text="E2E project" VerticalAlignment="Center"/>
+                        <ui:TextBox Grid.Column="1" x:Name="E2ETestSuitePathTextBox" Margin="0,0,6,0" PlaceholderText="C:\src\MyProject\MyProject.E2ETests\MyProject.E2ETests.csproj"/>
+                        <ui:Button Grid.Column="2" Content="Browse..." Icon="{ui:SymbolIcon FolderOpen24}" Width="100" Click="BrowseE2ETestSuitePath_Click"/>
                     </Grid>
                 </StackPanel>
-
-                <ui:ToggleSwitch x:Name="JsTestsToggle" Content="Run tests (npm test) on publish" Visibility="Collapsed"
-                                  Checked="JsTestsToggle_Toggled" Unchecked="JsTestsToggle_Toggled"
-                                  ToolTip="Runs &quot;npm test&quot; in the project root above. Your project's own test runner (Karma/Jest, etc.) needs a JUnit reporter already configured to write its results to test-results/junit.xml under the project root -- PublishTool looks there, but doesn't configure a reporter itself."/>
 
                 <Border BorderThickness="0,1,0,0" BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}" Margin="0,20,0,20"/>
 
@@ -329,6 +317,30 @@
                         <ui:Button Content="Add environment" Icon="{ui:SymbolIcon Add24}" Width="150" Margin="0,8,0,0" Click="AddRemoteEnvironmentButton_Click"/>
                     </StackPanel>
                 </StackPanel>
+
+                <TextBlock Text="Test Suites" FontWeight="SemiBold" Margin="0,16,0,4"/>
+                <TextBlock TextWrapping="Wrap" Margin="0,0,0,10" FontSize="12"
+                           Foreground="{DynamicResource TextFillColorSecondaryBrush}"
+                           Text="Which kinds of tests this project has. Shared team-wide -- everyone sees the same types enabled, and (in remote mode) non-developer, remote-only teammates can run them too, via the Projects tab's Tests dialog. Never blocks publishing. Each dev then points their own checkout at these in Local settings above."/>
+
+                <StackPanel x:Name="DotNetTestSuiteTypesPanel">
+                    <ui:ToggleSwitch x:Name="UnitTestSuiteToggle" Content="Unit Test"
+                                      Checked="TestSuiteTypeToggle_Toggled" Unchecked="TestSuiteTypeToggle_Toggled"/>
+                    <ui:ToggleSwitch x:Name="E2ETestSuiteToggle" Content="E2E" Margin="0,10,0,0"
+                                      Checked="TestSuiteTypeToggle_Toggled" Unchecked="TestSuiteTypeToggle_Toggled"/>
+                    <Grid x:Name="E2EEnvironmentFieldGrid" Margin="20,10,0,0" Visibility="Collapsed">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="130"/>
+                            <ColumnDefinition Width="*"/>
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" Text="Target environment" VerticalAlignment="Center"/>
+                        <ComboBox Grid.Column="1" x:Name="E2EEnvironmentComboBox" HorizontalAlignment="Left" Width="240" DisplayMemberPath="Name"
+                                  ToolTip="One of this project's dev-server environments (above) -- E2E hits that environment's real deployed URL instead of the test project's own default."/>
+                    </Grid>
+                </StackPanel>
+
+                <ui:ToggleSwitch x:Name="JsTestsToggle" Content="Run tests (npm test) on publish" Visibility="Collapsed"
+                                  ToolTip="Runs &quot;npm test&quot; in the project root above. Your project's own test runner (Karma/Jest, etc.) needs a JUnit reporter already configured to write its results to test-results/junit.xml under the project root -- PublishTool looks there, but doesn't configure a reporter itself."/>
 
             </StackPanel>
         </ScrollViewer>

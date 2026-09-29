@@ -14,16 +14,21 @@ namespace PublishTool.Core.Services.UnitTestRunners;
 /// failure -- see <see cref="IUnitTestRunner"/>'s remarks on why unit tests never gate publish.
 ///
 /// Unlike .NET, there's no per-suite project path concept here -- <c>npm test</c> is the one
-/// mechanism, so any configured <see cref="ProjectConfig.TestSuites"/> entry (regardless of name or
+/// mechanism, so any configured <see cref="ProjectConfig.TestSuites"/> entry (regardless of
 /// <see cref="TestSuiteConfig.ProjectPath"/>, which is meaningless for this project type) just means
-/// "this project wants its one implicit test run included."</summary>
+/// "this project wants its one implicit test run included." The suite's Name is still
+/// <see cref="TestSuiteTypeNames.DisplayName"/> of <see cref="TestSuiteType.UnitTest"/> (not a
+/// project-type-specific label like "npm test"), matching what <see cref="ProjectConfig.TestSuites"/>
+/// itself reports for it (see <see cref="ProjectConfig"/>'s computed property) -- callers that filter
+/// by suite name (e.g. the Projects tab's tests dialog, or a remote <c>suiteType</c> request) need
+/// that name to actually match, and there's only ever one suite type Angular/Android can have.</summary>
 public sealed class JsUnitTestRunner : IUnitTestRunner
 {
     /// <summary>Fixed by convention (not user-configurable) -- your project's test runner
     /// (Karma/Jest, etc.) needs a JUnit reporter configured to write exactly here.</summary>
     public const string ResultFileRelativePath = "test-results/junit.xml";
 
-    private static readonly TestSuiteConfig ImplicitSuite = new() { Name = "npm test" };
+    private static readonly TestSuiteConfig ImplicitSuite = new() { Name = TestSuiteTypeNames.DisplayName(TestSuiteType.UnitTest) };
 
     public IReadOnlyList<TestSuiteConfig> GetConfiguredSuites(ProjectConfig project) =>
         project.TestSuites.Count > 0 && ResolveProjectRoot(project) is not null

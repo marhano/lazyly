@@ -32,7 +32,6 @@ public partial class ProjectEditDialog : Wpf.Ui.Controls.FluentWindow
     private readonly ObservableCollection<DeploymentEnvironment> _localEnvironments = new();
     private readonly ObservableCollection<DeploymentEnvironment> _remoteEnvironments = new();
     private readonly ObservableCollection<string> _eventLogFilterValues = new();
-    private readonly ObservableCollection<TestSuiteConfig> _testSuites = new();
     private List<string> _environmentNames = new();
     private string? _defaultEnvironmentName;
 
@@ -65,6 +64,7 @@ public partial class ProjectEditDialog : Wpf.Ui.Controls.FluentWindow
         UseAppConfigToggle, AppConfigTypeComboBox,
         UseEventLogToggle, EventLogPanel,
         RemoteEnvironmentsSectionPanel,
+        DotNetTestSuiteTypesPanel, JsTestsToggle,
     };
 
     public ProjectEditDialog(ProjectConfig? existing, bool remoteMode)
@@ -75,7 +75,7 @@ public partial class ProjectEditDialog : Wpf.Ui.Controls.FluentWindow
         LocalEnvironmentsDataGrid.ItemsSource = _localEnvironments;
         RemoteEnvironmentsDataGrid.ItemsSource = _remoteEnvironments;
         EventLogFilterValuesListBox.ItemsSource = _eventLogFilterValues;
-        TestSuitesDataGrid.ItemsSource = _testSuites;
+        E2EEnvironmentComboBox.ItemsSource = _remoteEnvironments;
 
         TitleTextBlock.Text = existing is null ? "Add project" : $"Edit {existing.Name}";
 
@@ -140,7 +140,6 @@ public partial class ProjectEditDialog : Wpf.Ui.Controls.FluentWindow
         NameTextBox.Text = p.Name;
         CsprojTextBox.Text = p.CsprojPath ?? string.Empty;
         AssemblyInfoTextBox.Text = p.AssemblyInfoPath ?? string.Empty;
-        PubxmlTextBox.Text = p.PubxmlName ?? string.Empty;
 
         foreach (var env in p.LocalEnvironments)
         {
@@ -199,11 +198,16 @@ public partial class ProjectEditDialog : Wpf.Ui.Controls.FluentWindow
         EventLogMachineTextBox.Text = p.EventLogMachineName ?? string.Empty;
         EventLogUsernameTextBox.Text = p.EventLogUsername ?? string.Empty;
 
-        foreach (var suite in p.TestSuites)
-        {
-            _testSuites.Add(suite);
-        }
-        JsTestsToggle.IsChecked = p.TestSuites.Count > 0;
+        var unitTestSuiteType = p.TestSuiteTypes.FirstOrDefault(t => t.Type == TestSuiteType.UnitTest);
+        var e2eSuiteType = p.TestSuiteTypes.FirstOrDefault(t => t.Type == TestSuiteType.E2E);
+        UnitTestSuiteToggle.IsChecked = unitTestSuiteType is not null;
+        E2ETestSuiteToggle.IsChecked = e2eSuiteType is not null;
+        JsTestsToggle.IsChecked = p.TestSuiteTypes.Count > 0;
+
+        var unitTestSuitePath = p.TestSuitePaths.FirstOrDefault(t => t.Type == TestSuiteType.UnitTest);
+        var e2eSuitePath = p.TestSuitePaths.FirstOrDefault(t => t.Type == TestSuiteType.E2E);
+        UnitTestSuitePathTextBox.Text = unitTestSuitePath?.ProjectPath ?? string.Empty;
+        E2ETestSuitePathTextBox.Text = e2eSuitePath?.ProjectPath ?? string.Empty;
 
         RemoteIisToggle.IsChecked = p.RemoteIisEnabled;
 
@@ -211,6 +215,11 @@ public partial class ProjectEditDialog : Wpf.Ui.Controls.FluentWindow
         {
             _remoteEnvironments.Add(env);
         }
+
+        // Depends on _remoteEnvironments already being populated, just above.
+        E2EEnvironmentComboBox.SelectedItem = e2eSuiteType?.EnvironmentName is { } e2eEnvironmentName
+            ? _remoteEnvironments.FirstOrDefault(env => string.Equals(env.Name, e2eEnvironmentName, StringComparison.OrdinalIgnoreCase))
+            : null;
 
         // One shared root for every dev-server environment, same reasoning as LocalHostRootPathTextBox.
         RemoteHostRootPathTextBox.Text = p.RemoteEnvironments.FirstOrDefault(env => !string.IsNullOrWhiteSpace(env.HostRootPath))?.HostRootPath ?? string.Empty;
@@ -225,61 +234,87 @@ public partial class ProjectEditDialog : Wpf.Ui.Controls.FluentWindow
         }
     }
 
-    private void BrowseNewTestSuiteProjectPath_Click(object sender, RoutedEventArgs e)
+    private void BrowseUnitTestSuitePath_Click(object sender, RoutedEventArgs e)
     {
         var dialog = new OpenFileDialog { Filter = "Project files (*.csproj)|*.csproj|All files (*.*)|*.*" };
         if (dialog.ShowDialog() == true)
         {
-            NewTestSuiteProjectPathTextBox.Text = dialog.FileName;
+            UnitTestSuitePathTextBox.Text = dialog.FileName;
         }
     }
 
-    private void AddTestSuiteButton_Click(object sender, RoutedEventArgs e)
+    private void BrowseE2ETestSuitePath_Click(object sender, RoutedEventArgs e)
     {
-        var name = NewTestSuiteNameTextBox.Text?.Trim();
-        var path = NewTestSuiteProjectPathTextBox.Text?.Trim();
-        if (string.IsNullOrWhiteSpace(name) || string.IsNullOrWhiteSpace(path))
+        var dialog = new OpenFileDialog { Filter = "Project files (*.csproj)|*.csproj|All files (*.*)|*.*" };
+        if (dialog.ShowDialog() == true)
         {
-            MessageBox.Show("Enter both a name and a test project path first.", "PublishTool", MessageBoxButton.OK, MessageBoxImage.Warning);
-            return;
-        }
-
-        if (_testSuites.Any(s => string.Equals(s.Name, name, StringComparison.OrdinalIgnoreCase)))
-        {
-            MessageBox.Show($"A test suite named '{name}' already exists.", "PublishTool", MessageBoxButton.OK, MessageBoxImage.Warning);
-            return;
-        }
-
-        _testSuites.Add(new TestSuiteConfig { Name = name, ProjectPath = path });
-        NewTestSuiteNameTextBox.Text = string.Empty;
-        NewTestSuiteProjectPathTextBox.Text = string.Empty;
-    }
-
-    private void RemoveTestSuiteButton_Click(object sender, RoutedEventArgs e)
-    {
-        if (((FrameworkElement)sender).DataContext is TestSuiteConfig suite)
-        {
-            _testSuites.Remove(suite);
+            E2ETestSuitePathTextBox.Text = dialog.FileName;
         }
     }
 
-    /// <summary>Angular/Android have no per-suite project-path concept -- this just adds/removes
-    /// one synthesized "npm test" entry, guarded so populating <see cref="_testSuites"/> from an
-    /// existing project in <see cref="PopulateFrom"/> (which sets this toggle's IsChecked
-    /// afterward) doesn't also add a duplicate.</summary>
-    private void JsTestsToggle_Toggled(object sender, RoutedEventArgs e)
+    /// <summary>Keeps the Local settings path row (and, for E2E, the environment picker) visible
+    /// only for whichever suite type is actually enabled here in Shared settings.</summary>
+    private void TestSuiteTypeToggle_Toggled(object sender, RoutedEventArgs e)
     {
-        if (JsTestsToggle.IsChecked == true)
+        UnitTestSuitePathGrid.Visibility = UnitTestSuiteToggle.IsChecked == true ? Visibility.Visible : Visibility.Collapsed;
+        E2ETestSuitePathGrid.Visibility = E2ETestSuiteToggle.IsChecked == true ? Visibility.Visible : Visibility.Collapsed;
+        E2EEnvironmentFieldGrid.Visibility = E2ETestSuiteToggle.IsChecked == true ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    /// <summary>Builds the shared (team-wide) half of this project's test suite config -- see
+    /// <see cref="SharedTestSuiteConfig"/> -- from whichever toggles are on. .NET can have Unit Test
+    /// and/or E2E independently; Angular/Android only ever have the single implicit "npm test" suite
+    /// (see <see cref="Services.UnitTestRunners.JsUnitTestRunner"/>), modeled as a bare UnitTest
+    /// entry since its Name/EnvironmentName are never actually read for that project type.</summary>
+    private List<SharedTestSuiteConfig> BuildTestSuiteTypes(ProjectType projectType)
+    {
+        var result = new List<SharedTestSuiteConfig>();
+        if (projectType == ProjectType.DotNet)
         {
-            if (_testSuites.Count == 0)
+            if (UnitTestSuiteToggle.IsChecked == true)
             {
-                _testSuites.Add(new TestSuiteConfig { Name = "npm test" });
+                result.Add(new SharedTestSuiteConfig { Type = TestSuiteType.UnitTest });
+            }
+
+            if (E2ETestSuiteToggle.IsChecked == true)
+            {
+                result.Add(new SharedTestSuiteConfig
+                {
+                    Type = TestSuiteType.E2E,
+                    EnvironmentName = (E2EEnvironmentComboBox.SelectedItem as DeploymentEnvironment)?.Name,
+                });
             }
         }
-        else
+        else if (JsTestsToggle.IsChecked == true)
         {
-            _testSuites.Clear();
+            result.Add(new SharedTestSuiteConfig { Type = TestSuiteType.UnitTest });
         }
+
+        return result;
+    }
+
+    /// <summary>Builds the local (per-dev) half of this project's test suite config -- see
+    /// <see cref="LocalTestSuiteConfig"/>. Angular/Android have no per-suite path concept at all
+    /// (see <see cref="Services.UnitTestRunners.JsUnitTestRunner"/>), so this is always empty for them.</summary>
+    private List<LocalTestSuiteConfig> BuildTestSuitePaths(ProjectType projectType)
+    {
+        var result = new List<LocalTestSuiteConfig>();
+        if (projectType != ProjectType.DotNet)
+        {
+            return result;
+        }
+
+        if (!string.IsNullOrWhiteSpace(UnitTestSuitePathTextBox.Text))
+        {
+            result.Add(new LocalTestSuiteConfig { Type = TestSuiteType.UnitTest, ProjectPath = UnitTestSuitePathTextBox.Text.Trim() });
+        }
+
+        if (!string.IsNullOrWhiteSpace(E2ETestSuitePathTextBox.Text))
+        {
+            result.Add(new LocalTestSuiteConfig { Type = TestSuiteType.E2E, ProjectPath = E2ETestSuitePathTextBox.Text.Trim() });
+        }
+
+        return result;
     }
 
     private void BrowseAssemblyInfo_Click(object sender, RoutedEventArgs e)
@@ -395,10 +430,12 @@ public partial class ProjectEditDialog : Wpf.Ui.Controls.FluentWindow
         RemoteIisToggle.Visibility = iisApplicable ? Visibility.Visible : Visibility.Collapsed;
         RemoteEnvironmentsSectionPanel.Visibility = iisApplicable ? Visibility.Visible : Visibility.Collapsed;
 
-        // .NET runs its tests via one or more separate *.Tests.csproj suites (needs the full
-        // editor); Angular/Android run "npm test" in the project root already configured above --
-        // there's no per-suite path concept for them, so they just get a single toggle instead.
-        DotNetTestSuitesPanel.Visibility = tag == "DotNet" ? Visibility.Visible : Visibility.Collapsed;
+        // .NET runs its tests via one or more separate *.Tests.csproj suites, with a type+path per
+        // suite (needs the full editor); Angular/Android run "npm test" in the project root already
+        // configured above -- there's no per-suite type/path concept for them, so they just get a
+        // single toggle instead.
+        DotNetTestSuiteTypesPanel.Visibility = tag == "DotNet" ? Visibility.Visible : Visibility.Collapsed;
+        DotNetTestSuitePathsPanel.Visibility = tag == "DotNet" ? Visibility.Visible : Visibility.Collapsed;
         JsTestsToggle.Visibility = tag is "Angular" or "Android" ? Visibility.Visible : Visibility.Collapsed;
 
         UpdateAppConfigTypeOptions(projectType);
@@ -627,6 +664,14 @@ public partial class ProjectEditDialog : Wpf.Ui.Controls.FluentWindow
 
         var filterType = (EventLogFilterTypeComboBox.SelectedItem as System.Windows.Controls.ComboBoxItem)?.Tag as string ?? EventLogFilterTypes.Source;
 
+        if (projectType == ProjectType.DotNet && E2ETestSuiteToggle.IsChecked == true && E2EEnvironmentComboBox.SelectedItem is not DeploymentEnvironment)
+        {
+            MessageBox.Show(
+                "E2E testing is on but no target environment is selected. Pick one, or turn E2E off.",
+                "PublishTool", MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
+        }
+
         // One shared root for every local (resp. dev-server) environment, not a per-row setting --
         // see LocalHostRootPathTextBox/RemoteHostRootPathTextBox.
         var localHostRootPath = string.IsNullOrWhiteSpace(LocalHostRootPathTextBox.Text) ? null : LocalHostRootPathTextBox.Text.Trim();
@@ -650,7 +695,10 @@ public partial class ProjectEditDialog : Wpf.Ui.Controls.FluentWindow
             LastReleaseNotesSequence = _existing?.LastReleaseNotesSequence ?? 0,
             ProjectType = projectType,
             CsprojPath = projectType == ProjectType.DotNet && !string.IsNullOrWhiteSpace(CsprojTextBox.Text) ? CsprojTextBox.Text.Trim() : null,
-            PubxmlName = projectType == ProjectType.DotNet && !string.IsNullOrWhiteSpace(PubxmlTextBox.Text) ? PubxmlTextBox.Text.Trim() : null,
+            // No longer editable here -- the Publish tab now selects a profile per publish from
+            // whatever .pubxml files actually exist on disk (see PublishOptions.PubxmlNameOverride).
+            // Preserve whatever an older registration (or the CLI's add-project) already set.
+            PubxmlName = _existing?.PubxmlName,
             AssemblyInfoPath = projectType == ProjectType.DotNet && !string.IsNullOrWhiteSpace(AssemblyInfoTextBox.Text) ? AssemblyInfoTextBox.Text.Trim() : null,
             ExtraPublishTargets = projectType == ProjectType.DotNet && !string.IsNullOrWhiteSpace(ExtraTargetsTextBox.Text) ? ExtraTargetsTextBox.Text.Trim() : null,
             SdkStyleProject = projectType == ProjectType.DotNet && SdkStyleProjectToggle.IsChecked == true,
@@ -689,7 +737,8 @@ public partial class ProjectEditDialog : Wpf.Ui.Controls.FluentWindow
             EventLogProtectedPassword = _existing?.EventLogProtectedPassword,
             RemoteIisEnabled = remoteIisEnabled,
             RemoteEnvironments = _remoteEnvironments.ToList(),
-            TestSuites = _testSuites.ToList(),
+            TestSuiteTypes = BuildTestSuiteTypes(projectType),
+            TestSuitePaths = BuildTestSuitePaths(projectType),
         };
 
         try

@@ -52,24 +52,27 @@ dotnet build PublishTool.slnx
 ## CLI usage
 
 ```
-publishtool add-project --name <Name> --csproj <path.csproj> --pubxml <ProfileName>
+publishtool add-project --name <Name> --csproj <path.csproj> [--pubxml <ProfileName>]
                          [--assembly-info <path>] [--extra-publish-targets <targets>]
 publishtool add-project --name <Name> --project-type angular --project-root <path> [--build-configuration <config>]
 publishtool add-project --name <Name> --project-type android --project-root <path> [--artifact-type apk|aab]
 publishtool remove-project --name <Name>
 publishtool list-projects
-publishtool publish --project <Name> --version <Version>
+publishtool publish --project <Name> --version <Version> [--pubxml-name <ProfileName>]
 publishtool list-builds [--project <Name>]
 publishtool set-builds-root --path <path>
 publishtool set-msbuild-path --path <path-to-MSBuild.exe>
 ```
 
 - `--project-type` picks which of the other options apply and how `publish` builds the project:
-  `dotnet` (the default — `--pubxml` is required), `angular`, or `android` (both require
-  `--project-root`; PublishTool auto-detects Capacitor vs. Cordova from what's in that folder). Run
-  `publishtool add-project --help` for the full per-type option list.
+  `dotnet` (the default), `angular`, or `android` (both require `--project-root`; PublishTool
+  auto-detects Capacitor vs. Cordova from what's in that folder). Run `publishtool add-project --help`
+  for the full per-type option list.
 - `--pubxml` (dotnet only) is the publish profile name only (no extension) — e.g. `FolderProfile`
-  for `Properties\PublishProfiles\FolderProfile.pubxml`.
+  for `Properties\PublishProfiles\FolderProfile.pubxml`. Optional on `add-project`: the GUI's Publish
+  tab now picks a profile per publish from a select instead, and the CLI's own `publish --pubxml-name`
+  does the same — set `--pubxml` here only to give the project a default for publishes that don't
+  pass `--pubxml-name`. A publish with no profile resolved from either source fails at build time.
 - `--version` accepts any string (e.g. `1.0.0.R0001B`). It's used verbatim for the zip filename
   and manifest; only `AssemblyVersion`/`AssemblyFileVersion` (which require strict
   `major.minor.build.revision`) get the leading numeric prefix — the full string still lands in

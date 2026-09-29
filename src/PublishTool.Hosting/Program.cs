@@ -464,7 +464,7 @@ app.MapPost("/api/tests/status", async (HttpRequest request, IConfiguration conf
 // classic packages.config suite; Playwright's browsers (a one-time "playwright.ps1 install" here) for
 // an E2E suite -- same prerequisites a dev's own machine needs for local execution, just installed
 // here instead.
-app.MapPost("/api/tests/run", async (HttpRequest request, HttpResponse response, IConfiguration configuration, string project, string version, string? performedBy) =>
+app.MapPost("/api/tests/run", async (HttpRequest request, HttpResponse response, IConfiguration configuration, string project, string version, string? performedBy, string? suiteType, string? environmentName) =>
 {
     if (!ApiKeyAuth.Validate(request, configuration))
     {
@@ -475,6 +475,17 @@ app.MapPost("/api/tests/run", async (HttpRequest request, HttpResponse response,
     if (string.IsNullOrWhiteSpace(buildsRoot) || !Directory.Exists(buildsRoot))
     {
         return Results.Problem("BuildsRoot isn't configured or accessible on this server.", statusCode: StatusCodes.Status503ServiceUnavailable);
+    }
+
+    TestSuiteType? parsedSuiteType = null;
+    if (!string.IsNullOrWhiteSpace(suiteType))
+    {
+        if (!Enum.TryParse<TestSuiteType>(suiteType, ignoreCase: true, out var parsed))
+        {
+            return Results.BadRequest(new { error = $"'{suiteType}' isn't a known test suite type." });
+        }
+
+        parsedSuiteType = parsed;
     }
 
     // Past this point the response IS the log stream -- every failure from here on (including "no
@@ -504,7 +515,7 @@ app.MapPost("/api/tests/run", async (HttpRequest request, HttpResponse response,
     try
     {
         output.Stage($"Running tests for '{project}' v{version} on the dev server...");
-        result = await new RemoteTestRunnerService().RunAsync(buildsRoot, project, version, workingDir, output, ct);
+        result = await new RemoteTestRunnerService().RunAsync(buildsRoot, project, version, parsedSuiteType, environmentName, workingDir, output, ct);
     }
     catch (Exception ex) when (ex is not OperationCanceledException)
     {
@@ -536,26 +547,25 @@ app.MapPost("/api/tests/run", async (HttpRequest request, HttpResponse response,
 
     try
     {
-        var status = new TestRunStatus
-        {
-            ProjectName = project,
-            Version = version,
-            Passed = result.Passed,
-            RunAtUtc = DateTimeOffset.UtcNow,
-            PerformedBy = string.IsNullOrWhiteSpace(performedBy) ? "(unknown)" : performedBy,
-            Suites = result.Suites
-                .Select(s => new TestSuiteRunStatus
-                {
-                    SuiteName = s.SuiteName,
-                    Passed = s.Passed,
-                    TotalCount = s.TotalCount,
-                    PassedCount = s.PassedCount,
-                    FailedCount = s.FailedCount,
-                    SkippedCount = s.SkippedCount,
-                })
-                .ToList(),
-        };
-        await new TestRunStatusStore().SetAsync(TestRunStatusRoot(configuration), status, ct);
+        var performedByValue = string.IsNullOrWhiteSpace(performedBy) ? "(unknown)" : performedBy;
+        var runAtUtc = DateTimeOffset.UtcNow;
+        var newSuiteResults = result.Suites
+            .Select(s => new TestSuiteRunStatus
+            {
+                SuiteName = s.SuiteName,
+                Passed = s.Passed,
+                TotalCount = s.TotalCount,
+                PassedCount = s.PassedCount,
+                FailedCount = s.FailedCount,
+                SkippedCount = s.SkippedCount,
+                RunAtUtc = runAtUtc,
+                PerformedBy = performedByValue,
+            })
+            .ToList();
+
+        // Merges rather than replaces -- running just one suite type must not wipe out another
+        // suite's last-known result for this same build.
+        await new TestRunStatusStore().MergeSuiteResultsAsync(TestRunStatusRoot(configuration), project, version, newSuiteResults, performedByValue, ct);
     }
     catch (Exception ex)
     {

@@ -99,7 +99,7 @@ public sealed class Publisher
         // built purely to upload, never the shared local BuildsRoot (see PublishOptions.UseRemoteMode).
         string? uploadStagingDir = null;
 
-        // Populated below (if options.RunUnitTests) and cleaned up in the finally block alongside
+        // Populated below (if options.TestTypesToRun is non-empty) and cleaned up in the finally block alongside
         // stagingDir/uploadStagingDir -- declared out here (not inside try) so finally can see it.
         // This is the raw generated report from a scratch temp dir; it gets copied to its real
         // sibling-artifact location (see "unitTestReportPath" below) once that's known, the same
@@ -112,12 +112,12 @@ public sealed class Publisher
             var runner = BuildRunnerRegistry.Get(project.ProjectType);
             var buildResult = await runner.BuildAsync(new BuildContext(project, options, stagingDir, _output), ct);
 
-            if (options.RunUnitTests)
+            if (options.TestTypesToRun.Count > 0)
             {
-                generatedUnitTestReportPath = await TryRunUnitTestsAsync(project, options.MsBuildPath, ct);
+                generatedUnitTestReportPath = await TryRunUnitTestsAsync(project, options, ct);
             }
 
-            // Independent of options.RunUnitTests -- this isn't about producing a report now, it's
+            // Independent of options.TestTypesToRun -- this isn't about producing a report now, it's
             // about giving the dev server something to run LATER, on demand, with no source or git
             // needed there at all (see RemoteTestRunnerService in PublishTool.Hosting). Runs
             // regardless of local/remote mode, same as the unit test report above, so a locally
@@ -380,13 +380,30 @@ public sealed class Publisher
     /// (see "unitTestReportPath" in <see cref="PublishAsync"/>, same treatment as release notes) and
     /// is responsible for its own cleanup -- this only cleans up the scratch directory the run
     /// itself used.</summary>
-    private async Task<string?> TryRunUnitTestsAsync(ProjectConfig project, string? msBuildPath, CancellationToken ct)
+    private async Task<string?> TryRunUnitTestsAsync(ProjectConfig project, PublishOptions options, CancellationToken ct)
     {
         var workingDir = Path.Combine(Path.GetTempPath(), "PublishTool", "tests", Guid.NewGuid().ToString("N"));
         try
         {
             _output.Stage("Running unit tests...");
-            var result = await UnitTestOrchestrator.RunAllAsync(project, workingDir, _output, ct, msBuildPath);
+
+            // This always executes on the publishing dev's own machine (see PublishAsync's remarks
+            // on why the Publish tab's execution is never remote), but an E2E suite's target is a
+            // *Remote* environment by definition (see E2EBaseUrlResolver) -- i.e. usually somewhere
+            // other than this machine. When that environment's own IIS binding has no fixed
+            // HostName, E2EBaseUrlResolver falls back to this host override instead of "localhost"
+            // (which would be wrong here, unlike the same call site in PublishTool.Hosting where the
+            // suite really does run on the same box the environment is deployed to).
+            var hostOverride = !string.IsNullOrWhiteSpace(options.RemoteHostingUrl)
+                && Uri.TryCreate(options.RemoteHostingUrl, UriKind.Absolute, out var remoteHostingUri)
+                ? remoteHostingUri.Host
+                : null;
+
+            var suiteNameFilter = options.TestTypesToRun.Select(TestSuiteTypeNames.DisplayName).ToArray();
+            var e2eBaseUrlOverride = options.TestTypesToRun.Contains(TestSuiteType.E2E) ? options.E2ETestUrl : null;
+            var result = await UnitTestOrchestrator.RunAllAsync(
+                project, workingDir, _output, ct, options.MsBuildPath, suiteNameFilter, hostOverride,
+                e2eBaseUrlOverride: e2eBaseUrlOverride);
 
             if (result?.ReportPath is null)
             {

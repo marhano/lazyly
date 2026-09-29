@@ -172,14 +172,30 @@ public sealed class ProjectConfig
     /// while <see cref="RemoteIisEnabled"/> is true (this dev's own choice) and remote mode is on.</summary>
     public List<DeploymentEnvironment> RemoteEnvironments { get; set; } = new();
 
-    /// <summary>Named test suites for this project (e.g. "Unit Test", "E2E Test") -- see
-    /// <see cref="TestSuiteConfig"/>. Local to this machine (a list of local filesystem paths), same
-    /// reasoning as <see cref="CsprojPath"/>. Never required, never gates publish success -- see
-    /// <see cref="Services.UnitTestRunners.IUnitTestRunner"/>. A project "has tests configured" iff
-    /// this list is non-empty; there's no separate enable/disable flag. In remote mode, these same
-    /// suites also drive what <see cref="Services.Publisher"/> builds/publishes and bundles alongside
-    /// each build for the dev server to run on demand -- see <see cref="Models.BuildManifest.TestBundlePath"/>.
-    /// No separate server-side config exists for this; a build already carries everything the server
-    /// needs to run its own suites, with no git or source checkout involved.</summary>
-    public List<TestSuiteConfig> TestSuites { get; set; } = new();
+    /// <summary>WHICH test suite types exist for this project (at most one per <see cref="TestSuiteType"/>)
+    /// and, for E2E, which environment it targets -- shared team-wide, see <see cref="SharedTestSuiteConfig"/>.
+    /// Paired with <see cref="TestSuitePaths"/> (this dev's own local path per type) to build
+    /// <see cref="TestSuites"/>, the merged shape every runner actually consumes.</summary>
+    public List<SharedTestSuiteConfig> TestSuiteTypes { get; set; } = new();
+
+    /// <summary>WHERE, on this machine, each declared test suite type's project lives -- local, same
+    /// reasoning as <see cref="CsprojPath"/>. See <see cref="LocalTestSuiteConfig"/>.</summary>
+    public List<LocalTestSuiteConfig> TestSuitePaths { get; set; } = new();
+
+    /// <summary>The merged view every test-running/bundling/reporting code actually consumes --
+    /// computed from <see cref="TestSuiteTypes"/> (which types exist) joined against
+    /// <see cref="TestSuitePaths"/> (where this dev's own copy of each lives), so
+    /// <see cref="Services.UnitTestRunners.IUnitTestRunner"/>, <see cref="Services.Publisher"/>'s
+    /// bundling step, etc. never needed to learn about the shared/local split or the
+    /// <see cref="TestSuiteType"/> enum at all -- they still just see a name + a path, exactly the
+    /// shape this property always had before the split existed. Never required, never gates publish
+    /// success. A project "has tests configured" iff this list is non-empty.</summary>
+    [System.Text.Json.Serialization.JsonIgnore]
+    public List<TestSuiteConfig> TestSuites => TestSuiteTypes
+        .Select(t => new TestSuiteConfig
+        {
+            Name = TestSuiteTypeNames.DisplayName(t.Type),
+            ProjectPath = TestSuitePaths.FirstOrDefault(p => p.Type == t.Type)?.ProjectPath,
+        })
+        .ToList();
 }

@@ -560,11 +560,24 @@ public sealed class RemoteHostingClient
     /// re-fetch/refresh afterward rather than expect this call to return a result directly. Throws a
     /// 404 <see cref="RemoteFeatureNotAvailableException"/> against an older Hosting server that
     /// predates this endpoint, same convention as every other not-yet-redeployed-server case in this
-    /// client.</summary>
+    /// client. <paramref name="environmentName"/> overrides which of the project's environments an
+    /// E2E suite targets for just this run (null uses the project's own configured default) -- see
+    /// <c>RemoteTestRunnerService</c>.</summary>
     public async Task RunTestsAsync(
-        string baseUrl, string? apiKey, string projectName, string version, string performedBy, IOutputSink output, CancellationToken ct = default)
+        string baseUrl, string? apiKey, string projectName, string version, string performedBy, TestSuiteType? suiteType,
+        string? environmentName, IOutputSink output, CancellationToken ct = default)
     {
         var query = $"?project={Uri.EscapeDataString(projectName)}&version={Uri.EscapeDataString(version)}&performedBy={Uri.EscapeDataString(performedBy)}";
+        if (suiteType is not null)
+        {
+            query += $"&suiteType={Uri.EscapeDataString(suiteType.Value.ToString())}";
+        }
+
+        if (!string.IsNullOrWhiteSpace(environmentName))
+        {
+            query += $"&environmentName={Uri.EscapeDataString(environmentName)}";
+        }
+
         using var request = CreateRequest(HttpMethod.Post, baseUrl, $"/api/tests/run{query}", apiKey);
 
         using var response = await HttpLongRunning.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct);

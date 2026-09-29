@@ -109,6 +109,7 @@ public static class ProjectConfigPortability
         EventLogProtectedPassword = null,
         RemoteIisEnabled = source.RemoteIisEnabled,
         RemoteEnvironments = source.RemoteEnvironments,
-        TestSuites = source.TestSuites,
+        TestSuiteTypes = source.TestSuiteTypes,
+        TestSuitePaths = source.TestSuitePaths,
     };
 }

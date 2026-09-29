@@ -74,6 +74,12 @@ public static class CommandLineFactory
                            "path set at all, PublishTool looks for one automatically and this is only needed if " +
                            "that search finds more than one match.",
         };
+        var pubxmlNameOption = new Option<string?>("--pubxml-name")
+        {
+            Description = "Explicit MSBuild publish profile name for this publish, overriding the project's own " +
+                           "PubxmlName (if any). Only meaningful for --project-type dotnet; the GUI's Publish tab " +
+                           "always sends this, populated from a select listing the project's actual .pubxml files.",
+        };
         var buildConfigurationOption = new Option<string?>("--build-configuration")
         {
             Description = "Angular/Android build configuration (npm run build -- --configuration=<value>). Optional " +
@@ -127,11 +133,17 @@ public static class CommandLineFactory
             Description = "Named deploy target (e.g. Staging, Production) within whichever side --deploy-target " +
                            "selects, matching an entry in the project's local or dev-server environments.",
         };
-        var runUnitTestsOption = new Option<bool>("--run-unit-tests")
+        var runTestTypeOption = new Option<string[]>("--run-test-type")
         {
-            Description = "Run this project's configured test suites and include a combined Excel report with the " +
-                           "build (see add-project --test-suite). Purely informational -- never fails the publish, " +
-                           "even if a suite fails or can't be run at all.",
+            Description = "Run this project's configured test suite of this type (\"UnitTest\" or \"E2E\") as part " +
+                           "of this publish and include it in the combined Excel report -- repeatable, one per " +
+                           "type to run (see add-project --test-suite-type). Purely informational -- never fails " +
+                           "the publish, even if a suite fails or can't be run at all.",
+        };
+        var e2eTestUrlOption = new Option<string?>("--e2e-test-url")
+        {
+            Description = "Explicit BASE_URL for the E2E suite, overriding its configured target environment -- " +
+                           "only meaningful when --run-test-type E2E is also given.",
         };
 
         var command = new Command("publish", "Publish a registered project: build, archive, and deploy to IIS.");
@@ -144,6 +156,7 @@ public static class CommandLineFactory
         command.Add(backlogItemOption);
         command.Add(appConfigSettingOption);
         command.Add(appConfigPathOption);
+        command.Add(pubxmlNameOption);
         command.Add(buildConfigurationOption);
         command.Add(androidBuildVariantOption);
         command.Add(androidArtifactTypeOption);
@@ -155,7 +168,8 @@ public static class CommandLineFactory
         command.Add(listInHostingOption);
         command.Add(deployTargetOption);
         command.Add(environmentOption);
-        command.Add(runUnitTestsOption);
+        command.Add(runTestTypeOption);
+        command.Add(e2eTestUrlOption);
 
         command.SetAction(async (parseResult, ct) =>
         {
@@ -209,6 +223,17 @@ public static class CommandLineFactory
                 return 1;
             }
 
+            HashSet<TestSuiteType> testTypesToRun;
+            try
+            {
+                testTypesToRun = ParseTestTypesToRun(parseResult.GetValue(runTestTypeOption) ?? Array.Empty<string>());
+            }
+            catch (ArgumentException ex)
+            {
+                output.Error(ex.Message);
+                return 1;
+            }
+
             var registry = ProjectRegistryFactory.Create();
             var settings = AppSettings.Load(AppSettings.DefaultPath);
 
@@ -227,6 +252,7 @@ public static class CommandLineFactory
                 MarkAsLatest = parseResult.GetValue(markLatestOption),
                 ListInHosting = parseResult.GetValue(listInHostingOption),
                 AppConfigPathOverride = parseResult.GetValue(appConfigPathOption),
+                PubxmlNameOverride = parseResult.GetValue(pubxmlNameOption),
                 BuildConfiguration = parseResult.GetValue(buildConfigurationOption),
                 AndroidBuildVariant = parseResult.GetValue(androidBuildVariantOption) ?? "release",
                 AndroidArtifactType = androidArtifactType,
@@ -237,7 +263,8 @@ public static class CommandLineFactory
                     parseResult.GetValue(androidBuildNumberOption)),
                 DeployTarget = deployTarget,
                 DeployEnvironmentName = environmentName,
-                RunUnitTests = parseResult.GetValue(runUnitTestsOption),
+                TestTypesToRun = testTypesToRun,
+                E2ETestUrl = parseResult.GetValue(e2eTestUrlOption),
                 // Whether this uploads to the dev server instead of archiving locally is decided
                 // purely by the global "Use dev server for projects" setting -- see
                 // PublishOptions.UseRemoteMode and Publisher itself.
@@ -322,18 +349,67 @@ public static class CommandLineFactory
             ? null
             : new AndroidAppMetadata { BundleId = bundleId, DisplayName = displayName, VersionNumber = versionNumber, BuildNumber = buildNumber };
 
-    private static List<TestSuiteConfig> ParseTestSuites(IEnumerable<string> raw)
+    /// <summary>Parses each "--run-test-type" value into a <see cref="TestSuiteType"/> to run this
+    /// publish -- see <see cref="PublishOptions.TestTypesToRun"/>.</summary>
+    private static HashSet<TestSuiteType> ParseTestTypesToRun(IEnumerable<string> raw)
     {
-        var result = new List<TestSuiteConfig>();
+        var result = new HashSet<TestSuiteType>();
+        foreach (var entry in raw)
+        {
+            if (!Enum.TryParse<TestSuiteType>(entry, ignoreCase: true, out var type))
+            {
+                throw new ArgumentException($"Invalid --run-test-type value '{entry}'. Expected \"UnitTest\" or \"E2E\".");
+            }
+
+            result.Add(type);
+        }
+
+        return result;
+    }
+
+    /// <summary>Parses "TypeName" or "TypeName=EnvironmentName" (the latter only meaningful for
+    /// E2E) into the shared half of a project's test suite config -- see
+    /// <see cref="SharedTestSuiteConfig"/>.</summary>
+    private static List<SharedTestSuiteConfig> ParseTestSuiteTypes(IEnumerable<string> raw)
+    {
+        var result = new List<SharedTestSuiteConfig>();
+        foreach (var entry in raw)
+        {
+            var separatorIndex = entry.IndexOf('=');
+            var typeText = separatorIndex < 0 ? entry : entry[..separatorIndex];
+            if (!Enum.TryParse<TestSuiteType>(typeText, ignoreCase: true, out var type))
+            {
+                throw new ArgumentException(
+                    $"Invalid --test-suite-type value '{entry}'. Expected \"UnitTest\" or \"E2E\", optionally with \"=EnvironmentName\" for E2E.");
+            }
+
+            result.Add(new SharedTestSuiteConfig { Type = type, EnvironmentName = separatorIndex < 0 ? null : entry[(separatorIndex + 1)..] });
+        }
+
+        return result;
+    }
+
+    /// <summary>Parses "TypeName=Path" into the local half of a project's test suite config -- see
+    /// <see cref="LocalTestSuiteConfig"/>.</summary>
+    private static List<LocalTestSuiteConfig> ParseTestSuitePaths(IEnumerable<string> raw)
+    {
+        var result = new List<LocalTestSuiteConfig>();
         foreach (var entry in raw)
         {
             var separatorIndex = entry.IndexOf('=');
             if (separatorIndex <= 0)
             {
-                throw new ArgumentException($"Invalid --test-suite value '{entry}'. Expected Name=Path.");
+                throw new ArgumentException(
+                    $"Invalid --test-suite-path value '{entry}'. Expected \"TypeName=Path\", e.g. \"UnitTest=C:\\src\\MyProject.Tests\\MyProject.Tests.csproj\".");
             }
 
-            result.Add(new TestSuiteConfig { Name = entry[..separatorIndex], ProjectPath = entry[(separatorIndex + 1)..] });
+            var typeText = entry[..separatorIndex];
+            if (!Enum.TryParse<TestSuiteType>(typeText, ignoreCase: true, out var type))
+            {
+                throw new ArgumentException($"Invalid --test-suite-path value '{entry}'. '{typeText}' isn't a known test suite type (UnitTest or E2E).");
+            }
+
+            result.Add(new LocalTestSuiteConfig { Type = type, ProjectPath = entry[(separatorIndex + 1)..] });
         }
 
         return result;
@@ -380,7 +456,10 @@ public static class CommandLineFactory
         };
         var pubxmlOption = new Option<string?>("--pubxml")
         {
-            Description = "For --project-type dotnet: publish profile name (e.g. FolderProfile). Required for that type.",
+            Description = "For --project-type dotnet: publish profile name (e.g. FolderProfile). Optional -- " +
+                           "the GUI's Publish tab now picks a profile per publish instead (see the publish " +
+                           "command's own --pubxml-name); set this only to give the project a default profile " +
+                           "for CLI publishes that don't pass --pubxml-name themselves.",
         };
         var projectRootOption = new Option<string?>("--project-root")
         {
@@ -449,12 +528,20 @@ public static class CommandLineFactory
             Description = "Username for --event-log-machine, if it needs different credentials than the current " +
                            "Windows identity. The password itself is set (and optionally saved) from the GUI, not the CLI.",
         };
-        var testSuiteOption = new Option<string[]>("--test-suite")
+        var testSuiteTypeOption = new Option<string[]>("--test-suite-type")
         {
-            Description = "A named test suite as \"Name=Path\", e.g. \"Unit Test=C:\\src\\MyProject.Tests\\MyProject.Tests.csproj\". " +
-                           "Repeatable -- add one per kind of test (Unit Test, E2E Test, ...). Only meaningful for " +
-                           "--project-type dotnet; Angular/Android run \"npm test\" in --project-root instead, gated by " +
-                           "whether any suite at all is given (the path portion is ignored for those types).",
+            Description = "A test suite type to enable, \"UnitTest\" or \"E2E\" -- repeatable, one type per kind of " +
+                           "test, at most one of each. For E2E, optionally add \"=EnvironmentName\" (one of the " +
+                           "project's dev-server environments) to target that deployment's URL instead of the test " +
+                           "project's own default. Shared team-wide -- see --test-suite-path for this dev's own " +
+                           "local path per type.",
+        };
+        var testSuitePathOption = new Option<string[]>("--test-suite-path")
+        {
+            Description = "This dev's own local path for a test suite type, as \"TypeName=Path\", e.g. " +
+                           "\"UnitTest=C:\\src\\MyProject.Tests\\MyProject.Tests.csproj\". Repeatable. Only meaningful " +
+                           "for --project-type dotnet; Angular/Android run \"npm test\" in --project-root instead, " +
+                           "gated by whether any --test-suite-type at all is given (the path is ignored for those types).",
         };
 
         var command = new Command("add-project", "Register a project (or update an existing registration).");
@@ -477,7 +564,8 @@ public static class CommandLineFactory
         command.Add(eventLogFilterValueOption);
         command.Add(eventLogMachineOption);
         command.Add(eventLogUsernameOption);
-        command.Add(testSuiteOption);
+        command.Add(testSuiteTypeOption);
+        command.Add(testSuitePathOption);
 
         command.SetAction(async (parseResult, ct) =>
         {
@@ -503,12 +591,10 @@ public static class CommandLineFactory
                     return 1;
                 }
 
+                // Optional even for --project-type dotnet -- see pubxmlOption's description above.
+                // Publisher/DotNetBuildRunner still enforce that a profile is resolved (from here or
+                // from --pubxml-name) before an actual publish runs.
                 var pubxml = parseResult.GetValue(pubxmlOption);
-                if (projectType == ProjectType.DotNet && string.IsNullOrWhiteSpace(pubxml))
-                {
-                    output.Error("--pubxml is required when --project-type is dotnet (the default).");
-                    return 1;
-                }
 
                 var projectRoot = parseResult.GetValue(projectRootOption);
                 if (projectType != ProjectType.DotNet && string.IsNullOrWhiteSpace(projectRoot))
@@ -579,7 +665,8 @@ public static class CommandLineFactory
                     EventLogMachineName = parseResult.GetValue(eventLogMachineOption),
                     EventLogUsername = parseResult.GetValue(eventLogUsernameOption),
                     EventLogProtectedPassword = existing?.EventLogProtectedPassword,
-                    TestSuites = ParseTestSuites(parseResult.GetValue(testSuiteOption) ?? Array.Empty<string>()),
+                    TestSuiteTypes = ParseTestSuiteTypes(parseResult.GetValue(testSuiteTypeOption) ?? Array.Empty<string>()),
+                    TestSuitePaths = ParseTestSuitePaths(parseResult.GetValue(testSuitePathOption) ?? Array.Empty<string>()),
                 });
 
                 output.Info($"Registered project '{parseResult.GetValue(nameOption)}'.");

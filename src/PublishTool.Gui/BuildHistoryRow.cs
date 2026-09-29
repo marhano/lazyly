@@ -50,14 +50,6 @@ public sealed class BuildHistoryRow
     /// had a chance to run them, so it shouldn't offer to, or claim any result for it.</summary>
     public bool HasTestSuites { get; init; }
 
-    /// <summary>This exact build's own last-known test run result (matched by project name +
-    /// version -- see <see cref="TestRunStatus"/>'s remarks). Null if tests have never been run for
-    /// this specific build.</summary>
-    public TestRunStatus? TestStatus { get; init; }
-
-    public string TestResultDisplay =>
-        TestStatus is null ? "Not started" : TestStatus.Passed ? "Passed" : "Failed";
-
     /// <summary>Absolute path to this build's unit test report (.xlsx) on the local machine, or null
     /// if this build predates the report or never produced test cases. Set only in local mode.</summary>
     public string? UnitTestReportPath { get; init; }

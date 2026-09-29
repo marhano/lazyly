@@ -96,30 +96,32 @@ Build, version, annotate, and (optionally) deploy one publish of a project.
    switching.
 3. Enter a **Version**, or pick an existing one from the dropdown to republish it (a warning
    appears if you're about to overwrite an existing build).
-4. If the project has Local and/or Remote IIS deployment enabled, a **Deploy target** / **Deploy
+4. **.NET projects only**: pick a **Publish profile** -- the select lists every `.pubxml` file found
+   under the project's `Properties\PublishProfiles` folder, so there's nothing to type or mistype.
+5. If the project has Local and/or Remote IIS deployment enabled, a **Deploy target** / **Deploy
    to** pair appears -- pick which side and which named environment to deploy to. Picking **Local**
    shows a warning if you're not running elevated (the deploy step would otherwise fail). If
    neither side is enabled, publishing just archives (and, in remote mode, uploads) the build with
    no deploy step.
-5. **Android projects only**: pick **Artifact type** (APK or AAB -- AAB is release-only, since Play
+6. **Android projects only**: pick **Artifact type** (APK or AAB -- AAB is release-only, since Play
    Store doesn't take debug bundles) and **Build variant**. If this is a release build and no
    keystore is configured on the project yet, you'll be prompted once (the same fields as Android
    Studio's own signing dialog) and it's saved for next time.
-6. If the project's app config has no fixed path set, **Config file to edit** appears when more
+7. If the project's app config has no fixed path set, **Config file to edit** appears when more
    than one matching file was found automatically -- pick which one this publish should write to.
-7. Toggle **Mark as latest release** if this build should replace whichever one is currently
+8. Toggle **Mark as latest release** if this build should replace whichever one is currently
    flagged "latest" on the hosting site (only one build per project can hold that flag). Next to
    it, **List in hosting site** is on by default -- turn it off for a throwaway test build you
    don't want cluttering the hosting page's listing (it's still archived either way).
-8. If the project has app config enabled, an **App Config** accordion shows the live config file's
+9. If the project has app config enabled, an **App Config** accordion shows the live config file's
    key/value pairs -- edit them here and they're written to the file at publish time. Picking an
    already-published version above shows *that build's* saved config instead, for reference.
-9. **Android projects only**: an **Android Config** accordion shows Bundle Id, Display Name,
-   Version Number, and Build Number, read from the native project's own files -- edit and they're
-   written before building. A blank field (shown as "Not found") is left unchanged.
-10. Fill in **Release notes for this build** -- four lists (Features and Enhancements, Fixes,
+10. **Android projects only**: an **Android Config** accordion shows Bundle Id, Display Name,
+    Version Number, and Build Number, read from the native project's own files -- edit and they're
+    written before building. A blank field (shown as "Not found") is left unchanged.
+11. Fill in **Release notes for this build** -- four lists (Features and Enhancements, Fixes,
     Other Updates, Backlog Items) archived alongside the build and shown on the hosting site.
-11. Click **Publish**.
+12. Click **Publish**.
 
 ### Projects
 
@@ -263,7 +265,6 @@ Fields are split into two groups:
 - **.csproj path** (optional, .NET only) -- only needed to Publish; leave blank for a project
   registered just to redeploy an existing build or manage its Event Logs/IIS/firewall rules.
 - **AssemblyInfo.cs** (optional, .NET only) -- for version stamping.
-- **Publish profile** (optional, .NET only) -- the `.pubxml` profile name to build with.
 - **Remote IIS** toggle -- your own personal choice of whether *you* want this project's dev-server
   deploy target (configured below, in Shared settings) offered to you on the Publish tab. Only
   takes effect while remote mode is on. Teammates decide this independently.
@@ -277,9 +278,11 @@ Fields are split into two groups:
 
 - **Project type** -- **.NET** (the default), **Angular**, or **Android (Capacitor/Cordova)**.
   Picks how Publish actually builds the project:
-  - **.NET** uses the Local settings above (.csproj/AssemblyInfo/Publish profile), plus **Extra
-    publish targets** (optional) and **Modern SDK-style project** (turn on for ASP.NET Core-style
-    projects instead of classic .NET Framework Web Deploy projects).
+  - **.NET** uses the Local settings above (.csproj/AssemblyInfo), plus **Extra publish targets**
+    (optional) and **Modern SDK-style project** (turn on for ASP.NET Core-style projects instead of
+    classic .NET Framework Web Deploy projects). The **Publish profile** itself is picked per
+    publish on the Publish tab, from a select listing whatever `.pubxml` files actually exist under
+    the project's `Properties\PublishProfiles` folder.
   - **Angular** just needs **Project root folder** pointed at the app's root (where
     `package.json`/`angular.json` live) -- Publish runs `npm run build` there. Optionally set a
     **Workspace project** name for a workspace with more than one buildable project; build

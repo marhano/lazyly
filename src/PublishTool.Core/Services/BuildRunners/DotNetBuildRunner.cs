@@ -17,10 +17,17 @@ public sealed class DotNetBuildRunner : IBuildRunner
     {
         var project = context.Project;
 
-        if (string.IsNullOrWhiteSpace(project.PubxmlName))
+        // The Publish tab's profile select (context.Options.PubxmlNameOverride) is the normal
+        // source now -- project.PubxmlName only remains as a fallback for CLI callers that set it
+        // via add-project instead of passing --pubxml-name per publish.
+        var pubxmlName = string.IsNullOrWhiteSpace(context.Options.PubxmlNameOverride)
+            ? project.PubxmlName
+            : context.Options.PubxmlNameOverride;
+
+        if (string.IsNullOrWhiteSpace(pubxmlName))
         {
             throw new InvalidOperationException(
-                $"'{project.Name}' has no publish profile (.pubxml) name configured -- set one in the project's Edit dialog before publishing.");
+                $"'{project.Name}' has no publish profile (.pubxml) selected -- pick one on the Publish tab before publishing.");
         }
 
         var msBuildExePath = await MsBuildLocator.LocateAsync(context.Options.MsBuildPath, ct);
@@ -29,7 +36,7 @@ public sealed class DotNetBuildRunner : IBuildRunner
         context.Output.Stage("Running MSBuild publish...");
         var msBuild = new MsBuildRunner(context.Output);
         await msBuild.PublishAsync(
-            msBuildExePath, project.CsprojPath!, project.PubxmlName, context.StagingDir,
+            msBuildExePath, project.CsprojPath!, pubxmlName, context.StagingDir,
             project.SdkStyleProject, project.ExtraPublishTargets, ct);
 
         return new BuildResult(BuildArtifactKind.Directory, context.StagingDir);

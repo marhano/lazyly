@@ -1,15 +1,16 @@
 namespace PublishTool.Core.Models;
 
-/// <summary>One named test suite for a project -- e.g. "Unit Test" and "E2E Test" as two separate
-/// entries, each with its own test project. Deliberately a list rather than a fixed pair of fields,
-/// so adding a third kind later (or renaming/removing one) is just editing this list, no schema
-/// change. Local to this machine, same reasoning as <see cref="ProjectConfig.CsprojPath"/> -- a
-/// filesystem path isn't something every teammate's checkout shares, so the whole list lives in
-/// <see cref="LocalProjectOverrides"/>, not <see cref="SharedProjectConfig"/>.</summary>
+/// <summary>One named test suite for a project, e.g. "Unit Test" or "E2E" -- the merged runtime shape
+/// every <see cref="Services.UnitTestRunners.IUnitTestRunner"/>/<see cref="Services.Publisher"/>
+/// bundling/reporting code actually consumes. Not stored directly on <see cref="ProjectConfig"/> --
+/// it's computed (<see cref="ProjectConfig.TestSuites"/>) from <see cref="SharedTestSuiteConfig"/>
+/// (which suite TYPES exist, shared team-wide) joined against <see cref="LocalTestSuiteConfig"/>
+/// (where THIS dev's own copy of each lives). Kept as its own plain name+path shape so none of the
+/// downstream code needed to change when that split was introduced.</summary>
 public sealed class TestSuiteConfig
 {
-    /// <summary>Free-text label, e.g. "Unit Test" or "E2E Test" -- also this suite's identity within
-    /// the project (used to match it up across saves), so it should stay unique per project.</summary>
+    /// <summary>This suite's display name, e.g. "Unit Test" or "E2E" -- see
+    /// <see cref="TestSuiteTypeNames.DisplayName"/>, the one place this string is decided.</summary>
     public required string Name { get; set; }
 
     /// <summary>Path to the .NET test project (a *.Tests.csproj) to run via <c>dotnet test</c>.

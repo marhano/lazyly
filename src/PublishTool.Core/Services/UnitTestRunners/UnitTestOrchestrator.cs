@@ -35,14 +35,27 @@ public sealed record UnitTestOrchestratorResult(bool Passed, IReadOnlyList<Suite
 /// </summary>
 public static class UnitTestOrchestrator
 {
-    /// <summary>Null if this project type has no test runner at all, or the project has no suites
-    /// configured -- the caller's cue to skip cleanly (no report, no status update) rather than
-    /// treat it as a failure.</summary>
+    /// <summary>Null if this project type has no test runner at all, the project has no suites
+    /// configured, or none match <paramref name="suiteNameFilter"/> -- the caller's cue to skip
+    /// cleanly (no report, no status update) rather than treat it as a failure.
+    /// <paramref name="suiteNameFilter"/> restricts the run to just the suites whose name (see
+    /// <see cref="TestSuiteTypeNames.DisplayName"/>) is in the set -- null runs everything configured,
+    /// as before. Used two ways: the Projects tab's test-run dialog passes exactly one name to run/view
+    /// one type at a time; the Publish tab's per-type toggles pass whichever types are checked (zero
+    /// or more) to run as part of one publish. <paramref name="e2eHostOverride"/>,
+    /// <paramref name="e2eEnvironmentNameOverride"/> and <paramref name="e2eBaseUrlOverride"/> are all
+    /// threaded straight into <see cref="E2EBaseUrlResolver.EnvironmentVariablesFor"/> for whichever
+    /// suite is E2E -- see its own remarks for what each means and when to pass it.</summary>
     public static async Task<UnitTestOrchestratorResult?> RunAllAsync(
-        ProjectConfig project, string workingDir, IOutputSink output, CancellationToken ct, string? msBuildPath = null)
+        ProjectConfig project, string workingDir, IOutputSink output, CancellationToken ct,
+        string? msBuildPath = null, IReadOnlyCollection<string>? suiteNameFilter = null, string? e2eHostOverride = null,
+        string? e2eEnvironmentNameOverride = null, string? e2eBaseUrlOverride = null)
     {
         var runner = UnitTestRunnerRegistry.Get(project.ProjectType);
-        var suites = runner?.GetConfiguredSuites(project) ?? Array.Empty<TestSuiteConfig>();
+        var configuredSuites = runner?.GetConfiguredSuites(project) ?? Array.Empty<TestSuiteConfig>();
+        var suites = suiteNameFilter is null
+            ? configuredSuites
+            : configuredSuites.Where(s => suiteNameFilter.Contains(s.Name)).ToList();
         if (runner is null || suites.Count == 0)
         {
             return null;
@@ -58,7 +71,14 @@ public static class UnitTestOrchestrator
             try
             {
                 var suiteWorkingDir = Path.Combine(workingDir, SanitizeForPath(suite.Name));
-                var result = await runner.RunSuiteAsync(project, suite, new UnitTestContext(suiteWorkingDir, output, msBuildPath), ct);
+                var environmentVariables = E2EBaseUrlResolver.EnvironmentVariablesFor(
+                    suite, project, e2eHostOverride, e2eEnvironmentNameOverride, e2eBaseUrlOverride);
+                if (environmentVariables is not null)
+                {
+                    output.Info($"{suite.Name}: " + string.Join(", ", environmentVariables.Select(kv => $"{kv.Key}={kv.Value}")));
+                }
+
+                var result = await runner.RunSuiteAsync(project, suite, new UnitTestContext(suiteWorkingDir, output, msBuildPath, environmentVariables), ct);
                 var stampedCases = result.Cases.Select(c => c with { SuiteName = suite.Name }).ToList();
                 allCases.AddRange(stampedCases);
 

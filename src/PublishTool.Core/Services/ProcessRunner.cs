@@ -37,6 +37,20 @@ internal static class ProcessRunner
         IOutputSink output,
         bool treatStderrAsError,
         string? workingDirectory,
+        CancellationToken ct = default) =>
+        await RunAsync(fileName, arguments, output, treatStderrAsError, workingDirectory, environmentVariables: null, ct);
+
+    /// <summary>Same as the other overload, plus extra environment variables for the child process --
+    /// e.g. BASE_URL for an E2E suite (see <see cref="UnitTestRunners.UnitTestOrchestrator"/>/
+    /// <see cref="E2EBaseUrlResolver"/>). Additive: the process still inherits everything this app's
+    /// own environment already has, these are just added/overridden on top.</summary>
+    public static async Task<int> RunAsync(
+        string fileName,
+        string arguments,
+        IOutputSink output,
+        bool treatStderrAsError,
+        string? workingDirectory,
+        IReadOnlyDictionary<string, string>? environmentVariables,
         CancellationToken ct = default)
     {
         var psi = new ProcessStartInfo(fileName, arguments)
@@ -50,6 +64,14 @@ internal static class ProcessRunner
         if (!string.IsNullOrWhiteSpace(workingDirectory))
         {
             psi.WorkingDirectory = workingDirectory;
+        }
+
+        if (environmentVariables is not null)
+        {
+            foreach (var (key, value) in environmentVariables)
+            {
+                psi.Environment[key] = value;
+            }
         }
 
         using var process = new Process { StartInfo = psi, EnableRaisingEvents = true };

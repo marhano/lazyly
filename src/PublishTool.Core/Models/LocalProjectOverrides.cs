@@ -46,6 +46,6 @@ public sealed class LocalProjectOverrides
     /// <see cref="SharedProjectConfig.EventLogName"/>'s machine/username fields are shared.</summary>
     public string? EventLogProtectedPassword { get; set; }
 
-    /// <summary>See <see cref="ProjectConfig.TestSuites"/>.</summary>
-    public List<TestSuiteConfig> TestSuites { get; set; } = new();
+    /// <summary>See <see cref="ProjectConfig.TestSuitePaths"/>.</summary>
+    public List<LocalTestSuiteConfig> TestSuitePaths { get; set; } = new();
 }

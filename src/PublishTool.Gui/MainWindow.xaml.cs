@@ -2179,14 +2179,31 @@ public partial class MainWindow : Wpf.Ui.Controls.FluentWindow
 
         await LoadAndroidConfigForSelectedProjectAsync(isAndroid ? project : null);
 
+        LoadPublishProfileOptionsForSelectedProject(project);
+
         // Independent of deploy targets, so this is set before the early-return below for a
-        // project with no deploy target at all -- unit tests can still run for that project.
-        var unitTestsAvailable = project?.TestSuites.Count > 0;
-        RunUnitTestsPanel.Visibility = unitTestsAvailable ? Visibility.Visible : Visibility.Collapsed;
-        if (unitTestsAvailable)
+        // project with no deploy target at all -- tests can still run for that project. One toggle
+        // per configured suite type (see ProjectConfig.TestSuiteTypes) instead of a single combined
+        // "run unit tests" toggle, since a project can have Unit Test and/or E2E independently.
+        var hasUnitTestSuite = project?.TestSuiteTypes.Any(t => t.Type == TestSuiteType.UnitTest) == true;
+        var hasE2ETestSuite = project?.TestSuiteTypes.Any(t => t.Type == TestSuiteType.E2E) == true;
+        RunUnitTestsPanel.Visibility = hasUnitTestSuite || hasE2ETestSuite ? Visibility.Visible : Visibility.Collapsed;
+        RunUnitTestsToggle.Visibility = hasUnitTestSuite ? Visibility.Visible : Visibility.Collapsed;
+        RunE2ETestsToggle.Visibility = hasE2ETestSuite ? Visibility.Visible : Visibility.Collapsed;
+        if (hasUnitTestSuite)
         {
             RunUnitTestsToggle.IsChecked = true;
         }
+
+        if (hasE2ETestSuite)
+        {
+            RunE2ETestsToggle.IsChecked = true;
+        }
+
+        // Setting IsChecked above doesn't refire Checked/RunE2ETestsToggle_Toggled when it was
+        // already true from a previous project selection -- keep the URL input's visibility in sync
+        // explicitly rather than relying on that event alone.
+        E2ETestUrlGrid.Visibility = hasE2ETestSuite && RunE2ETestsToggle.IsChecked == true ? Visibility.Visible : Visibility.Collapsed;
 
         var targets = new List<string>();
         if (project?.LocalIisEnabled == true)
@@ -2214,6 +2231,14 @@ public partial class MainWindow : Wpf.Ui.Controls.FluentWindow
         UpdateLocalDeployElevationWarning();
         await PopulateDeployEnvironmentComboBoxAsync();
     }
+
+    /// <summary>Shows/hides the "Test URL" input alongside the "Run E2E tests" toggle -- see
+    /// <see cref="PublishOptions.E2ETestUrl"/>. A raw URL rather than an environment picker (unlike
+    /// the Projects tab's tests dialog) since this runs on the publishing dev's own machine as part of
+    /// a publish they're actively doing -- they usually already know exactly which URL they're testing
+    /// against right now.</summary>
+    private void RunE2ETestsToggle_Toggled(object sender, RoutedEventArgs e) =>
+        E2ETestUrlGrid.Visibility = RunE2ETestsToggle.IsChecked == true ? Visibility.Visible : Visibility.Collapsed;
 
     private async void DeployTargetComboBox_SelectionChanged(object sender, System.Windows.Controls.SelectionChangedEventArgs e)
     {
@@ -2277,6 +2302,30 @@ public partial class MainWindow : Wpf.Ui.Controls.FluentWindow
         AndroidDisplayNameTextBox.Text = metadata?.DisplayName ?? string.Empty;
         AndroidVersionNumberTextBox.Text = metadata?.VersionNumber ?? string.Empty;
         AndroidBuildNumberTextBox.Text = metadata?.BuildNumber ?? string.Empty;
+    }
+
+    /// <summary>Shows/hides the Publish tab's "Publish profile" select for the selected project and,
+    /// for a .NET project, populates it from whatever .pubxml files actually exist under its
+    /// Properties\PublishProfiles folder (see <see cref="PublishProfileDiscovery"/>) -- this is now
+    /// the only place a publish profile is chosen; ProjectEditDialog no longer has a free-text field
+    /// for it. Defaults the selection to the project's previously-saved PubxmlName when it's still
+    /// among the discovered profiles, else the first one found.</summary>
+    private void LoadPublishProfileOptionsForSelectedProject(ProjectConfig? project)
+    {
+        if (project?.ProjectType != ProjectType.DotNet)
+        {
+            DotNetPublishProfilePanel.Visibility = Visibility.Collapsed;
+            PublishProfileComboBox.ItemsSource = null;
+            return;
+        }
+
+        var profiles = PublishProfileDiscovery.FindProfileNames(project.CsprojPath);
+        DotNetPublishProfilePanel.Visibility = Visibility.Visible;
+        PublishProfileComboBox.ItemsSource = profiles;
+
+        PublishProfileComboBox.SelectedItem = project.PubxmlName is { } savedName && profiles.Contains(savedName)
+            ? savedName
+            : profiles.FirstOrDefault();
     }
 
     /// <summary>Synchronous counterpart to <see cref="LoadDeployTargetOptionsForSelectedProjectAsync"/>
@@ -2908,9 +2957,25 @@ public partial class MainWindow : Wpf.Ui.Controls.FluentWindow
             args.Add(deployEnvironment);
         }
 
-        if (RunUnitTestsPanel.Visibility == Visibility.Visible && RunUnitTestsToggle.IsChecked == true)
+        if (RunUnitTestsPanel.Visibility == Visibility.Visible)
         {
-            args.Add("--run-unit-tests");
+            if (RunUnitTestsToggle.Visibility == Visibility.Visible && RunUnitTestsToggle.IsChecked == true)
+            {
+                args.Add("--run-test-type");
+                args.Add("UnitTest");
+            }
+
+            if (RunE2ETestsToggle.Visibility == Visibility.Visible && RunE2ETestsToggle.IsChecked == true)
+            {
+                args.Add("--run-test-type");
+                args.Add("E2E");
+
+                if (!string.IsNullOrWhiteSpace(E2ETestUrlTextBox.Text))
+                {
+                    args.Add("--e2e-test-url");
+                    args.Add(E2ETestUrlTextBox.Text.Trim());
+                }
+            }
         }
 
         foreach (var item in FeaturesEditor.Items) { args.Add("--feature"); args.Add(item); }
@@ -2927,6 +2992,22 @@ public partial class MainWindow : Wpf.Ui.Controls.FluentWindow
         {
             args.Add("--list-in-hosting");
             args.Add("false");
+        }
+
+        if (DotNetPublishProfilePanel.Visibility == Visibility.Visible)
+        {
+            if (PublishProfileComboBox.SelectedItem is not string profile || string.IsNullOrWhiteSpace(profile))
+            {
+                MessageBox.Show(
+                    "Select a publish profile before publishing.",
+                    "PublishTool",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Warning);
+                return;
+            }
+
+            args.Add("--pubxml-name");
+            args.Add(profile);
         }
 
         if (AndroidBuildOptionsPanel.Visibility == Visibility.Visible)
@@ -3125,16 +3206,6 @@ public partial class MainWindow : Wpf.Ui.Controls.FluentWindow
         {
             List<BuildHistoryRow> rows;
             var canDeploy = GetAvailableDeployTargets(project).Count > 0;
-            var testStatuses = await LoadTestStatusesAsync();
-
-            // Test status is per-BUILD (see TestRunStatus's remarks): a build only offers "Run Tests"
-            // if IT was published knowing about test suites (BuildManifest.HasTestSuites, snapshotted
-            // at publish time -- a build predating the whole feature always reports false here, since
-            // older manifests simply never had this field), and its Test Result column looks up a
-            // status matching this exact project+version, never some other build's result.
-            TestRunStatus? FindStatus(string version) => testStatuses.FirstOrDefault(s =>
-                string.Equals(s.ProjectName, project.Name, StringComparison.OrdinalIgnoreCase) &&
-                string.Equals(s.Version, version, StringComparison.Ordinal));
 
             if (IsRemoteModeActive(out var settings))
             {
@@ -3151,7 +3222,6 @@ public partial class MainWindow : Wpf.Ui.Controls.FluentWindow
                     RemoteZipPath = b.ZipPath,
                     CanDeploy = canDeploy,
                     HasTestSuites = b.HasTestSuites,
-                    TestStatus = FindStatus(b.Version),
                     RemoteUnitTestReportPath = b.UnitTestReportPath,
                 }).ToList();
             }
@@ -3170,7 +3240,6 @@ public partial class MainWindow : Wpf.Ui.Controls.FluentWindow
                     ZipPath = b.Manifest.ZipPath,
                     CanDeploy = canDeploy,
                     HasTestSuites = b.Manifest.HasTestSuites,
-                    TestStatus = FindStatus(b.Manifest.Version),
                     UnitTestReportPath = b.Manifest.UnitTestReportPath,
                 }).ToList();
             }
@@ -3488,15 +3557,12 @@ public partial class MainWindow : Wpf.Ui.Controls.FluentWindow
         }
     }
 
-    /// <summary>Runs every configured test suite for one build. Where this actually executes depends
-    /// on hosting mode, same as every other action in this app (deploys, IIS, firewall): in local
-    /// mode, on THIS machine, against this dev's own local <see cref="ProjectConfig.TestSuites"/>
-    /// paths; in remote mode, on the DEV SERVER itself, against its own configured checkout (see
-    /// <see cref="RemoteHostingClient.RunTestsAsync"/>) -- this is what lets a non-developer,
-    /// remote-only user who has no local checkout at all actually trigger a run, not just view
-    /// whatever a dev last ran locally. Output streams live into the same output log every other
-    /// command uses either way, per the explicit requirement that this not just show an end result.</summary>
-    private async void RunTestsButton_Click(object sender, RoutedEventArgs e)
+    /// <summary>Opens the per-build tests modal (<see cref="TestSuitesDialog"/>) -- replaces the old
+    /// combined "Run Tests" button/inline Test Result column with a table where each of the
+    /// project's configured suite types (Unit Test, E2E, ...) can be run and viewed independently,
+    /// since a single overall pass/fail no longer says which suite actually failed. This method
+    /// resolves how a suite is run/how status is (re)loaded; the dialog itself only displays.</summary>
+    private async void OpenTestSuitesButton_Click(object sender, RoutedEventArgs e)
     {
         if (((FrameworkElement)sender).DataContext is not BuildHistoryRow row ||
             RegisteredProjectsListBox.SelectedItem is not ProjectConfig project)
@@ -3504,20 +3570,54 @@ public partial class MainWindow : Wpf.Ui.Controls.FluentWindow
             return;
         }
 
-        SetBusy(true);
-        BuildHistoryDataGrid.IsEnabled = false;
-        _output.Stage($"Running tests for '{project.Name}' v{row.Version}...");
+        var dialog = new TestSuitesDialog(
+            project.Name,
+            row.Version,
+            project.TestSuites,
+            project.RemoteEnvironments.Select(env => env.Name).ToList(),
+            project.TestSuiteTypes.FirstOrDefault(t => t.Type == TestSuiteType.E2E)?.EnvironmentName,
+            LoadTestStatusesAsync,
+            (suiteName, environmentName) => RunTestSuiteAsync(project, row.Version, suiteName, environmentName))
+        {
+            Owner = this,
+        };
+        dialog.ShowDialog();
+    }
+
+    /// <summary>Runs exactly one configured test suite for one build -- the tests modal's per-row
+    /// "Run" action. Where this actually executes depends on hosting mode, same as every other
+    /// action in this app (deploys, IIS, firewall): in local mode, on THIS machine, against this
+    /// dev's own local <see cref="LocalTestSuiteConfig"/> path; in remote mode, on the DEV SERVER
+    /// itself, against that build's own bundled test assemblies (see
+    /// <see cref="RemoteHostingClient.RunTestsAsync"/>) -- this is what lets a non-developer,
+    /// remote-only user who has no local checkout at all actually trigger a run, not just view
+    /// whatever a dev last ran locally. Output streams live into the same output log every other
+    /// command uses either way, per the explicit requirement that this not just show an end result.
+    /// <paramref name="environmentName"/> is the environment the tests modal prompted for when
+    /// <paramref name="suiteName"/> is E2E (null for every other suite) -- see
+    /// <see cref="TestSuitesDialog"/>'s environment picker.</summary>
+    private async Task RunTestSuiteAsync(ProjectConfig project, string version, string suiteName, string? environmentName)
+    {
+        _output.Stage(environmentName is null
+            ? $"Running '{suiteName}' for '{project.Name}' v{version}..."
+            : $"Running '{suiteName}' for '{project.Name}' v{version} against '{environmentName}'...");
         try
         {
             if (IsRemoteModeActive(out var settings))
             {
+                if (!TestSuiteTypeNames.TryParseDisplayName(suiteName, out var suiteType))
+                {
+                    _output.Warn($"'{suiteName}' isn't a recognized test suite type -- can't run it on the dev server.");
+                    return;
+                }
+
                 await new RemoteHostingClient().RunTestsAsync(
-                    settings.RemoteHostingUrl!, DecryptRemoteHostingApiKey(settings), project.Name, row.Version, Environment.UserName, _output);
-                await RecordProjectAuditAsync("Tests Run", project.Name, $"v{row.Version} (on dev server)");
+                    settings.RemoteHostingUrl!, DecryptRemoteHostingApiKey(settings), project.Name, version, Environment.UserName, suiteType, environmentName, _output);
+                await RecordProjectAuditAsync("Tests Run", project.Name, $"v{version} '{suiteName}' (on dev server)");
             }
             else
             {
-                await RunTestsLocallyAsync(project, row.Version);
+                await RunTestSuiteLocallyAsync(project, version, suiteName, environmentName);
             }
         }
         catch (RemoteFeatureNotAvailableException ex)
@@ -3526,66 +3626,67 @@ public partial class MainWindow : Wpf.Ui.Controls.FluentWindow
         }
         catch (Exception ex)
         {
-            _output.Error($"'{project.Name}' v{row.Version}: test run failed: {ex.Message}");
+            _output.Error($"'{project.Name}' v{version} '{suiteName}': test run failed: {ex.Message}");
         }
-        finally
-        {
-            BuildHistoryDataGrid.IsEnabled = true;
-            SetBusy(false);
-        }
-
-        await LoadBuildHistoryAsync();
     }
 
-    /// <summary>The local-mode half of <see cref="RunTestsButton_Click"/> -- only reached when
-    /// remote mode is off. Runs every configured suite on this machine via
-    /// <see cref="UnitTestOrchestrator"/> against this dev's own local <see cref="ProjectConfig.TestSuites"/>
-    /// paths, and records the result to this machine's own <see cref="TestRunStatusStore"/>.</summary>
-    private async Task RunTestsLocallyAsync(ProjectConfig project, string version)
+    /// <summary>The local-mode half of <see cref="RunTestSuiteAsync"/> -- only reached when remote
+    /// mode is off. Runs just this one suite on this machine via <see cref="UnitTestOrchestrator"/>'s
+    /// <c>suiteNameFilter</c>, and merges the result into this machine's own
+    /// <see cref="TestRunStatusStore"/> without disturbing any other suite's last-known result.</summary>
+    private async Task RunTestSuiteLocallyAsync(ProjectConfig project, string version, string suiteName, string? environmentName)
     {
         var workingDir = Path.Combine(Path.GetTempPath(), "PublishTool", "test-runs", Guid.NewGuid().ToString("N"));
         try
         {
-            var msBuildPath = AppSettings.Load(AppSettings.DefaultPath).MsBuildPath;
-            var result = await UnitTestOrchestrator.RunAllAsync(project, workingDir, _output, CancellationToken.None, msBuildPath);
+            var appSettings = AppSettings.Load(AppSettings.DefaultPath);
+
+            // The environment picker only ever offers Remote environments (see E2EBaseUrlResolver's
+            // remarks) -- one of those is usually deployed on the dev server, not this machine, so
+            // this needs the same host-derivation Publisher.TryRunUnitTestsAsync uses rather than
+            // letting a binding with no fixed HostName silently fall back to "localhost".
+            var hostOverride = !string.IsNullOrWhiteSpace(appSettings.RemoteHostingUrl)
+                && Uri.TryCreate(appSettings.RemoteHostingUrl, UriKind.Absolute, out var remoteHostingUri)
+                ? remoteHostingUri.Host
+                : null;
+
+            var result = await UnitTestOrchestrator.RunAllAsync(
+                project, workingDir, _output, CancellationToken.None, appSettings.MsBuildPath,
+                suiteNameFilter: new[] { suiteName }, e2eHostOverride: hostOverride, e2eEnvironmentNameOverride: environmentName);
             if (result is null)
             {
-                _output.Warn($"'{project.Name}' has no runnable test suites.");
+                _output.Warn($"'{project.Name}': '{suiteName}' has no runnable path configured on this machine.");
                 return;
             }
 
-            _output.Info(result.Passed ? $"'{project.Name}' v{version}: all tests passed." : $"'{project.Name}' v{version}: tests failed.");
+            _output.Info(result.Passed
+                ? $"'{project.Name}' v{version} '{suiteName}': passed."
+                : $"'{project.Name}' v{version} '{suiteName}': failed.");
 
-            var status = new TestRunStatus
-            {
-                ProjectName = project.Name,
-                Version = version,
-                Passed = result.Passed,
-                RunAtUtc = DateTimeOffset.UtcNow,
-                PerformedBy = Environment.UserName,
-                Suites = result.Suites
-                    .Select(s => new TestSuiteRunStatus
-                    {
-                        SuiteName = s.SuiteName,
-                        Passed = s.Passed,
-                        TotalCount = s.TotalCount,
-                        PassedCount = s.PassedCount,
-                        FailedCount = s.FailedCount,
-                        SkippedCount = s.SkippedCount,
-                    })
-                    .ToList(),
-            };
+            var newSuiteResults = result.Suites
+                .Select(s => new TestSuiteRunStatus
+                {
+                    SuiteName = s.SuiteName,
+                    Passed = s.Passed,
+                    TotalCount = s.TotalCount,
+                    PassedCount = s.PassedCount,
+                    FailedCount = s.FailedCount,
+                    SkippedCount = s.SkippedCount,
+                    RunAtUtc = DateTimeOffset.UtcNow,
+                    PerformedBy = Environment.UserName,
+                })
+                .ToList();
 
             try
             {
-                await new TestRunStatusStore().SetAsync(TestRunStatusStore.DefaultRoot, status);
+                await new TestRunStatusStore().MergeSuiteResultsAsync(TestRunStatusStore.DefaultRoot, project.Name, version, newSuiteResults, Environment.UserName);
             }
             catch (Exception ex)
             {
-                _output.Warn($"'{project.Name}' v{version}: tests ran, but the result couldn't be recorded: {ex.Message}");
+                _output.Warn($"'{project.Name}' v{version} '{suiteName}': ran, but the result couldn't be recorded: {ex.Message}");
             }
 
-            await RecordProjectAuditAsync("Tests Run", project.Name, $"v{version} -> {(result.Passed ? "Passed" : "Failed")}");
+            await RecordProjectAuditAsync("Tests Run", project.Name, $"v{version} '{suiteName}' -> {(result.Passed ? "Passed" : "Failed")}");
         }
         finally
         {

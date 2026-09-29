@@ -58,4 +58,40 @@ public sealed class TestRunStatusStore
         Directory.CreateDirectory(root);
         await File.WriteAllTextAsync(path, JsonSerializer.Serialize(all, JsonOptions), ct);
     }
+
+    /// <summary>Merges freshly-run suite result(s) into this build's existing status instead of
+    /// replacing the whole thing -- running just "E2E" leaves "Unit Test"'s last-known entry (and its
+    /// own <see cref="TestSuiteRunStatus.RunAtUtc"/>) exactly as it was. Overall
+    /// <see cref="TestRunStatus.Passed"/> is recomputed from the FULL merged suite list (old entries
+    /// included), matching the existing "one failing suite fails the whole build" rule even when only
+    /// one suite was actually re-run this time. Used by both local (GUI) and remote (Hosting) runs, so
+    /// per-suite results behave identically either way.</summary>
+    public async Task<TestRunStatus> MergeSuiteResultsAsync(
+        string root, string projectName, string version, IReadOnlyList<TestSuiteRunStatus> newSuiteResults, string performedBy, CancellationToken ct = default)
+    {
+        var all = await LoadAllAsync(root, ct);
+        var existing = all.FirstOrDefault(s =>
+            string.Equals(s.ProjectName, projectName, StringComparison.OrdinalIgnoreCase) &&
+            string.Equals(s.Version, version, StringComparison.Ordinal));
+
+        var mergedSuites = existing?.Suites.ToList() ?? new List<TestSuiteRunStatus>();
+        foreach (var newSuite in newSuiteResults)
+        {
+            mergedSuites.RemoveAll(s => string.Equals(s.SuiteName, newSuite.SuiteName, StringComparison.Ordinal));
+            mergedSuites.Add(newSuite);
+        }
+
+        var status = new TestRunStatus
+        {
+            ProjectName = projectName,
+            Version = version,
+            Passed = mergedSuites.Count > 0 && mergedSuites.All(s => s.Passed),
+            RunAtUtc = DateTimeOffset.UtcNow,
+            PerformedBy = performedBy,
+            Suites = mergedSuites,
+        };
+
+        await SetAsync(root, status, ct);
+        return status;
+    }
 }
