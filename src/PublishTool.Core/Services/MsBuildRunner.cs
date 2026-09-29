@@ -13,6 +13,7 @@ public sealed class MsBuildRunner
         string msBuildExePath,
         string csprojPath,
         string pubxmlName,
+        string configuration,
         string stagingDir,
         bool sdkStyleProject,
         string? extraTargets = null,
@@ -21,8 +22,8 @@ public sealed class MsBuildRunner
         Directory.CreateDirectory(stagingDir);
 
         var args = sdkStyleProject
-            ? BuildSdkStyleArgs(csprojPath, pubxmlName, stagingDir, extraTargets)
-            : BuildClassicArgs(csprojPath, pubxmlName, stagingDir, extraTargets);
+            ? BuildSdkStyleArgs(csprojPath, pubxmlName, configuration, stagingDir, extraTargets)
+            : BuildClassicArgs(csprojPath, pubxmlName, configuration, stagingDir, extraTargets);
 
         var exitCode = await ProcessRunner.RunAsync(msBuildExePath, args, _output, ct);
         if (exitCode != 0)
@@ -34,12 +35,12 @@ public sealed class MsBuildRunner
     // Classic .NET Framework web projects (Web Deploy / Microsoft.WebApplication.targets):
     // DeployOnBuild=true hooks the publish pipeline into the default Build target, and PublishUrl
     // is the FileSystem publish provider's output location.
-    private static string BuildClassicArgs(string csprojPath, string pubxmlName, string stagingDir, string? extraTargets)
+    private static string BuildClassicArgs(string csprojPath, string pubxmlName, string configuration, string stagingDir, string? extraTargets)
     {
         var args = $"\"{csprojPath}\" " +
                    "/p:DeployOnBuild=true " +
                    $"/p:PublishProfile=\"{pubxmlName}\" " +
-                   "/p:Configuration=Release " +
+                   $"/p:Configuration=\"{configuration}\" " +
                    $"/p:PublishUrl=\"{stagingDir}\"";
 
         // Some third-party package .targets files (e.g. SQLite's native interop DLL copy)
@@ -63,7 +64,7 @@ public sealed class MsBuildRunner
     // since DeployOnBuild is a classic Web Deploy hook this pipeline doesn't expect alongside its
     // own explicit target invocation. Both PublishDir and PublishUrl are passed since which one is
     // actually honored is a pubxml/SDK-version detail; the unused one is simply ignored.
-    private static string BuildSdkStyleArgs(string csprojPath, string pubxmlName, string stagingDir, string? extraTargets)
+    private static string BuildSdkStyleArgs(string csprojPath, string pubxmlName, string configuration, string stagingDir, string? extraTargets)
     {
         var targets = new List<string> { "Publish" };
         if (!string.IsNullOrWhiteSpace(extraTargets))
@@ -78,7 +79,7 @@ public sealed class MsBuildRunner
         return $"\"{csprojPath}\" " +
                $"/t:{string.Join(';', targets)} " +
                $"/p:PublishProfile=\"{pubxmlName}\" " +
-               "/p:Configuration=Release " +
+               $"/p:Configuration=\"{configuration}\" " +
                $"/p:PublishDir=\"{stagingDir}\" " +
                $"/p:PublishUrl=\"{stagingDir}\"";
     }

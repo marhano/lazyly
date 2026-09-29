@@ -33,10 +33,18 @@ public sealed class DotNetBuildRunner : IBuildRunner
         var msBuildExePath = await MsBuildLocator.LocateAsync(context.Options.MsBuildPath, ct);
         context.Output.Info($"Using MSBuild at {msBuildExePath}");
 
+        // The profile's own <LastUsedBuildConfiguration> (e.g. "Release-AsensoPay" for a
+        // multi-brand project with per-brand DefineConstants/config transforms) -- MSBuild's web
+        // publish pipeline doesn't infer this from /p:PublishProfile alone, so without reading and
+        // passing it explicitly every profile silently built as plain "Release" regardless of which
+        // one was picked (the actual bug behind "picking a different profile doesn't seem to apply").
+        var configuration = PublishProfileDiscovery.ReadBuildConfiguration(project.CsprojPath, pubxmlName) ?? "Release";
+        context.Output.Info($"Using publish profile '{pubxmlName}' (configuration '{configuration}')");
+
         context.Output.Stage("Running MSBuild publish...");
         var msBuild = new MsBuildRunner(context.Output);
         await msBuild.PublishAsync(
-            msBuildExePath, project.CsprojPath!, pubxmlName, context.StagingDir,
+            msBuildExePath, project.CsprojPath!, pubxmlName, configuration, context.StagingDir,
             project.SdkStyleProject, project.ExtraPublishTargets, ct);
 
         return new BuildResult(BuildArtifactKind.Directory, context.StagingDir);
